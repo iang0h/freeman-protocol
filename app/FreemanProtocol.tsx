@@ -417,6 +417,7 @@ class FreemanEngine {
   private elapsed = 0;
   private hudClock = 0;
   private reducedMotion = false;
+  private hasPointerAim = false;
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
@@ -1375,6 +1376,7 @@ class FreemanEngine {
     const hit = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
       this.aimPoint.copy(hit);
+      this.hasPointerAim = true;
     }
   }
 
@@ -2014,7 +2016,11 @@ class FreemanEngine {
     const nearest = this.getNearestEnemy(this.player.group.position, 7.5);
     if (nearest) {
       const pointerDistance = this.aimPoint.distanceTo(this.player.group.position);
-      if (pointerDistance < 0.5 || this.touchMove.lengthSq() > 0) {
+      if (
+        !this.hasPointerAim ||
+        pointerDistance < 0.5 ||
+        this.touchMove.lengthSq() > 0
+      ) {
         return nearest.group.position
           .clone()
           .add(new THREE.Vector3(0, nearest.radius, 0));
@@ -2218,6 +2224,7 @@ class FreemanCanvasEngine implements GameController {
   private dragX = 0;
   private reducedMotion = false;
   private shake = 0;
+  private hasPointerAim = false;
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     const context = canvas.getContext("2d");
@@ -2597,6 +2604,7 @@ class FreemanCanvasEngine implements GameController {
     );
     this.aim.x = world.x;
     this.aim.z = world.z;
+    this.hasPointerAim = true;
   }
 
   private animate = (time: number) => {
@@ -3223,7 +3231,8 @@ class FreemanCanvasEngine implements GameController {
     );
     if (
       nearest &&
-      (aimDistance < 0.5 ||
+      (!this.hasPointerAim ||
+        aimDistance < 0.5 ||
         Math.hypot(this.touchMove.x, this.touchMove.y) > 0.01)
     ) {
       return { x: nearest.x, z: nearest.z };
@@ -3805,6 +3814,7 @@ export default function FreemanProtocol() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameController | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const helpPausedGameRef = useRef(false);
   const [mode, setMode] = useState<GameMode>("intro");
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -3853,6 +3863,22 @@ export default function FreemanProtocol() {
     engineRef.current?.setMuted(next);
   };
 
+  const openHelp = () => {
+    if (mode === "playing") {
+      engineRef.current?.togglePause();
+      helpPausedGameRef.current = true;
+    }
+    setHelpOpen(true);
+  };
+
+  const closeHelp = () => {
+    setHelpOpen(false);
+    if (helpPausedGameRef.current) {
+      engineRef.current?.togglePause();
+      helpPausedGameRef.current = false;
+    }
+  };
+
   const isOverlay = mode !== "playing";
   const recruitedCount = Object.values(hud.agents).filter(Boolean).length;
 
@@ -3896,7 +3922,7 @@ export default function FreemanProtocol() {
         </div>
 
         <div className="hud-actions">
-          <button type="button" onClick={() => setHelpOpen(true)}>
+          <button type="button" onClick={openHelp}>
             CONTROLS
           </button>
           <button type="button" onClick={toggleMute} aria-pressed={muted}>
@@ -4232,7 +4258,7 @@ export default function FreemanProtocol() {
           <button
             type="button"
             className="help-dialog__close"
-            onClick={() => setHelpOpen(false)}
+            onClick={closeHelp}
             aria-label="Close controls"
           >
             ×
@@ -4258,7 +4284,7 @@ export default function FreemanProtocol() {
           type="button"
           className="dialog-backdrop"
           aria-label="Close controls"
-          onClick={() => setHelpOpen(false)}
+          onClick={closeHelp}
         />
       )}
 
