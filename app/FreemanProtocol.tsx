@@ -18,8 +18,16 @@ type GameMode =
   | "victory";
 
 type AgentId = "kairos" | "kira" | "forge" | "covenant";
-type UpgradeId = "overclock" | "bastion" | "bandwidth";
+type UpgradeId =
+  | "overclock"
+  | "bastion"
+  | "bandwidth"
+  | "voltage"
+  | "repair"
+  | "command";
 type EnemyType = "virus" | "phisher" | "trojan" | "rootkit";
+
+const TOTAL_WAVES = 8;
 
 type HudState = {
   hp: number;
@@ -82,6 +90,7 @@ type AgentRuntime = AgentDefinition & {
   group: THREE.Group;
   cooldownLeft: number;
   supportClock: number;
+  disabledLeft: number;
 };
 
 type EnemyRuntime = {
@@ -103,7 +112,7 @@ type EnemyRuntime = {
   reward: number;
   radius: number;
   slow: number;
-  phaseTriggered: boolean;
+  bossPhase: number;
 };
 
 type ProjectileRuntime = {
@@ -202,7 +211,47 @@ const UPGRADES: Array<{
     detail: "Recruit sooner and make every agent fire faster.",
     outcome: "+70 Compute and 18% faster agents",
   },
+  {
+    id: "voltage",
+    index: "D",
+    name: "EMP OVERDRIVE",
+    detail: "Increase the damage of every EMP pulse.",
+    outcome: "+60% EMP damage",
+  },
+  {
+    id: "repair",
+    index: "E",
+    name: "FIELD REPAIR",
+    detail: "Repair damage without increasing maximum health.",
+    outcome: "+45 Core health and +25 health",
+  },
+  {
+    id: "command",
+    index: "F",
+    name: "SQUAD COMMAND",
+    detail: "Improve the damage of every recruited AI agent.",
+    outcome: "+30% agent damage",
+  },
 ];
+
+const ENCOUNTERS: EnemyType[][] = [
+  ["virus", "virus", "virus", "virus", "virus", "phisher"],
+  ["virus", "virus", "virus", "virus", "phisher", "phisher", "trojan"],
+  ["virus", "virus", "virus", "virus", "virus", "phisher", "phisher", "trojan", "trojan"],
+  ["virus", "virus", "virus", "phisher", "phisher", "phisher", "trojan", "trojan", "trojan"],
+  ["virus", "virus", "virus", "virus", "virus", "virus", "phisher", "phisher", "phisher", "trojan", "trojan"],
+  ["virus", "virus", "virus", "virus", "virus", "phisher", "phisher", "phisher", "phisher", "trojan", "trojan", "trojan"],
+  ["virus", "virus", "virus", "virus", "virus", "virus", "phisher", "phisher", "phisher", "phisher", "trojan", "trojan", "trojan", "trojan"],
+  ["rootkit", "virus", "virus", "virus", "virus", "phisher", "phisher", "phisher", "trojan", "trojan"],
+];
+
+const getUpgradeChoices = (wave: number) => {
+  const offset = ((wave - 1) * 2) % UPGRADES.length;
+  return Array.from(
+    { length: 3 },
+    (_, index) => UPGRADES[(offset + index) % UPGRADES.length],
+  );
+};
 
 const INITIAL_HUD: HudState = {
   hp: 100,
@@ -413,6 +462,8 @@ class FreemanEngine {
   private dragX = 0;
   private attackMultiplier = 1;
   private agentRateMultiplier = 1;
+  private agentDamageMultiplier = 1;
+  private empMultiplier = 1;
   private shake = 0;
   private elapsed = 0;
   private hudClock = 0;
@@ -470,6 +521,8 @@ class FreemanEngine {
     this.data = 55;
     this.attackMultiplier = 1;
     this.agentRateMultiplier = 1;
+    this.agentDamageMultiplier = 1;
+    this.empMultiplier = 1;
     this.player.hp = this.player.maxHp = 100;
     this.player.damage = 25;
     this.player.attackCooldown = 0;
@@ -527,6 +580,7 @@ class FreemanEngine {
       group,
       cooldownLeft: 0.35,
       supportClock: 5,
+      disabledLeft: 0,
     });
     this.addRing(group.position, definition.color, 0.3, 2.2, 0.65, "portal");
     this.addBurst(group.position, definition.color, 13);
@@ -588,7 +642,7 @@ class FreemanEngine {
     if (this.mode !== "playing" || this.player.ultimate < 100) return;
     this.player.ultimate = 0;
     const origin = this.player.group.position.clone();
-    const damage = 44 + this.agents.length * 8;
+    const damage = (44 + this.agents.length * 8) * this.empMultiplier;
     for (const enemy of [...this.enemies]) {
       const distance = enemy.group.position.distanceTo(origin);
       if (distance <= 10.5) {
@@ -610,9 +664,9 @@ class FreemanEngine {
     this.shake = this.reducedMotion ? 0.04 : 0.48;
     this.audio.play("ultimate");
     this.callbacks.onToast({
-      eyebrow: "TEAM BLAST ACTIVATED",
-      title: "YOUR AI TEAM ATTACKED TOGETHER",
-      detail: `${this.agents.length || "No"} recruited agents powered this full-arena attack.`,
+      eyebrow: "EMP PULSE ACTIVATED",
+      title: "THE BREACH HAS BEEN DISRUPTED",
+      detail: `${this.agents.length || "No"} recruited agents amplified the full-arena pulse.`,
     });
     this.emitHud(true);
   }
@@ -632,6 +686,12 @@ class FreemanEngine {
       this.data += 70;
       this.agentRateMultiplier *= 0.82;
     }
+    if (id === "voltage") this.empMultiplier *= 1.6;
+    if (id === "repair") {
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 25);
+      this.core.hp = Math.min(this.core.maxHp, this.core.hp + 45);
+    }
+    if (id === "command") this.agentDamageMultiplier *= 1.3;
     const selected = UPGRADES.find((upgrade) => upgrade.id === id);
     this.callbacks.onToast({
       eyebrow: "UPGRADE APPLIED",
@@ -1296,6 +1356,9 @@ class FreemanEngine {
     group.add(healthBar);
 
     this.scene.add(group);
+    const healthScale = 1 + (this.wave - 1) * (type === "rootkit" ? 0.12 : 0.09);
+    const damageScale = 1 + (this.wave - 1) * 0.055;
+    const scaledHp = Math.round(definition.hp * healthScale);
     const enemy: EnemyRuntime = {
       id: ++this.enemySequence,
       type,
@@ -1303,10 +1366,10 @@ class FreemanEngine {
       body,
       healthBar,
       healthFill,
-      hp: definition.hp,
-      maxHp: definition.hp,
+      hp: scaledHp,
+      maxHp: scaledHp,
       speed: definition.speed,
-      damage: definition.damage,
+      damage: Math.round(definition.damage * damageScale),
       range: definition.range,
       attackCooldown: definition.cooldown,
       cooldownLeft: 0.4 + Math.random() * 0.8,
@@ -1315,7 +1378,7 @@ class FreemanEngine {
       reward: definition.reward,
       radius: definition.radius,
       slow: 0,
-      phaseTriggered: false,
+      bossPhase: type === "rootkit" ? 1 : 0,
     };
     this.enemies.push(enemy);
     this.addRing(position, definition.color, 0.2, type === "rootkit" ? 2.8 : 1.15, 0.55, "portal");
@@ -1325,40 +1388,21 @@ class FreemanEngine {
   private spawnWave(wave: number) {
     this.waveActive = true;
     this.waveEndClock = 0;
-    if (wave === 1) {
-      this.spawnFormation(["virus", "virus", "virus", "virus", "virus", "phisher"]);
-      return;
+    this.spawnFormation(ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1]);
+    if (wave === 4 || wave === 7) {
+      this.callbacks.onToast({
+        eyebrow: `ELITE BREACH · WAVE ${wave}`,
+        title: "ARMOURED TROJANS INBOUND",
+        detail: "Their armour reduces damage until the shell is broken.",
+      });
     }
-    if (wave === 2) {
-      this.spawnFormation([
-        "virus",
-        "virus",
-        "virus",
-        "virus",
-        "virus",
-        "phisher",
-        "phisher",
-        "phisher",
-        "trojan",
-        "trojan",
-      ]);
-      return;
+    if (wave === TOTAL_WAVES) {
+      this.callbacks.onToast({
+        eyebrow: "FINAL BREACH",
+        title: "ROOTKIT PRIME HAS ENTERED",
+        detail: "Survive all three boss phases and protect the Core.",
+      });
     }
-    this.spawnFormation([
-      "rootkit",
-      "virus",
-      "virus",
-      "virus",
-      "virus",
-      "phisher",
-      "phisher",
-      "trojan",
-    ]);
-    this.callbacks.onToast({
-      eyebrow: "FINAL WAVE",
-      title: "THE BOSS HAS ENTERED",
-      detail: "Destroy Rootkit Prime before it reaches the Core.",
-    });
   }
 
   private spawnFormation(types: EnemyType[]) {
@@ -1611,6 +1655,9 @@ class FreemanEngine {
       const ring = agent.group.getObjectByName("agent-ring");
       if (ring) ring.rotation.z += delta * (0.8 + index * 0.12);
       agent.cooldownLeft = Math.max(0, agent.cooldownLeft - delta);
+      agent.disabledLeft = Math.max(0, agent.disabledLeft - delta);
+      agent.group.scale.setScalar(agent.disabledLeft > 0 ? 0.86 : 1.2);
+      if (agent.disabledLeft > 0) return;
       agent.supportClock -= delta;
 
       if (agent.id === "covenant" && agent.supportClock <= 0) {
@@ -1636,7 +1683,11 @@ class FreemanEngine {
       agent.cooldownLeft = agent.cooldown * this.agentRateMultiplier;
       if (agent.id === "kairos") {
         target.slow = Math.max(target.slow, 1.6);
-        this.damageEnemy(target, agent.damage, target.group.position);
+        this.damageEnemy(
+          target,
+          agent.damage * this.agentDamageMultiplier,
+          target.group.position,
+        );
         this.addBeam(
           agent.group.position,
           target.group.position.clone().add(new THREE.Vector3(0, target.radius, 0)),
@@ -1650,7 +1701,7 @@ class FreemanEngine {
         agent.group.position.clone(),
         direction,
         agent.color,
-        agent.damage,
+        agent.damage * this.agentDamageMultiplier,
         agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10,
         "agent",
         agent.id === "covenant" ? 0.25 : 0,
@@ -1682,15 +1733,19 @@ class FreemanEngine {
       if (halo) halo.rotation.z += delta;
       enemy.healthBar.quaternion.copy(this.camera.quaternion);
 
-      if (enemy.type === "rootkit" && enemy.hp / enemy.maxHp < 0.52 && !enemy.phaseTriggered) {
-        enemy.phaseTriggered = true;
-        enemy.speed *= 1.25;
-        enemy.attackCooldown *= 0.8;
+      if (
+        enemy.type === "rootkit" &&
+        enemy.hp / enemy.maxHp < 0.68 &&
+        enemy.bossPhase === 1
+      ) {
+        enemy.bossPhase = 2;
+        enemy.speed *= 1.16;
+        enemy.attackCooldown *= 0.84;
         const baseAngle = Math.atan2(position.z, position.x);
-        for (let index = 0; index < 3; index += 1) {
+        for (let index = 0; index < 4; index += 1) {
           const angle = baseAngle + (index - 1) * 0.6;
           this.createEnemy(
-            index === 1 ? "phisher" : "virus",
+            index % 2 === 0 ? "phisher" : "virus",
             position
               .clone()
               .add(new THREE.Vector3(Math.cos(angle) * 2, 0, Math.sin(angle) * 2)),
@@ -1701,6 +1756,31 @@ class FreemanEngine {
           eyebrow: "ROOTKIT PHASE II",
           title: "THE SHELL HAS SPLIT",
           detail: "It is faster now. Collapse the spawned processes first.",
+        });
+      }
+      if (
+        enemy.type === "rootkit" &&
+        enemy.hp / enemy.maxHp < 0.34 &&
+        enemy.bossPhase === 2
+      ) {
+        enemy.bossPhase = 3;
+        enemy.speed *= 1.3;
+        enemy.attackCooldown *= 0.65;
+        const baseAngle = Math.atan2(position.z, position.x);
+        for (let index = 0; index < 6; index += 1) {
+          const angle = baseAngle + (index / 6) * Math.PI * 2;
+          this.createEnemy(
+            index < 2 ? "trojan" : "virus",
+            position
+              .clone()
+              .add(new THREE.Vector3(Math.cos(angle) * 2.8, 0, Math.sin(angle) * 2.8)),
+          );
+        }
+        this.addRing(position, 0xffe1c8, 0.6, 7, 0.95, "portal");
+        this.callbacks.onToast({
+          eyebrow: "ROOTKIT PHASE III",
+          title: "THE CORE IS EXPOSED",
+          detail: "Final damage race. Use EMP before the remaining processes overwhelm the Core.",
         });
       }
 
@@ -1730,6 +1810,19 @@ class FreemanEngine {
                   : 1.02,
           );
           if (enemy.type === "phisher") {
+            const availableAgents = this.agents.filter(
+              (agent) => agent.disabledLeft <= 0,
+            );
+            if (availableAgents.length > 0 && Math.random() < 0.4) {
+              const disabled = availableAgents[enemy.id % availableAgents.length];
+              disabled.disabledLeft = 3.2;
+              this.addRing(disabled.group.position, 0xb7422e, 0.2, 1.6, 0.48);
+              this.callbacks.onToast({
+                eyebrow: "PHISHER JAM DETECTED",
+                title: `${disabled.name} IS OFFLINE`,
+                detail: "The agent will reboot in three seconds. Prioritise the Phisher.",
+              });
+            }
             const origin = position.clone().add(new THREE.Vector3(0, 0.8, 0));
             this.fireProjectile(
               origin,
@@ -1891,7 +1984,7 @@ class FreemanEngine {
   }
 
   private completeWave() {
-    if (this.wave >= 3) {
+    if (this.wave >= TOTAL_WAVES) {
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
@@ -1901,13 +1994,13 @@ class FreemanEngine {
       this.callbacks.onToast({
         eyebrow: "MISSION COMPLETE",
         title: "THE NETWORK IS SAFE",
-        detail: "You survived all three waves and stopped the hacker attack.",
+        detail: "You survived all eight encounters and contained Rootkit Prime.",
       });
       this.emitHud(true);
       return;
     }
     this.mode = "upgrade";
-    this.data += 24;
+    this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.callbacks.onMode("upgrade");
     this.callbacks.onToast({
       eyebrow: `WAVE ${this.wave} CLEARED`,
@@ -1962,13 +2055,15 @@ class FreemanEngine {
     hitPosition: THREE.Vector3,
   ) {
     if (!this.enemies.includes(enemy)) return;
-    enemy.hp -= damage;
+    const armoured = enemy.type === "trojan" && enemy.hp > enemy.maxHp * 0.45;
+    const appliedDamage = armoured ? damage * 0.42 : damage;
+    enemy.hp -= appliedDamage;
     const ratio = clamp01(enemy.hp / enemy.maxHp);
     enemy.healthFill.scale.x = Math.max(0.001, ratio);
     enemy.healthFill.position.x = -0.59 * (1 - ratio);
     this.player.ultimate = Math.min(
       100,
-      this.player.ultimate + Math.min(8, damage * 0.12),
+      this.player.ultimate + Math.min(8, appliedDamage * 0.12),
     );
     this.addBurst(hitPosition, 0xe77d44, 5);
     this.audio.play("hit");
@@ -2235,7 +2330,7 @@ type FlatEnemy = {
   reward: number;
   radius: number;
   slow: number;
-  phaseTriggered: boolean;
+  bossPhase: number;
 };
 
 type FlatAgent = AgentDefinition & {
@@ -2243,6 +2338,7 @@ type FlatAgent = AgentDefinition & {
   z: number;
   cooldownLeft: number;
   supportClock: number;
+  disabledLeft: number;
 };
 
 type FlatProjectile = {
@@ -2338,6 +2434,8 @@ class FreemanCanvasEngine implements GameController {
   private hudClock = 0;
   private attackMultiplier = 1;
   private agentRateMultiplier = 1;
+  private agentDamageMultiplier = 1;
+  private empMultiplier = 1;
   private dragPointer: number | null = null;
   private dragX = 0;
   private reducedMotion = false;
@@ -2374,6 +2472,8 @@ class FreemanCanvasEngine implements GameController {
     this.data = 55;
     this.attackMultiplier = 1;
     this.agentRateMultiplier = 1;
+    this.agentDamageMultiplier = 1;
+    this.empMultiplier = 1;
     this.player.x = 0;
     this.player.z = 2.7;
     this.player.hp = this.player.maxHp = 100;
@@ -2428,6 +2528,7 @@ class FreemanCanvasEngine implements GameController {
       z: this.player.z,
       cooldownLeft: 0.35,
       supportClock: 5,
+      disabledLeft: 0,
     });
     this.addRing(this.player.x, this.player.z, definition.color, 0.3, 2.2, 0.65);
     this.addBurst(this.player.x, this.player.z, definition.color, 13);
@@ -2500,7 +2601,7 @@ class FreemanCanvasEngine implements GameController {
   ultimate() {
     if (this.mode !== "playing" || this.player.ultimate < 100) return;
     this.player.ultimate = 0;
-    const damage = 44 + this.agents.length * 8;
+    const damage = (44 + this.agents.length * 8) * this.empMultiplier;
     for (const enemy of [...this.enemies]) {
       if (this.distance(enemy.x, enemy.z, this.player.x, this.player.z) <= 10.5) {
         enemy.slow = Math.max(enemy.slow, 2.8);
@@ -2523,9 +2624,9 @@ class FreemanCanvasEngine implements GameController {
     this.shake = this.reducedMotion ? 0.04 : 0.52;
     this.audio.play("ultimate");
     this.callbacks.onToast({
-      eyebrow: "TEAM BLAST ACTIVATED",
-      title: "YOUR AI TEAM ATTACKED TOGETHER",
-      detail: `${this.agents.length || "No"} recruited agents powered this full-arena attack.`,
+      eyebrow: "EMP PULSE ACTIVATED",
+      title: "THE BREACH HAS BEEN DISRUPTED",
+      detail: `${this.agents.length || "No"} recruited agents amplified the full-arena pulse.`,
     });
     this.emitHud(true);
   }
@@ -2543,6 +2644,12 @@ class FreemanCanvasEngine implements GameController {
       this.data += 70;
       this.agentRateMultiplier *= 0.82;
     }
+    if (id === "voltage") this.empMultiplier *= 1.6;
+    if (id === "repair") {
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 25);
+      this.core.hp = Math.min(this.core.maxHp, this.core.hp + 45);
+    }
+    if (id === "command") this.agentDamageMultiplier *= 1.3;
     const selected = UPGRADES.find((upgrade) => upgrade.id === id);
     this.callbacks.onToast({
       eyebrow: "UPGRADE APPLIED",
@@ -2810,6 +2917,8 @@ class FreemanCanvasEngine implements GameController {
       agent.x += (targetX - agent.x) * ease;
       agent.z += (targetZ - agent.z) * ease;
       agent.cooldownLeft = Math.max(0, agent.cooldownLeft - delta);
+      agent.disabledLeft = Math.max(0, agent.disabledLeft - delta);
+      if (agent.disabledLeft > 0) return;
       agent.supportClock -= delta;
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         agent.supportClock = 6.5;
@@ -2827,7 +2936,7 @@ class FreemanCanvasEngine implements GameController {
       agent.cooldownLeft = agent.cooldown * this.agentRateMultiplier;
       if (agent.id === "kairos") {
         target.slow = Math.max(target.slow, 1.6);
-        this.damageEnemy(target, agent.damage);
+        this.damageEnemy(target, agent.damage * this.agentDamageMultiplier);
         this.addBeam(agent.x, agent.z, target.x, target.z, agent.color, 0.22);
         this.addRing(target.x, target.z, agent.color, 0.1, 1.35, 0.38);
         return;
@@ -2838,7 +2947,7 @@ class FreemanCanvasEngine implements GameController {
         vx: dx * (agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10),
         vz: dz * (agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10),
         life: 2.2,
-        damage: agent.damage,
+        damage: agent.damage * this.agentDamageMultiplier,
         radius: agent.id === "forge" ? 0.14 : 0.18,
         color: toCssColor(agent.color),
         faction: "agent",
@@ -2864,17 +2973,17 @@ class FreemanCanvasEngine implements GameController {
 
       if (
         enemy.type === "rootkit" &&
-        enemy.hp / enemy.maxHp < 0.52 &&
-        !enemy.phaseTriggered
+        enemy.hp / enemy.maxHp < 0.68 &&
+        enemy.bossPhase === 1
       ) {
-        enemy.phaseTriggered = true;
-        enemy.speed *= 1.25;
-        enemy.attackCooldown *= 0.8;
+        enemy.bossPhase = 2;
+        enemy.speed *= 1.16;
+        enemy.attackCooldown *= 0.84;
         const baseAngle = Math.atan2(enemy.z, enemy.x);
-        for (let index = 0; index < 3; index += 1) {
+        for (let index = 0; index < 4; index += 1) {
           const angle = baseAngle + (index - 1) * 0.6;
           this.createEnemy(
-            index === 1 ? "phisher" : "virus",
+            index % 2 === 0 ? "phisher" : "virus",
             enemy.x + Math.cos(angle) * 2,
             enemy.z + Math.sin(angle) * 2,
           );
@@ -2886,12 +2995,49 @@ class FreemanCanvasEngine implements GameController {
           detail: "It is faster now. Collapse the spawned processes first.",
         });
       }
+      if (
+        enemy.type === "rootkit" &&
+        enemy.hp / enemy.maxHp < 0.34 &&
+        enemy.bossPhase === 2
+      ) {
+        enemy.bossPhase = 3;
+        enemy.speed *= 1.3;
+        enemy.attackCooldown *= 0.65;
+        const baseAngle = Math.atan2(enemy.z, enemy.x);
+        for (let index = 0; index < 6; index += 1) {
+          const angle = baseAngle + (index / 6) * Math.PI * 2;
+          this.createEnemy(
+            index < 2 ? "trojan" : "virus",
+            enemy.x + Math.cos(angle) * 2.8,
+            enemy.z + Math.sin(angle) * 2.8,
+          );
+        }
+        this.addRing(enemy.x, enemy.z, 0xffe1c8, 0.6, 7, 0.95);
+        this.callbacks.onToast({
+          eyebrow: "ROOTKIT PHASE III",
+          title: "THE CORE IS EXPOSED",
+          detail: "Final damage race. Use EMP before the remaining processes overwhelm the Core.",
+        });
+      }
 
       if (enemy.telegraphLeft > 0) {
         enemy.telegraphLeft -= delta;
         if (enemy.telegraphLeft <= 0) {
           enemy.cooldownLeft = enemy.attackCooldown;
           if (enemy.type === "phisher") {
+            const availableAgents = this.agents.filter(
+              (agent) => agent.disabledLeft <= 0,
+            );
+            if (availableAgents.length > 0 && Math.random() < 0.4) {
+              const disabled = availableAgents[enemy.id % availableAgents.length];
+              disabled.disabledLeft = 3.2;
+              this.addRing(disabled.x, disabled.z, 0xb7422e, 0.2, 1.6, 0.48);
+              this.callbacks.onToast({
+                eyebrow: "PHISHER JAM DETECTED",
+                title: `${disabled.name} IS OFFLINE`,
+                detail: "The agent will reboot in three seconds. Prioritise the Phisher.",
+              });
+            }
             let dx = targetX - enemy.x;
             let dz = targetZ - enemy.z;
             const length = Math.hypot(dx, dz) || 1;
@@ -3033,32 +3179,8 @@ class FreemanCanvasEngine implements GameController {
   private spawnWave(wave: number) {
     this.waveActive = true;
     this.waveEndClock = 0;
-    const types: EnemyType[] =
-      wave === 1
-        ? ["virus", "virus", "virus", "virus", "virus", "phisher"]
-        : wave === 2
-          ? [
-              "virus",
-              "virus",
-              "virus",
-              "virus",
-              "virus",
-              "phisher",
-              "phisher",
-              "phisher",
-              "trojan",
-              "trojan",
-            ]
-          : [
-              "rootkit",
-              "virus",
-              "virus",
-              "virus",
-              "virus",
-              "phisher",
-              "phisher",
-              "trojan",
-            ];
+    const types =
+      ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1];
     types.forEach((type, index) => {
       const angle =
         (index / types.length) * Math.PI * 2 +
@@ -3071,11 +3193,18 @@ class FreemanCanvasEngine implements GameController {
         Math.sin(angle) * radius,
       );
     });
-    if (wave === 3) {
+    if (wave === 4 || wave === 7) {
       this.callbacks.onToast({
-        eyebrow: "FINAL WAVE",
-        title: "THE BOSS HAS ENTERED",
-        detail: "Destroy Rootkit Prime before it reaches the Core.",
+        eyebrow: `ELITE BREACH · WAVE ${wave}`,
+        title: "ARMOURED TROJANS INBOUND",
+        detail: "Their armour reduces damage until the shell is broken.",
+      });
+    }
+    if (wave === TOTAL_WAVES) {
+      this.callbacks.onToast({
+        eyebrow: "FINAL BREACH",
+        title: "ROOTKIT PRIME HAS ENTERED",
+        detail: "Survive all three boss phases and protect the Core.",
       });
     }
     this.emitHud(true);
@@ -3094,7 +3223,7 @@ class FreemanCanvasEngine implements GameController {
         | "cooldownLeft"
         | "telegraphLeft"
         | "slow"
-        | "phaseTriggered"
+        | "bossPhase"
       >
     > = {
       virus: {
@@ -3139,17 +3268,22 @@ class FreemanCanvasEngine implements GameController {
       },
     };
     const definition = definitions[type];
+    const healthScale = 1 + (this.wave - 1) * (type === "rootkit" ? 0.12 : 0.09);
+    const damageScale = 1 + (this.wave - 1) * 0.055;
+    const scaledHp = Math.round(definition.hp * healthScale);
     const enemy: FlatEnemy = {
       id: ++this.enemySequence,
       type,
       x,
       z,
       ...definition,
-      maxHp: definition.hp,
+      hp: scaledHp,
+      maxHp: scaledHp,
+      damage: Math.round(definition.damage * damageScale),
       cooldownLeft: 0.4 + Math.random() * 0.8,
       telegraphLeft: 0,
       slow: 0,
-      phaseTriggered: false,
+      bossPhase: type === "rootkit" ? 1 : 0,
     };
     this.enemies.push(enemy);
     this.addRing(
@@ -3163,7 +3297,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private completeWave() {
-    if (this.wave >= 3) {
+    if (this.wave >= TOTAL_WAVES) {
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
@@ -3173,13 +3307,13 @@ class FreemanCanvasEngine implements GameController {
       this.callbacks.onToast({
         eyebrow: "MISSION COMPLETE",
         title: "THE NETWORK IS SAFE",
-        detail: "You survived all three waves and stopped the hacker attack.",
+        detail: "You survived all eight encounters and contained Rootkit Prime.",
       });
       this.emitHud(true);
       return;
     }
     this.mode = "upgrade";
-    this.data += 24;
+    this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.callbacks.onMode("upgrade");
     this.callbacks.onToast({
       eyebrow: `WAVE ${this.wave} CLEARED`,
@@ -3222,10 +3356,12 @@ class FreemanCanvasEngine implements GameController {
 
   private damageEnemy(enemy: FlatEnemy, damage: number) {
     if (!this.enemies.includes(enemy)) return;
-    enemy.hp -= damage;
+    const armoured = enemy.type === "trojan" && enemy.hp > enemy.maxHp * 0.45;
+    const appliedDamage = armoured ? damage * 0.42 : damage;
+    enemy.hp -= appliedDamage;
     this.player.ultimate = Math.min(
       100,
-      this.player.ultimate + Math.min(8, damage * 0.12),
+      this.player.ultimate + Math.min(8, appliedDamage * 0.12),
     );
     this.addBurst(enemy.x, enemy.z, 0xe77d44, 5);
     this.audio.play("hit");
@@ -4115,9 +4251,9 @@ export default function FreemanProtocol() {
           </span>
         </div>
 
-        <div className="wave-state" aria-label={`Wave ${hud.wave} of 3`}>
+        <div className="wave-state" aria-label={`Encounter ${hud.wave} of ${TOTAL_WAVES}`}>
           <span>WAVE</span>
-          {[1, 2, 3].map((wave) => (
+          {Array.from({ length: TOTAL_WAVES }, (_, index) => index + 1).map((wave) => (
             <i
               key={wave}
               className={
@@ -4156,7 +4292,10 @@ export default function FreemanProtocol() {
           <div className="objective-banner" role="status">
             <small>YOUR GOAL</small>
             <strong>DEFEND THE CORE</strong>
-            <span>{hud.enemies} enemies left · Recruit AI help · Survive 3 waves</span>
+            <span>
+              {hud.enemies} enemies left · Encounter {hud.wave}/{TOTAL_WAVES}
+              {hud.wave === TOTAL_WAVES ? " · Rootkit Prime" : ""}
+            </span>
           </div>
 
           <aside className="vitals-panel">
@@ -4309,11 +4448,11 @@ export default function FreemanProtocol() {
               className={`ability ability--ultimate ${hud.ultimate >= 1 ? "is-ready" : ""}`}
               onClick={() => engineRef.current?.ultimate()}
               disabled={mode !== "playing" || hud.ultimate < 1}
-              aria-label="AI team blast"
+              aria-label="EMP pulse"
             >
               <i style={{ "--charge": hud.ultimate } as React.CSSProperties} />
               <small>R</small>
-              <strong>TEAM BLAST</strong>
+              <strong>EMP PULSE</strong>
             </button>
           </div>
 
@@ -4349,8 +4488,8 @@ export default function FreemanProtocol() {
               Build an AI team and fight back.
             </p>
             <p className="intro-mission">
-              Destroy viruses to earn Compute. Spend it to recruit four AI agents,
-              then survive all three attack waves.
+              Destroy viruses to earn Compute. Build an AI squad, draft upgrades,
+              survive seven breaches, then defeat Rootkit Prime.
             </p>
             <button
               type="button"
@@ -4374,7 +4513,7 @@ export default function FreemanProtocol() {
             </p>
             <p>
               <small>YOUR TEAM</small>
-              <strong>RECRUIT UP TO 4 AI AGENTS</strong>
+              <strong>DRAFT UPGRADES · RECRUIT 4 AI AGENTS</strong>
             </p>
           </div>
 
@@ -4393,7 +4532,7 @@ export default function FreemanProtocol() {
             <p>The next wave is stronger. Pick what your team needs most.</p>
           </div>
           <div className="protocol-grid">
-            {UPGRADES.map((upgrade) => (
+            {getUpgradeChoices(hud.wave).map((upgrade) => (
               <button
                 type="button"
                 key={upgrade.id}
@@ -4444,7 +4583,7 @@ export default function FreemanProtocol() {
           </h2>
           <p>
             {mode === "victory"
-              ? "You survived three waves by building an AI team that could fight with you."
+              ? "You survived eight encounters, built an AI squad and contained Rootkit Prime."
               : "Try again, recruit agents earlier, and keep enemies away from the Core."}
           </p>
           <div className="end-stats">
@@ -4485,14 +4624,15 @@ export default function FreemanProtocol() {
           <span className="eyebrow">HOW TO PLAY</span>
           <h2>Protect the Core.</h2>
           <p className="help-dialog__goal">
-            Destroy enemies, earn Compute, and recruit AI agents. Clear all three
-            waves before your health or the Core reaches zero.
+            Destroy enemies, earn Compute, recruit AI agents and draft one upgrade
+            after every encounter. Survive eight encounters before your health or
+            the Core reaches zero.
           </p>
           <div className="control-list">
             <span><kbd>WASD</kbd><b>Move</b></span>
             <span><kbd>CLICK / SPACE</kbd><b>Shoot</b></span>
             <span><kbd>Q / SHIFT</kbd><b>Dash away</b></span>
-            <span><kbd>R</kbd><b>AI team blast</b></span>
+            <span><kbd>R</kbd><b>EMP pulse</b></span>
             <span><kbd>1–4</kbd><b>Recruit an AI agent</b></span>
             <span><kbd>RIGHT DRAG</kbd><b>Rotate camera</b></span>
             <span><kbd>WHEEL</kbd><b>Zoom camera</b></span>
