@@ -402,6 +402,70 @@ canvas:focus-visible {
   letter-spacing: 0.04em;
 }
 
+.base-builder {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 11px;
+  border: 1px solid rgba(158, 216, 221, 0.28);
+  background:
+    linear-gradient(110deg, rgba(158, 216, 221, 0.1), transparent 62%),
+    rgba(5, 12, 15, 0.82);
+  color: var(--ivory);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.base-builder:hover:not(:disabled) {
+  border-color: rgba(158, 216, 221, 0.72);
+  background:
+    linear-gradient(110deg, rgba(158, 216, 221, 0.16), transparent 62%),
+    rgba(5, 12, 15, 0.92);
+  transform: translateY(-1px);
+}
+
+.base-builder:disabled {
+  cursor: default;
+  opacity: 0.68;
+}
+
+.base-builder span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.base-builder small,
+.base-builder b {
+  font-family: var(--mono);
+  font-size: 6px;
+  letter-spacing: 0.1em;
+}
+
+.base-builder small {
+  color: var(--ice);
+}
+
+.base-builder strong {
+  font-family: var(--serif);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+.base-builder b {
+  color: #a9d9dd;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .camera-panel {
   position: absolute;
   top: 104px;
