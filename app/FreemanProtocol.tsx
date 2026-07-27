@@ -128,8 +128,8 @@ const AGENTS: AgentDefinition[] = [
     id: "kairos",
     code: "01",
     name: "KAIROS",
-    role: "Tempo strategist",
-    detail: "Slows hostile processes and creates clean attack windows.",
+    role: "Slows enemies",
+    detail: "Slows nearby enemies so you have more time to attack.",
     cost: 45,
     color: 0xd9793f,
     damage: 13,
@@ -140,8 +140,8 @@ const AGENTS: AgentDefinition[] = [
     id: "kira",
     code: "02",
     name: "KIRA",
-    role: "Precision analyst",
-    detail: "Reads weak points and lands high-value ranged strikes.",
+    role: "Heavy damage",
+    detail: "Fires powerful long-range shots at the strongest enemy.",
     cost: 75,
     color: 0x9ebfc0,
     damage: 31,
@@ -152,8 +152,8 @@ const AGENTS: AgentDefinition[] = [
     id: "forge",
     code: "03",
     name: "FORGE",
-    role: "Kingdom builder",
-    detail: "Turns spare compute into rapid suppressive fire.",
+    role: "Rapid fire",
+    detail: "Fires quickly to clear groups of weaker enemies.",
     cost: 105,
     color: 0xe4b66d,
     damage: 12,
@@ -164,8 +164,8 @@ const AGENTS: AgentDefinition[] = [
     id: "covenant",
     code: "04",
     name: "COVENANT",
-    role: "Network warden",
-    detail: "Repairs the Operator and protects the Freeman Core.",
+    role: "Heals and protects",
+    detail: "Repairs your health and keeps the Core alive.",
     cost: 135,
     color: 0xd7d5ca,
     damage: 9,
@@ -184,23 +184,23 @@ const UPGRADES: Array<{
   {
     id: "overclock",
     index: "A",
-    name: "OVERCLOCK",
-    detail: "Trade restraint for decisive force.",
-    outcome: "+35% Operator damage",
+    name: "POWER SHOTS",
+    detail: "Make every shot hit harder.",
+    outcome: "+35% shot damage",
   },
   {
     id: "bastion",
     index: "B",
-    name: "BASTION",
-    detail: "Make the Covenant harder to break.",
-    outcome: "+25 max integrity, repair both",
+    name: "STRONGER DEFENSE",
+    detail: "Increase your health and repair the Core.",
+    outcome: "+25 health and full repair",
   },
   {
     id: "bandwidth",
     index: "C",
-    name: "BANDWIDTH",
-    detail: "Increase the intelligence you can command.",
-    outcome: "+70 compute, agents fire 18% faster",
+    name: "FASTER AI TEAM",
+    detail: "Recruit sooner and make every agent fire faster.",
+    outcome: "+70 Compute and 18% faster agents",
   },
 ];
 
@@ -443,12 +443,12 @@ class FreemanEngine {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.42;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    this.scene.background = new THREE.Color(0x050707);
-    this.scene.fog = new THREE.FogExp2(0x050707, 0.032);
+    this.scene.background = new THREE.Color(0x091015);
+    this.scene.fog = new THREE.FogExp2(0x091015, 0.018);
 
     this.buildWorld();
     this.core = this.buildCore();
@@ -482,9 +482,9 @@ class FreemanEngine {
     this.callbacks.onMode("playing");
     this.spawnWave(1);
     this.callbacks.onToast({
-      eyebrow: "MISSION 001",
-      title: "NULL BREACH DETECTED",
-      detail: "Protect the Covenant Core. Recover compute. Recruit intelligence.",
+      eyebrow: "WAVE 1 STARTED",
+      title: "DEFEND THE CORE",
+      detail: "Move with WASD. Aim with the mouse. Click or press Space to shoot.",
     });
     this.audio.play("wave");
     this.emitHud(true);
@@ -512,9 +512,9 @@ class FreemanEngine {
     if (!definition || this.agents.some((agent) => agent.id === id)) return;
     if (this.data < definition.cost) {
       this.callbacks.onToast({
-        eyebrow: "INSUFFICIENT COMPUTE",
-        title: `${definition.cost - this.data} MORE REQUIRED`,
-        detail: "Destroy hostile processes to recover clean compute.",
+        eyebrow: "NOT ENOUGH COMPUTE",
+        title: `YOU NEED ${definition.cost - this.data} MORE`,
+        detail: "Destroy enemies to earn Compute, then recruit this agent.",
       });
       return;
     }
@@ -532,8 +532,8 @@ class FreemanEngine {
     this.addBurst(group.position, definition.color, 13);
     this.audio.play("recruit");
     this.callbacks.onToast({
-      eyebrow: `AGENT ${definition.code} RECRUITED`,
-      title: `${definition.name} IS ONLINE`,
+      eyebrow: `AI AGENT ${definition.code} RECRUITED`,
+      title: `${definition.name} JOINED YOUR TEAM`,
       detail: definition.detail,
     });
     this.emitHud(true);
@@ -610,9 +610,9 @@ class FreemanEngine {
     this.shake = this.reducedMotion ? 0.04 : 0.48;
     this.audio.play("ultimate");
     this.callbacks.onToast({
-      eyebrow: "ORCHESTRATION COMPLETE",
-      title: "THE SWARM MOVES AS ONE",
-      detail: `${this.agents.length || "No"} recruited agents amplified the command burst.`,
+      eyebrow: "TEAM BLAST ACTIVATED",
+      title: "YOUR AI TEAM ATTACKED TOGETHER",
+      detail: `${this.agents.length || "No"} recruited agents powered this full-arena attack.`,
     });
     this.emitHud(true);
   }
@@ -634,9 +634,9 @@ class FreemanEngine {
     }
     const selected = UPGRADES.find((upgrade) => upgrade.id === id);
     this.callbacks.onToast({
-      eyebrow: "PROTOCOL INSTALLED",
-      title: selected?.name ?? "SYSTEM UPGRADED",
-      detail: selected?.outcome ?? "The network is stronger.",
+      eyebrow: "UPGRADE APPLIED",
+      title: selected?.name ?? "TEAM UPGRADED",
+      detail: selected?.outcome ?? "Your team is stronger.",
     });
     this.wave += 1;
     this.mode = "playing";
@@ -682,10 +682,10 @@ class FreemanEngine {
   }
 
   private buildWorld() {
-    const hemisphere = new THREE.HemisphereLight(0x9ebfc0, 0x140c08, 1.7);
+    const hemisphere = new THREE.HemisphereLight(0xb9d7dd, 0x28140d, 2.8);
     this.scene.add(hemisphere);
 
-    const keyLight = new THREE.DirectionalLight(0xf4d3ad, 3.8);
+    const keyLight = new THREE.DirectionalLight(0xffe2bf, 5.2);
     keyLight.position.set(7, 14, 6);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.set(1024, 1024);
@@ -695,16 +695,22 @@ class FreemanEngine {
     keyLight.shadow.camera.bottom = -16;
     this.scene.add(keyLight);
 
-    const rimLight = new THREE.PointLight(0xd9793f, 35, 24, 2);
+    const fillLight = new THREE.DirectionalLight(0x79b9ca, 2.2);
+    fillLight.position.set(-9, 8, -5);
+    this.scene.add(fillLight);
+
+    const rimLight = new THREE.PointLight(0xe98148, 58, 29, 2);
     rimLight.position.set(-6, 4, -7);
     this.scene.add(rimLight);
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(46, 46),
       new THREE.MeshStandardMaterial({
-        color: 0x090c0c,
-        roughness: 0.82,
-        metalness: 0.28,
+        color: 0x101a20,
+        roughness: 0.74,
+        metalness: 0.36,
+        emissive: 0x061018,
+        emissiveIntensity: 0.72,
       }),
     );
     floor.rotation.x = -Math.PI / 2;
@@ -712,20 +718,21 @@ class FreemanEngine {
     floor.receiveShadow = true;
     this.scene.add(floor);
 
-    const grid = new THREE.GridHelper(44, 44, 0x3a2920, 0x172020);
+    const grid = new THREE.GridHelper(44, 44, 0xb0633d, 0x294b54);
     grid.position.y = -0.08;
     const gridMaterial = grid.material as THREE.LineBasicMaterial;
     gridMaterial.transparent = true;
-    gridMaterial.opacity = 0.72;
+    gridMaterial.opacity = 0.68;
     this.scene.add(grid);
 
     const platform = new THREE.Mesh(
       new THREE.CylinderGeometry(5.1, 5.6, 0.25, 8),
       new THREE.MeshStandardMaterial({
-        color: 0x101515,
-        roughness: 0.62,
-        metalness: 0.58,
-        emissive: 0x111512,
+        color: 0x1b272b,
+        roughness: 0.5,
+        metalness: 0.66,
+        emissive: 0x12242a,
+        emissiveIntensity: 0.72,
       }),
     );
     platform.position.y = 0;
@@ -736,9 +743,9 @@ class FreemanEngine {
     const platformLine = new THREE.Mesh(
       new THREE.TorusGeometry(5.15, 0.035, 8, 64),
       new THREE.MeshBasicMaterial({
-        color: 0x9d5635,
+        color: 0xf08a4b,
         transparent: true,
-        opacity: 0.72,
+        opacity: 0.9,
       }),
     );
     platformLine.rotation.x = Math.PI / 2;
@@ -746,15 +753,16 @@ class FreemanEngine {
     this.scene.add(platformLine);
 
     const buildingMaterial = new THREE.MeshStandardMaterial({
-      color: 0x101515,
+      color: 0x172329,
       roughness: 0.5,
       metalness: 0.7,
-      emissive: 0x081010,
+      emissive: 0x07151b,
+      emissiveIntensity: 0.85,
     });
     const lightMaterial = new THREE.MeshBasicMaterial({
-      color: 0x966044,
+      color: 0xd98652,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.82,
     });
     const positions: Array<[number, number]> = [];
     for (let x = -16; x <= 16; x += 4) {
@@ -815,10 +823,10 @@ class FreemanEngine {
     const particles = new THREE.Points(
       particleGeometry,
       new THREE.PointsMaterial({
-        color: 0x9ebfc0,
-        size: 0.035,
+        color: 0xb6d8dc,
+        size: 0.052,
         transparent: true,
-        opacity: 0.32,
+        opacity: 0.48,
         depthWrite: false,
       }),
     );
@@ -833,9 +841,11 @@ class FreemanEngine {
     const base = new THREE.Mesh(
       new THREE.CylinderGeometry(1.15, 1.55, 0.55, 8),
       new THREE.MeshStandardMaterial({
-        color: 0x151a19,
+        color: 0x243238,
         roughness: 0.42,
         metalness: 0.8,
+        emissive: 0x0a1e25,
+        emissiveIntensity: 0.8,
       }),
     );
     base.position.y = 0.2;
@@ -845,9 +855,9 @@ class FreemanEngine {
     const crystal = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.72, 0),
       new THREE.MeshStandardMaterial({
-        color: 0xe7d9c8,
-        emissive: 0xd9793f,
-        emissiveIntensity: 1.8,
+        color: 0xffeee0,
+        emissive: 0xf07d3e,
+        emissiveIntensity: 2.7,
         roughness: 0.18,
         metalness: 0.5,
       }),
@@ -859,9 +869,9 @@ class FreemanEngine {
     const innerRing = new THREE.Mesh(
       new THREE.TorusGeometry(1, 0.055, 8, 48),
       new THREE.MeshBasicMaterial({
-        color: 0xd9793f,
+        color: 0xff9a5d,
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.95,
       }),
     );
     innerRing.position.y = 1.25;
@@ -872,9 +882,9 @@ class FreemanEngine {
     const shield = new THREE.Mesh(
       new THREE.SphereGeometry(1.8, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
       new THREE.MeshBasicMaterial({
-        color: 0x9ebfc0,
+        color: 0x8fd5e2,
         transparent: true,
-        opacity: 0.07,
+        opacity: 0.16,
         side: THREE.DoubleSide,
         depthWrite: false,
       }),
@@ -882,7 +892,7 @@ class FreemanEngine {
     shield.position.y = 0.1;
     group.add(shield);
 
-    const light = new THREE.PointLight(0xd9793f, 42, 12, 2);
+    const light = new THREE.PointLight(0xff8b4f, 68, 16, 2);
     light.position.y = 1.5;
     group.add(light);
 
@@ -895,17 +905,18 @@ class FreemanEngine {
     group.position.set(0, 0, 2.7);
 
     const coatMaterial = new THREE.MeshStandardMaterial({
-      color: 0x171b1a,
-      roughness: 0.62,
-      metalness: 0.28,
-      emissive: 0x130d09,
+      color: 0x26333a,
+      roughness: 0.58,
+      metalness: 0.34,
+      emissive: 0x081820,
+      emissiveIntensity: 0.8,
     });
     const armorMaterial = new THREE.MeshStandardMaterial({
-      color: 0x3b3430,
+      color: 0x9d694d,
       roughness: 0.38,
       metalness: 0.72,
-      emissive: 0x34170b,
-      emissiveIntensity: 0.4,
+      emissive: 0x6c2d12,
+      emissiveIntensity: 0.75,
     });
     const skinMaterial = new THREE.MeshStandardMaterial({
       color: 0xb98b72,
@@ -927,6 +938,37 @@ class FreemanEngine {
     torso.position.y = 1.15;
     torso.castShadow = true;
     group.add(torso);
+
+    const legGeometry = new THREE.CylinderGeometry(0.11, 0.14, 0.58, 6);
+    for (const side of [-1, 1]) {
+      const leg = new THREE.Mesh(legGeometry, coatMaterial);
+      leg.position.set(side * 0.18, 0.31, 0.04);
+      leg.castShadow = true;
+      group.add(leg);
+    }
+
+    const coatTail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.58, 0.72, 0.08),
+      coatMaterial,
+    );
+    coatTail.position.set(0, 0.66, 0.33);
+    coatTail.rotation.x = -0.12;
+    group.add(coatTail);
+
+    const shoulderGeometry = new THREE.BoxGeometry(0.34, 0.18, 0.46);
+    for (const side of [-1, 1]) {
+      const shoulder = new THREE.Mesh(shoulderGeometry, armorMaterial);
+      shoulder.position.set(side * 0.43, 1.32, -0.02);
+      shoulder.rotation.z = side * -0.12;
+      group.add(shoulder);
+    }
+
+    const chestLight = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2, 0.22, 0.07),
+      new THREE.MeshBasicMaterial({ color: 0xffb078 }),
+    );
+    chestLight.position.set(0, 1.2, -0.4);
+    group.add(chestLight);
 
     const head = new THREE.Mesh(
       new THREE.SphereGeometry(0.28, 12, 8),
@@ -953,7 +995,7 @@ class FreemanEngine {
     weapon.add(stock);
     const barrel = new THREE.Mesh(
       new THREE.CylinderGeometry(0.035, 0.035, 0.55, 8),
-      new THREE.MeshBasicMaterial({ color: 0xe77d44 }),
+      new THREE.MeshBasicMaterial({ color: 0xff9a5d }),
     );
     barrel.rotation.x = Math.PI / 2;
     barrel.position.z = -0.82;
@@ -963,9 +1005,9 @@ class FreemanEngine {
     const operatorRing = new THREE.Mesh(
       new THREE.RingGeometry(0.72, 0.78, 32),
       new THREE.MeshBasicMaterial({
-        color: 0xe77d44,
+        color: 0xff9a5d,
         transparent: true,
-        opacity: 0.72,
+        opacity: 0.96,
         side: THREE.DoubleSide,
       }),
     );
@@ -973,6 +1015,11 @@ class FreemanEngine {
     operatorRing.position.y = 0.04;
     group.add(operatorRing);
 
+    const operatorLight = new THREE.PointLight(0xff8a4a, 18, 5, 2);
+    operatorLight.position.set(0, 1.1, 0);
+    group.add(operatorLight);
+
+    group.scale.setScalar(1.14);
     group.traverse((object) => {
       if (object instanceof THREE.Mesh) object.castShadow = true;
     });
@@ -995,14 +1042,16 @@ class FreemanEngine {
     const coreMaterial = new THREE.MeshStandardMaterial({
       color: definition.color,
       emissive: definition.color,
-      emissiveIntensity: 0.8,
+      emissiveIntensity: 1.55,
       roughness: 0.28,
       metalness: 0.68,
     });
     const darkMaterial = new THREE.MeshStandardMaterial({
-      color: 0x151919,
+      color: 0x263238,
       roughness: 0.4,
       metalness: 0.8,
+      emissive: definition.color,
+      emissiveIntensity: 0.18,
     });
     const geometry =
       definition.id === "kairos"
@@ -1017,15 +1066,29 @@ class FreemanEngine {
     group.add(core);
 
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.55, 0.035, 6, 32),
+      new THREE.TorusGeometry(0.62, 0.055, 8, 40),
       darkMaterial,
     );
     ring.rotation.x = Math.PI / 2;
     ring.name = "agent-ring";
     group.add(ring);
 
-    const light = new THREE.PointLight(definition.color, 9, 3.5, 2);
+    const agentPad = new THREE.Mesh(
+      new THREE.RingGeometry(0.52, 0.68, 32),
+      new THREE.MeshBasicMaterial({
+        color: definition.color,
+        transparent: true,
+        opacity: 0.32,
+        side: THREE.DoubleSide,
+      }),
+    );
+    agentPad.rotation.x = -Math.PI / 2;
+    agentPad.position.y = -0.42;
+    group.add(agentPad);
+
+    const light = new THREE.PointLight(definition.color, 18, 5.5, 2);
     group.add(light);
+    group.scale.setScalar(1.2);
     return group;
   }
 
@@ -1053,7 +1116,7 @@ class FreemanEngine {
         reward: 14,
         radius: 0.46,
         color: 0xa73d2d,
-        scale: 0.72,
+        scale: 1.02,
       },
       phisher: {
         hp: 72,
@@ -1064,7 +1127,7 @@ class FreemanEngine {
         reward: 20,
         radius: 0.55,
         color: 0xb35d32,
-        scale: 0.86,
+        scale: 1.08,
       },
       trojan: {
         hp: 138,
@@ -1075,7 +1138,7 @@ class FreemanEngine {
         reward: 30,
         radius: 0.82,
         color: 0x7b2923,
-        scale: 1.12,
+        scale: 1.26,
       },
       rootkit: {
         hp: 560,
@@ -1086,7 +1149,7 @@ class FreemanEngine {
         reward: 125,
         radius: 1.42,
         color: 0xb7422e,
-        scale: 1.85,
+        scale: 2.05,
       },
     };
     const definition = definitions[type];
@@ -1094,11 +1157,16 @@ class FreemanEngine {
     group.position.copy(position);
 
     const material = new THREE.MeshStandardMaterial({
-      color: 0x251313,
-      emissive: definition.color,
-      emissiveIntensity: type === "rootkit" ? 1.05 : 0.64,
+      color: definition.color,
+      emissive:
+        type === "rootkit"
+          ? 0x7a1e17
+          : type === "trojan"
+            ? 0x511713
+            : 0x3d1110,
+      emissiveIntensity: type === "rootkit" ? 1.4 : 0.8,
       roughness: 0.42,
-      metalness: 0.36,
+      metalness: 0.34,
     });
     let geometry: THREE.BufferGeometry;
     if (type === "phisher") geometry = new THREE.TetrahedronGeometry(0.66, 0);
@@ -1111,6 +1179,39 @@ class FreemanEngine {
     body.scale.setScalar(definition.scale);
     body.castShadow = true;
     group.add(body);
+
+    const enemyCore = new THREE.Mesh(
+      new THREE.SphereGeometry(type === "rootkit" ? 0.24 : 0.15, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0xffc4a0 }),
+    );
+    enemyCore.position.set(0, definition.radius, -definition.radius * 0.62);
+    group.add(enemyCore);
+
+    const enemyLight = new THREE.PointLight(
+      definition.color,
+      type === "rootkit" ? 26 : 11,
+      type === "rootkit" ? 6 : 3.6,
+      2,
+    );
+    enemyLight.position.set(0, definition.radius + 0.2, 0);
+    group.add(enemyLight);
+
+    const threatRing = new THREE.Mesh(
+      new THREE.RingGeometry(
+        definition.radius * 0.9,
+        definition.radius * 1.08,
+        32,
+      ),
+      new THREE.MeshBasicMaterial({
+        color: definition.color,
+        transparent: true,
+        opacity: type === "rootkit" ? 0.5 : 0.3,
+        side: THREE.DoubleSide,
+      }),
+    );
+    threatRing.rotation.x = -Math.PI / 2;
+    threatRing.position.y = 0.02;
+    group.add(threatRing);
 
     if (type === "virus" || type === "rootkit") {
       const spikeGeometry = new THREE.ConeGeometry(
@@ -1149,6 +1250,14 @@ class FreemanEngine {
       halo.rotation.x = Math.PI / 2;
       halo.name = "enemy-halo";
       group.add(halo);
+
+      const antenna = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.035, 0.035, 0.75, 6),
+        new THREE.MeshBasicMaterial({ color: 0xffb078 }),
+      );
+      antenna.position.y = 1.16;
+      antenna.rotation.z = 0.38;
+      group.add(antenna);
     }
 
     if (type === "trojan") {
@@ -1246,9 +1355,9 @@ class FreemanEngine {
       "trojan",
     ]);
     this.callbacks.onToast({
-      eyebrow: "FINAL BREACH",
-      title: "ROOTKIT PRIME HAS ENTERED",
-      detail: "Break its shell before it reaches the Covenant Core.",
+      eyebrow: "FINAL WAVE",
+      title: "THE BOSS HAS ENTERED",
+      detail: "Destroy Rootkit Prime before it reaches the Core.",
     });
   }
 
@@ -1599,17 +1708,26 @@ class FreemanEngine {
         enemy.telegraphLeft -= delta;
         const pulse =
           1 + Math.sin((enemy.telegraphLeft / enemy.telegraphTotal) * Math.PI * 6) * 0.08;
-        enemy.body.scale.setScalar(pulse * (enemy.type === "rootkit" ? 1.85 : enemy.type === "trojan" ? 1.12 : enemy.type === "phisher" ? 0.86 : 0.72));
+        enemy.body.scale.setScalar(
+          pulse *
+            (enemy.type === "rootkit"
+              ? 2.05
+              : enemy.type === "trojan"
+                ? 1.26
+                : enemy.type === "phisher"
+                  ? 1.08
+                  : 1.02),
+        );
         if (enemy.telegraphLeft <= 0) {
           enemy.cooldownLeft = enemy.attackCooldown;
           enemy.body.scale.setScalar(
             enemy.type === "rootkit"
-              ? 1.85
+              ? 2.05
               : enemy.type === "trojan"
-                ? 1.12
+                ? 1.26
                 : enemy.type === "phisher"
-                  ? 0.86
-                  : 0.72,
+                  ? 1.08
+                  : 1.02,
           );
           if (enemy.type === "phisher") {
             const origin = position.clone().add(new THREE.Vector3(0, 0.8, 0));
@@ -1782,8 +1900,8 @@ class FreemanEngine {
       this.audio.play("victory");
       this.callbacks.onToast({
         eyebrow: "MISSION COMPLETE",
-        title: "THE GRID REMAINS FREE",
-        detail: "The NULL siege has been contained.",
+        title: "THE NETWORK IS SAFE",
+        detail: "You survived all three waves and stopped the hacker attack.",
       });
       this.emitHud(true);
       return;
@@ -1792,9 +1910,9 @@ class FreemanEngine {
     this.data += 24;
     this.callbacks.onMode("upgrade");
     this.callbacks.onToast({
-      eyebrow: `BREACH ${this.wave} CONTAINED`,
-      title: "CHOOSE THE NEXT PROTOCOL",
-      detail: "Survival earns a choice. Use it with judgment.",
+      eyebrow: `WAVE ${this.wave} CLEARED`,
+      title: "CHOOSE ONE UPGRADE",
+      detail: "The next wave is stronger. Pick the upgrade that helps most.",
     });
     this.audio.play("wave");
     this.emitHud(true);
@@ -1831,9 +1949,9 @@ class FreemanEngine {
     this.callbacks.onMode("defeat");
     this.audio.play("defeat");
     this.callbacks.onToast({
-      eyebrow: "SIGNAL LOST",
-      title: this.core.hp <= 0 ? "THE COVENANT FELL" : "OPERATOR OFFLINE",
-      detail: "Reset the protocol. Recruit earlier. Protect what matters.",
+      eyebrow: "MISSION FAILED",
+      title: this.core.hp <= 0 ? "THE CORE WAS DESTROYED" : "YOU WERE DEFEATED",
+      detail: "Try again, recruit agents earlier, and keep enemies away from the Core.",
     });
     this.emitHud(true);
   }
@@ -2270,9 +2388,9 @@ class FreemanCanvasEngine implements GameController {
     this.spawnWave(1);
     this.audio.play("wave");
     this.callbacks.onToast({
-      eyebrow: "MISSION 001",
-      title: "NULL BREACH DETECTED",
-      detail: "Protect the Covenant Core. Recover compute. Recruit intelligence.",
+      eyebrow: "WAVE 1 STARTED",
+      title: "DEFEND THE CORE",
+      detail: "Move with WASD. Aim with the mouse. Click or press Space to shoot.",
     });
     this.emitHud(true);
   }
@@ -2297,9 +2415,9 @@ class FreemanCanvasEngine implements GameController {
     if (!definition || this.agents.some((agent) => agent.id === id)) return;
     if (this.data < definition.cost) {
       this.callbacks.onToast({
-        eyebrow: "INSUFFICIENT COMPUTE",
-        title: `${definition.cost - this.data} MORE REQUIRED`,
-        detail: "Destroy hostile processes to recover clean compute.",
+        eyebrow: "NOT ENOUGH COMPUTE",
+        title: `YOU NEED ${definition.cost - this.data} MORE`,
+        detail: "Destroy enemies to earn Compute, then recruit this agent.",
       });
       return;
     }
@@ -2315,8 +2433,8 @@ class FreemanCanvasEngine implements GameController {
     this.addBurst(this.player.x, this.player.z, definition.color, 13);
     this.audio.play("recruit");
     this.callbacks.onToast({
-      eyebrow: `AGENT ${definition.code} RECRUITED`,
-      title: `${definition.name} IS ONLINE`,
+      eyebrow: `AI AGENT ${definition.code} RECRUITED`,
+      title: `${definition.name} JOINED YOUR TEAM`,
       detail: definition.detail,
     });
     this.emitHud(true);
@@ -2405,9 +2523,9 @@ class FreemanCanvasEngine implements GameController {
     this.shake = this.reducedMotion ? 0.04 : 0.52;
     this.audio.play("ultimate");
     this.callbacks.onToast({
-      eyebrow: "ORCHESTRATION COMPLETE",
-      title: "THE SWARM MOVES AS ONE",
-      detail: `${this.agents.length || "No"} recruited agents amplified the command burst.`,
+      eyebrow: "TEAM BLAST ACTIVATED",
+      title: "YOUR AI TEAM ATTACKED TOGETHER",
+      detail: `${this.agents.length || "No"} recruited agents powered this full-arena attack.`,
     });
     this.emitHud(true);
   }
@@ -2427,9 +2545,9 @@ class FreemanCanvasEngine implements GameController {
     }
     const selected = UPGRADES.find((upgrade) => upgrade.id === id);
     this.callbacks.onToast({
-      eyebrow: "PROTOCOL INSTALLED",
-      title: selected?.name ?? "SYSTEM UPGRADED",
-      detail: selected?.outcome ?? "The network is stronger.",
+      eyebrow: "UPGRADE APPLIED",
+      title: selected?.name ?? "TEAM UPGRADED",
+      detail: selected?.outcome ?? "Your team is stronger.",
     });
     this.wave += 1;
     this.mode = "playing";
@@ -2955,9 +3073,9 @@ class FreemanCanvasEngine implements GameController {
     });
     if (wave === 3) {
       this.callbacks.onToast({
-        eyebrow: "FINAL BREACH",
-        title: "ROOTKIT PRIME HAS ENTERED",
-        detail: "Break its shell before it reaches the Covenant Core.",
+        eyebrow: "FINAL WAVE",
+        title: "THE BOSS HAS ENTERED",
+        detail: "Destroy Rootkit Prime before it reaches the Core.",
       });
     }
     this.emitHud(true);
@@ -3054,8 +3172,8 @@ class FreemanCanvasEngine implements GameController {
       this.audio.play("victory");
       this.callbacks.onToast({
         eyebrow: "MISSION COMPLETE",
-        title: "THE GRID REMAINS FREE",
-        detail: "The NULL siege has been contained.",
+        title: "THE NETWORK IS SAFE",
+        detail: "You survived all three waves and stopped the hacker attack.",
       });
       this.emitHud(true);
       return;
@@ -3064,9 +3182,9 @@ class FreemanCanvasEngine implements GameController {
     this.data += 24;
     this.callbacks.onMode("upgrade");
     this.callbacks.onToast({
-      eyebrow: `BREACH ${this.wave} CONTAINED`,
-      title: "CHOOSE THE NEXT PROTOCOL",
-      detail: "Survival earns a choice. Use it with judgment.",
+      eyebrow: `WAVE ${this.wave} CLEARED`,
+      title: "CHOOSE ONE UPGRADE",
+      detail: "The next wave is stronger. Pick the upgrade that helps most.",
     });
     this.audio.play("wave");
     this.emitHud(true);
@@ -3095,9 +3213,9 @@ class FreemanCanvasEngine implements GameController {
     this.callbacks.onMode("defeat");
     this.audio.play("defeat");
     this.callbacks.onToast({
-      eyebrow: "SIGNAL LOST",
-      title: this.core.hp <= 0 ? "THE COVENANT FELL" : "OPERATOR OFFLINE",
-      detail: "Reset the protocol. Recruit earlier. Protect what matters.",
+      eyebrow: "MISSION FAILED",
+      title: this.core.hp <= 0 ? "THE CORE WAS DESTROYED" : "YOU WERE DEFEATED",
+      detail: "Try again, recruit agents earlier, and keep enemies away from the Core.",
     });
     this.emitHud(true);
   }
@@ -3321,9 +3439,9 @@ class FreemanCanvasEngine implements GameController {
       this.height * 0.46,
       Math.max(this.width, this.height) * 0.72,
     );
-    background.addColorStop(0, "#111717");
-    background.addColorStop(0.42, "#080c0c");
-    background.addColorStop(1, "#030505");
+    background.addColorStop(0, "#1b2b31");
+    background.addColorStop(0.44, "#0d171d");
+    background.addColorStop(1, "#060b0f");
     context.fillStyle = background;
     context.fillRect(0, 0, this.width, this.height);
 
@@ -3377,7 +3495,7 @@ class FreemanCanvasEngine implements GameController {
       context.moveTo(horizontalStart.x, horizontalStart.y);
       context.lineTo(horizontalEnd.x, horizontalEnd.y);
       context.strokeStyle =
-        value === 0 ? "rgba(220,117,64,.18)" : "rgba(120,150,148,.075)";
+        value === 0 ? "rgba(240,138,75,.42)" : "rgba(120,190,202,.16)";
       context.stroke();
 
       const verticalStart = this.project(value, -20);
@@ -3403,10 +3521,10 @@ class FreemanCanvasEngine implements GameController {
       else context.lineTo(point.x, point.y);
     });
     context.closePath();
-    context.fillStyle = "rgba(15,21,20,.92)";
+    context.fillStyle = "rgba(27,39,43,.96)";
     context.fill();
-    context.strokeStyle = "rgba(220,117,64,.35)";
-    context.lineWidth = 1;
+    context.strokeStyle = "rgba(240,138,75,.72)";
+    context.lineWidth = 1.5;
     context.stroke();
     context.restore();
   }
@@ -3441,20 +3559,21 @@ class FreemanCanvasEngine implements GameController {
       context.closePath();
       context.fillStyle = fill;
       context.fill();
-      context.strokeStyle = "rgba(158,191,192,.08)";
+      context.strokeStyle = "rgba(158,210,220,.18)";
       context.lineWidth = 1;
       context.stroke();
     };
     context.save();
-    polygon([base[0], base[1], top[1], top[0]], "#0a0e0e");
-    polygon([base[1], base[2], top[2], top[1]], "#101515");
-    polygon(top, "#171d1c");
+    polygon([base[0], base[1], top[1], top[0]], "#101a20");
+    polygon([base[1], base[2], top[2], top[1]], "#18262d");
+    polygon(top, "#24343b");
     const stripStart = this.project(x - width / 2, z - depth / 2, height * 0.62);
     const stripEnd = this.project(x + width / 2, z - depth / 2, height * 0.62);
     context.beginPath();
     context.moveTo(stripStart.x, stripStart.y);
     context.lineTo(stripEnd.x, stripEnd.y);
-    context.strokeStyle = "rgba(220,117,64,.28)";
+    context.strokeStyle = "rgba(240,138,75,.68)";
+    context.lineWidth = 1.5;
     context.stroke();
     context.restore();
   }
@@ -3473,8 +3592,8 @@ class FreemanCanvasEngine implements GameController {
     context.beginPath();
     context.ellipse(base.x, base.y + 8, scale * 1.35, scale * 0.46, 0, 0, Math.PI * 2);
     context.fill();
-    context.fillStyle = "#151a19";
-    context.strokeStyle = "rgba(220,117,64,.48)";
+    context.fillStyle = "#25353b";
+    context.strokeStyle = "rgba(255,154,93,.78)";
     context.lineWidth = 1;
     context.beginPath();
     context.moveTo(base.x, base.y - scale * 0.42);
@@ -3485,8 +3604,8 @@ class FreemanCanvasEngine implements GameController {
     context.fill();
     context.stroke();
     context.shadowColor = "#dc7540";
-    context.shadowBlur = 22;
-    context.fillStyle = "#e5d9c9";
+    context.shadowBlur = 32;
+    context.fillStyle = "#fff0e2";
     context.beginPath();
     context.moveTo(crystal.x, crystal.y - scale * 0.62);
     context.lineTo(crystal.x + scale * 0.4, crystal.y);
@@ -3494,7 +3613,7 @@ class FreemanCanvasEngine implements GameController {
     context.lineTo(crystal.x - scale * 0.4, crystal.y);
     context.closePath();
     context.fill();
-    context.strokeStyle = "#dc7540";
+    context.strokeStyle = "#ff9a5d";
     context.stroke();
     context.restore();
   }
@@ -3510,12 +3629,12 @@ class FreemanCanvasEngine implements GameController {
     context.beginPath();
     context.ellipse(feet.x, feet.y + 6, scale * 0.52, scale * 0.2, 0, 0, Math.PI * 2);
     context.fill();
-    context.strokeStyle = "rgba(220,117,64,.75)";
-    context.lineWidth = 1;
+    context.strokeStyle = "rgba(255,154,93,.96)";
+    context.lineWidth = 2;
     context.beginPath();
     context.ellipse(feet.x, feet.y + 3, scale * 0.72, scale * 0.27, 0, 0, Math.PI * 2);
     context.stroke();
-    context.fillStyle = "#282b29";
+    context.fillStyle = "#34464f";
     context.beginPath();
     context.moveTo(torso.x - scale * 0.37, torso.y - scale * 0.25);
     context.lineTo(torso.x + scale * 0.37, torso.y - scale * 0.25);
@@ -3523,13 +3642,52 @@ class FreemanCanvasEngine implements GameController {
     context.lineTo(feet.x - scale * 0.44, feet.y);
     context.closePath();
     context.fill();
-    context.strokeStyle = "#dc7540";
+    context.strokeStyle = "#ff9a5d";
     context.stroke();
+
+    context.fillStyle = "#17262d";
+    context.strokeStyle = "#6b8e98";
+    context.lineWidth = 1;
+    for (const side of [-1, 1]) {
+      context.beginPath();
+      context.moveTo(feet.x + side * scale * 0.08, feet.y - scale * 0.05);
+      context.lineTo(feet.x + side * scale * 0.31, feet.y + scale * 0.2);
+      context.lineTo(feet.x + side * scale * 0.5, feet.y + scale * 0.17);
+      context.lineTo(feet.x + side * scale * 0.25, feet.y - scale * 0.12);
+      context.closePath();
+      context.fill();
+      context.stroke();
+    }
+
+    context.fillStyle = "#a6603f";
+    for (const side of [-1, 1]) {
+      context.beginPath();
+      context.roundRect(
+        torso.x + side * scale * 0.37 - scale * 0.15,
+        torso.y - scale * 0.34,
+        scale * 0.3,
+        scale * 0.18,
+        scale * 0.05,
+      );
+      context.fill();
+    }
+
+    context.shadowColor = "#ff9a5d";
+    context.shadowBlur = 15;
+    context.fillStyle = "#ffd0ae";
+    context.fillRect(
+      torso.x - scale * 0.07,
+      torso.y - scale * 0.11,
+      scale * 0.14,
+      scale * 0.18,
+    );
+    context.shadowBlur = 0;
+
     context.fillStyle = "#b98b72";
     context.beginPath();
     context.arc(head.x, head.y, scale * 0.24, 0, Math.PI * 2);
     context.fill();
-    context.strokeStyle = "#9ebfc0";
+    context.strokeStyle = "#bde7ec";
     context.lineWidth = Math.max(1, scale * 0.07);
     context.beginPath();
     context.moveTo(head.x - scale * 0.19, head.y);
@@ -3541,7 +3699,7 @@ class FreemanCanvasEngine implements GameController {
     const length = Math.hypot(dx, dy) || 1;
     dx /= length;
     dy /= length;
-    context.strokeStyle = "#dc7540";
+    context.strokeStyle = "#ff9a5d";
     context.lineWidth = Math.max(2, scale * 0.08);
     context.beginPath();
     context.moveTo(torso.x, torso.y);
@@ -3560,10 +3718,10 @@ class FreemanCanvasEngine implements GameController {
     const size = point.scale * 0.28;
     context.save();
     context.shadowColor = toCssColor(agent.color);
-    context.shadowBlur = 17;
+    context.shadowBlur = 24;
     context.strokeStyle = toCssColor(agent.color);
-    context.fillStyle = "#111616";
-    context.lineWidth = 1.2;
+    context.fillStyle = "#26353c";
+    context.lineWidth = 2;
     context.beginPath();
     context.moveTo(point.x, point.y - size);
     context.lineTo(point.x + size, point.y);
@@ -3609,10 +3767,17 @@ class FreemanCanvasEngine implements GameController {
     context.ellipse(floor.x, floor.y + 4, size * 0.9, size * 0.28, 0, 0, Math.PI * 2);
     context.fill();
     context.shadowColor = color;
-    context.shadowBlur = enemy.type === "rootkit" ? 28 : 13;
-    context.fillStyle = "#241212";
+    context.shadowBlur = enemy.type === "rootkit" ? 36 : 22;
+    context.fillStyle =
+      enemy.type === "trojan"
+        ? "#8f3a2e"
+        : enemy.type === "rootkit"
+          ? "#9b2f25"
+          : enemy.type === "phisher"
+            ? "#9b4b2c"
+            : "#843027";
     context.strokeStyle = color;
-    context.lineWidth = enemy.type === "rootkit" ? 2 : 1.2;
+    context.lineWidth = enemy.type === "rootkit" ? 3 : 2;
     context.beginPath();
     if (enemy.type === "phisher") {
       context.moveTo(point.x, point.y - size);
@@ -3634,6 +3799,42 @@ class FreemanCanvasEngine implements GameController {
     context.closePath();
     context.fill();
     context.stroke();
+
+    const highlight = context.createLinearGradient(
+      point.x - size,
+      point.y - size,
+      point.x + size,
+      point.y + size,
+    );
+    highlight.addColorStop(0, "rgba(255,205,168,.34)");
+    highlight.addColorStop(0.48, "rgba(255,128,82,.06)");
+    highlight.addColorStop(1, "rgba(25,3,2,.42)");
+    context.fillStyle = highlight;
+    context.fill();
+
+    context.shadowColor = "#ffd5ba";
+    context.shadowBlur = 14;
+    context.fillStyle = "#ffd5ba";
+    context.beginPath();
+    context.arc(
+      point.x,
+      point.y,
+      Math.max(2.2, size * (enemy.type === "rootkit" ? 0.16 : 0.2)),
+      0,
+      Math.PI * 2,
+    );
+    context.fill();
+
+    context.shadowBlur = 0;
+    context.strokeStyle = "rgba(255,201,167,.62)";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(point.x - size * 0.5, point.y);
+    context.lineTo(point.x - size * 0.2, point.y);
+    context.moveTo(point.x + size * 0.2, point.y);
+    context.lineTo(point.x + size * 0.5, point.y);
+    context.stroke();
+
     context.shadowBlur = 0;
     const healthWidth = Math.max(28, size * 1.6);
     const healthRatio = clamp01(enemy.hp / enemy.maxHp);
@@ -3650,6 +3851,17 @@ class FreemanCanvasEngine implements GameController {
       point.y - size - 12,
       healthWidth * healthRatio,
       3,
+    );
+    context.fillStyle = "rgba(255,226,207,.78)";
+    context.font = `${Math.max(7, Math.min(9, size * 0.25))}px monospace`;
+    context.textAlign = "center";
+    context.textBaseline = "bottom";
+    context.fillText(
+      enemy.type === "rootkit"
+        ? "ROOTKIT BOSS"
+        : enemy.type.toUpperCase(),
+      point.x,
+      point.y - size - 15,
     );
     context.restore();
   }
@@ -3899,12 +4111,12 @@ export default function FreemanProtocol() {
           <span className="hud-brand__sigil">F</span>
           <span>
             <strong>FREEMAN / PROTOCOL</strong>
-            <small>KAIROS SYSTEM · MISSION 001</small>
+            <small>CYBER DEFENSE · MISSION 001</small>
           </span>
         </div>
 
-        <div className="wave-state" aria-label={`Breach ${hud.wave} of 3`}>
-          <span>BREACH</span>
+        <div className="wave-state" aria-label={`Wave ${hud.wave} of 3`}>
+          <span>WAVE</span>
           {[1, 2, 3].map((wave) => (
             <i
               key={wave}
@@ -3940,10 +4152,16 @@ export default function FreemanProtocol() {
 
       {mode !== "intro" && (
         <>
+          <div className="objective-banner" role="status">
+            <small>YOUR GOAL</small>
+            <strong>DEFEND THE CORE</strong>
+            <span>{hud.enemies} enemies left · Recruit AI help · Survive 3 waves</span>
+          </div>
+
           <aside className="vitals-panel">
-            <p className="panel-label">IAN GOH · BRIDGE OPERATOR</p>
+            <p className="panel-label">IAN GOH · NETWORK DEFENDER</p>
             <div className="vital-row">
-              <span>INTEGRITY</span>
+              <span>YOUR HEALTH</span>
               <strong>
                 {hud.hp}<small>/{hud.maxHp}</small>
               </strong>
@@ -3952,7 +4170,7 @@ export default function FreemanProtocol() {
               <i style={{ width: `${clamp01(hud.hp / hud.maxHp) * 100}%` }} />
             </div>
             <div className="vital-row core-row">
-              <span>COVENANT CORE</span>
+              <span>CORE HEALTH</span>
               <strong>
                 {hud.core}<small>/{hud.maxCore}</small>
               </strong>
@@ -3962,11 +4180,11 @@ export default function FreemanProtocol() {
             </div>
             <div className="resource-grid">
               <span>
-                <small>CLEAN COMPUTE</small>
+                <small>COMPUTE</small>
                 <strong>{String(hud.data).padStart(3, "0")}</strong>
               </span>
               <span>
-                <small>HOSTILES</small>
+                <small>ENEMIES</small>
                 <strong>{String(hud.enemies).padStart(2, "0")}</strong>
               </span>
               <span>
@@ -4017,12 +4235,12 @@ export default function FreemanProtocol() {
           <section className="agent-dock" aria-label="AI agent recruitment">
             <div className="agent-dock__heading">
               <span>
-                <small>YOUR SWARM</small>
+                <small>YOUR AI TEAM</small>
                 <strong>
-                  RECRUIT INTELLIGENCE <b>{recruitedCount}/4</b>
+                  RECRUIT AI AGENTS <b>{recruitedCount}/4</b>
                 </strong>
               </span>
-              <span className="desktop-only">PRESS 1–4 TO DEPLOY</span>
+              <span className="desktop-only">CLICK A CARD OR PRESS 1–4</span>
             </div>
             <div className="agent-grid">
               {AGENTS.map((agent, index) => {
@@ -4038,7 +4256,7 @@ export default function FreemanProtocol() {
                     aria-label={
                       recruited
                         ? `${agent.name} recruited`
-                        : `Recruit ${agent.name} for ${agent.cost} compute`
+                        : `Recruit ${agent.name} for ${agent.cost} Compute`
                     }
                   >
                     <span
@@ -4054,7 +4272,7 @@ export default function FreemanProtocol() {
                     <span
                       className={`agent-card__cost ${!affordable && !recruited ? "is-low" : ""}`}
                     >
-                      {recruited ? "ONLINE" : `${agent.cost} C`}
+                      {recruited ? "RECRUITED" : `${agent.cost} COMPUTE`}
                     </span>
                     <kbd>{index + 1}</kbd>
                   </button>
@@ -4080,21 +4298,21 @@ export default function FreemanProtocol() {
               className="ability ability--attack"
               onClick={() => engineRef.current?.attack()}
               disabled={mode !== "playing"}
-              aria-label="Command burst"
+              aria-label="Shoot at the nearest enemy"
             >
               <small>SPACE</small>
-              <strong>BURST</strong>
+              <strong>SHOOT</strong>
             </button>
             <button
               type="button"
               className={`ability ability--ultimate ${hud.ultimate >= 1 ? "is-ready" : ""}`}
               onClick={() => engineRef.current?.ultimate()}
               disabled={mode !== "playing" || hud.ultimate < 1}
-              aria-label="Orchestrate ultimate ability"
+              aria-label="AI team blast"
             >
               <i style={{ "--charge": hud.ultimate } as React.CSSProperties} />
               <small>R</small>
-              <strong>ORCHESTRATE</strong>
+              <strong>TEAM BLAST</strong>
             </button>
           </div>
 
@@ -4115,7 +4333,7 @@ export default function FreemanProtocol() {
       {mode === "intro" && (
         <section className="intro-screen">
           <div className="intro-copy">
-            <span className="eyebrow">A KAIROS FIELD EXPERIMENT · 2026</span>
+            <span className="eyebrow">ISOMETRIC CYBER DEFENSE ACTION RPG</span>
             <div className="intro-mark">
               <span>F</span>
               <i>00</i>
@@ -4125,20 +4343,20 @@ export default function FreemanProtocol() {
               <em>PROTOCOL</em>
             </h1>
             <p className="intro-lede">
-              The grid does not need another hero.
+              Hackers have breached the network.
               <br />
-              It needs an operator.
+              Build an AI team and fight back.
             </p>
             <p className="intro-mission">
-              Recruit intelligence. Build the Kingdom. Protect the Covenant.
-              Secure the Freeman.
+              Destroy viruses to earn Compute. Spend it to recruit four AI agents,
+              then survive all three attack waves.
             </p>
             <button
               type="button"
               className="enter-button"
               onClick={() => engineRef.current?.start()}
             >
-              <span>ENTER THE GRID</span>
+              <span>START MISSION</span>
               <i>→</i>
             </button>
           </div>
@@ -4146,22 +4364,22 @@ export default function FreemanProtocol() {
           <div className="intro-brief">
             <span className="intro-brief__line" />
             <p>
-              <small>MISSION 001</small>
-              <strong>THE NULL SIEGE</strong>
+              <small>YOUR GOAL</small>
+              <strong>KEEP THE CORE ALIVE</strong>
             </p>
             <p>
-              <small>OPERATOR</small>
-              <strong>IAN GOH · BRIDGE CLASS</strong>
+              <small>CONTROLS</small>
+              <strong>WASD TO MOVE · CLICK TO SHOOT</strong>
             </p>
             <p>
-              <small>DIRECTIVE</small>
-              <strong>DEFEND THE COVENANT CORE</strong>
+              <small>YOUR TEAM</small>
+              <strong>RECRUIT UP TO 4 AI AGENTS</strong>
             </p>
           </div>
 
           <footer className="intro-footer">
-            <span>DESKTOP + TOUCH ENABLED</span>
-            <span>MOVE · AIM · RECRUIT · ORCHESTRATE</span>
+            <span>NO DOWNLOAD · DESKTOP + TOUCH</span>
+            <span>MOVE · SHOOT · RECRUIT · SURVIVE</span>
           </footer>
         </section>
       )}
@@ -4169,9 +4387,9 @@ export default function FreemanProtocol() {
       {mode === "upgrade" && (
         <section className="overlay-screen protocol-screen">
           <div className="overlay-copy">
-            <span className="eyebrow">BREACH {hud.wave} CONTAINED</span>
-            <h2>Judgment is the upgrade.</h2>
-            <p>Choose one protocol before the next attack reaches the grid.</p>
+            <span className="eyebrow">WAVE {hud.wave} CLEARED</span>
+            <h2>Choose one upgrade.</h2>
+            <p>The next wave is stronger. Pick what your team needs most.</p>
           </div>
           <div className="protocol-grid">
             {UPGRADES.map((upgrade) => (
@@ -4182,7 +4400,7 @@ export default function FreemanProtocol() {
               >
                 <small>{upgrade.index}</small>
                 <span>
-                  <em>INSTALL PROTOCOL</em>
+                  <em>APPLY UPGRADE</em>
                   <strong>{upgrade.name}</strong>
                   <p>{upgrade.detail}</p>
                 </span>
@@ -4195,9 +4413,9 @@ export default function FreemanProtocol() {
 
       {mode === "paused" && (
         <section className="overlay-screen pause-screen">
-          <span className="eyebrow">SIMULATION SUSPENDED</span>
-          <h2>Hold the line.</h2>
-          <p>The grid will remain frozen until you return.</p>
+          <span className="eyebrow">GAME PAUSED</span>
+          <h2>Take a breath.</h2>
+          <p>The action is frozen until you resume.</p>
           <button
             type="button"
             className="enter-button enter-button--compact"
@@ -4214,19 +4432,19 @@ export default function FreemanProtocol() {
           className={`overlay-screen end-screen ${mode === "victory" ? "is-victory" : "is-defeat"}`}
         >
           <span className="eyebrow">
-            {mode === "victory" ? "MISSION COMPLETE" : "SIGNAL LOST"}
+            {mode === "victory" ? "MISSION COMPLETE" : "MISSION FAILED"}
           </span>
           <h2>
             {mode === "victory"
-              ? "The grid remains free."
+              ? "The network is safe."
               : hud.core <= 0
-                ? "The Covenant fell."
-                : "Operator offline."}
+                ? "The Core was destroyed."
+                : "You were defeated."}
           </h2>
           <p>
             {mode === "victory"
-              ? "You did not fight alone. You built a system that could."
-              : "Survival is information. Reset, recruit earlier, and return."}
+              ? "You survived three waves by building an AI team that could fight with you."
+              : "Try again, recruit agents earlier, and keep enemies away from the Core."}
           </p>
           <div className="end-stats">
             <span>
@@ -4247,7 +4465,7 @@ export default function FreemanProtocol() {
             className="enter-button enter-button--compact"
             onClick={() => engineRef.current?.start()}
           >
-            <span>{mode === "victory" ? "RUN IT AGAIN" : "RESET PROTOCOL"}</span>
+            <span>{mode === "victory" ? "PLAY AGAIN" : "TRY AGAIN"}</span>
             <i>→</i>
           </button>
         </section>
@@ -4263,19 +4481,23 @@ export default function FreemanProtocol() {
           >
             ×
           </button>
-          <span className="eyebrow">OPERATOR MANUAL</span>
-          <h2>Move with intent.</h2>
+          <span className="eyebrow">HOW TO PLAY</span>
+          <h2>Protect the Core.</h2>
+          <p className="help-dialog__goal">
+            Destroy enemies, earn Compute, and recruit AI agents. Clear all three
+            waves before your health or the Core reaches zero.
+          </p>
           <div className="control-list">
             <span><kbd>WASD</kbd><b>Move</b></span>
-            <span><kbd>CLICK / SPACE</kbd><b>Command burst</b></span>
-            <span><kbd>Q / SHIFT</kbd><b>Dash</b></span>
-            <span><kbd>R</kbd><b>Orchestrate swarm</b></span>
-            <span><kbd>1–4</kbd><b>Recruit agents</b></span>
+            <span><kbd>CLICK / SPACE</kbd><b>Shoot</b></span>
+            <span><kbd>Q / SHIFT</kbd><b>Dash away</b></span>
+            <span><kbd>R</kbd><b>AI team blast</b></span>
+            <span><kbd>1–4</kbd><b>Recruit an AI agent</b></span>
             <span><kbd>RIGHT DRAG</kbd><b>Rotate camera</b></span>
             <span><kbd>WHEEL</kbd><b>Zoom camera</b></span>
             <span><kbd>Z / C / F</kbd><b>Rotate / reset view</b></span>
           </div>
-          <p>On touch, use the left stick and the three action controls.</p>
+          <p>On touch devices, move with the left stick and use the action buttons.</p>
         </section>
       )}
 
