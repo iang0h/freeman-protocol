@@ -224,8 +224,11 @@ canvas:focus-visible {
   pointer-events: auto;
 }
 
-.hud-actions button {
+.hud-actions button,
+.hud-actions a {
+  display: grid;
   min-height: 31px;
+  align-items: center;
   padding: 0 11px;
   border: 1px solid var(--line);
   background: rgba(7, 10, 10, 0.68);
@@ -233,11 +236,13 @@ canvas:focus-visible {
   font-family: var(--mono);
   font-size: 8px;
   letter-spacing: 0.12em;
+  text-decoration: none;
   cursor: pointer;
   backdrop-filter: blur(10px);
 }
 
-.hud-actions button:hover:not(:disabled) {
+.hud-actions button:hover:not(:disabled),
+.hud-actions a:hover {
   border-color: var(--line-strong);
   color: var(--ivory);
 }
@@ -1302,6 +1307,10 @@ canvas:focus-visible {
   }
 
   .hud-actions button:first-child {
+    display: none;
+  }
+
+  .hud-actions a {
     display: none;
   }
 

@@ -4134,6 +4134,7 @@ export default function FreemanProtocol() {
         </div>
 
         <div className="hud-actions">
+          <a href="/asset-catalog">ASSET LEDGER</a>
           <button type="button" onClick={openHelp}>
             CONTROLS
           </button>
