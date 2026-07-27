@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import styles from "./AssetCatalog.module.css";
 
@@ -30,17 +31,17 @@ const assets: Asset[] = [
     category: "Characters",
     role: "Playable cyber operator",
     description:
-      "Grounded human field operator with layered graphite armour, burnt-orange hardware and a pale-cyan visor.",
-    source: "Generated 3D reference",
-    runtime: "Procedural operator active",
-    model: "Meshy GLB pending",
-    status: "concept-ready",
+      "Fully rigged field operator, restyled with graphite armour, burnt-orange hardware, a cyan visor and a live combat animation controller.",
+    source: "KayKit CC0 rig · Freeman cyber restyle",
+    runtime: "Animated humanoid active",
+    model: "Knight GLB imported · 330 KB",
+    status: "runtime",
     image: "/asset-catalog/ian-freeman.webp",
     accent: "#dc7540",
-    target: "Humanoid · 20–30K triangles · ≤ 6 MB GLB",
-    textures: "2K PBR · albedo, normal, roughness, metalness, emissive",
-    animations: ["Idle", "Run", "Shoot", "Dash", "Hit", "Death"],
-    next: "Confirm identity direction, convert in Meshy, rig and bind the six core animations.",
+    target: "Rigged humanoid · 7K upload vertices · mobile-safe",
+    textures: "Embedded WebP atlas · runtime metallic and emissive restyle",
+    animations: ["Idle", "Run", "Shoot", "Hit", "Death", "Victory"],
+    next: "Add a bespoke Freeman head and armour pass without changing the proven game-ready rig.",
   },
   {
     id: "agent-kairos",
@@ -48,17 +49,17 @@ const assets: Asset[] = [
     category: "AI Agents",
     role: "Time-control support AI",
     description:
-      "Floating temporal machine with a readable circular core, segmented armour and two orbital ring systems.",
-    source: "Generated 3D reference",
-    runtime: "Procedural drone active",
-    model: "Meshy GLB pending",
-    status: "concept-ready",
+      "Fully rigged time-control specialist with a cyber visor, orbital support ring and spellcast-based slow-field animation.",
+    source: "KayKit CC0 rig · Freeman cyber restyle",
+    runtime: "Animated humanoid active",
+    model: "Mage GLB imported · 310 KB",
+    status: "runtime",
     image: "/asset-catalog/kairos-agent.webp",
     accent: "#83d7df",
-    target: "Mechanical · 15–25K triangles · ≤ 5 MB GLB",
-    textures: "2K PBR · restrained cyan and orange emissive channels",
-    animations: ["Hover", "Orbit", "Beam attack", "Slow field", "Hit", "Shutdown"],
-    next: "Convert as separated body and rings so the orbital parts can animate independently.",
+    target: "Rigged humanoid · optimized GLB · mobile-safe",
+    textures: "Embedded WebP atlas · restrained cyan emissive channel",
+    animations: ["Idle", "Run", "Slow field", "Hit", "Shutdown", "Victory"],
+    next: "Replace the temporary costume with a bespoke temporal-agent armour shell.",
   },
   {
     id: "enemy-virus",
@@ -84,13 +85,14 @@ const assets: Asset[] = [
     category: "AI Agents",
     role: "Heavy-damage sniper AI",
     description:
-      "Long-range agent built around a narrow targeting silhouette and a disciplined precision weapon.",
-    source: "Procedural Three.js",
-    runtime: "Active",
-    model: "Concept queued",
+      "Hooded precision specialist with a full humanoid rig, long-range firing animation and pale-cyan targeting hardware.",
+    source: "KayKit CC0 rig · Freeman cyber restyle",
+    runtime: "Animated humanoid active",
+    model: "Rogue Hooded GLB imported · 311 KB",
     status: "runtime",
     accent: "#9ebfc0",
-    next: "Generate a clean sniper-drone reference after the first Meshy conversion proves the style.",
+    animations: ["Idle", "Run", "Precision shot", "Hit", "Shutdown", "Victory"],
+    next: "Add a purpose-built rail rifle and a sharper targeting silhouette.",
   },
   {
     id: "agent-forge",
@@ -98,13 +100,14 @@ const assets: Asset[] = [
     category: "AI Agents",
     role: "Rapid-fire assault AI",
     description:
-      "Aggressive close-support unit intended to read through rotating barrels and a compact armoured mass.",
-    source: "Procedural Three.js",
-    runtime: "Active",
-    model: "Concept queued",
+      "Heavy assault specialist with a full humanoid rig, broad armour silhouette and rapid-fire combat animation.",
+    source: "KayKit CC0 rig · Freeman cyber restyle",
+    runtime: "Animated humanoid active",
+    model: "Barbarian GLB imported · 319 KB",
     status: "runtime",
     accent: "#d8a14b",
-    next: "Design around a strong rotary weapon silhouette without turning it into a generic turret.",
+    animations: ["Idle", "Run", "Rapid fire", "Hit", "Shutdown", "Victory"],
+    next: "Replace the melee prop with a compact rotary cannon and ammo backpack.",
   },
   {
     id: "agent-covenant",
@@ -112,13 +115,14 @@ const assets: Asset[] = [
     category: "AI Agents",
     role: "Healing and shield AI",
     description:
-      "Protective support unit planned around folding shield wings and a calm restoration field.",
-    source: "Procedural Three.js",
-    runtime: "Active",
-    model: "Concept queued",
+      "Fully rigged protection specialist with a calm restoration animation, bright shield accents and active squad healing.",
+    source: "KayKit CC0 rig · Freeman cyber restyle",
+    runtime: "Animated humanoid active",
+    model: "Rogue GLB imported · 315 KB",
     status: "runtime",
     accent: "#d2ddd7",
-    next: "Generate after Kairos to keep the support agents related but immediately distinguishable.",
+    animations: ["Idle", "Run", "Repair cast", "Hit", "Shutdown", "Victory"],
+    next: "Add folding shield emitters so the support role reads instantly from the isometric camera.",
   },
   {
     id: "enemy-phisher",
@@ -234,7 +238,14 @@ const assets: Asset[] = [
   },
 ];
 
-const categories = ["All", "Characters", "AI Agents", "Enemies", "World", "VFX & Audio"];
+const categories = [
+  "All",
+  "Characters",
+  "AI Agents",
+  "Enemies",
+  "World",
+  "VFX & Audio",
+];
 
 const statusLabel: Record<AssetStatus, string> = {
   "concept-ready": "CONCEPT READY",
@@ -261,31 +272,38 @@ export default function AssetCatalog() {
   }, [category, query]);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? assets[0];
-  const conceptCount = assets.filter((asset) => asset.status === "concept-ready").length;
-  const runtimeCount = assets.filter((asset) => asset.runtime === "Active").length;
+  const conceptCount = assets.filter(
+    (asset) => asset.status === "concept-ready",
+  ).length;
+  const runtimeCount = assets.filter((asset) =>
+    asset.runtime.toLowerCase().includes("active"),
+  ).length;
+  const importedCount = assets.filter((asset) =>
+    asset.model.includes("GLB imported"),
+  ).length;
 
   return (
     <main className={styles.shell}>
       <header className={styles.topbar}>
-        <a className={styles.brand} href="/">
+        <Link className={styles.brand} href="/">
           <span>F</span>
           <strong>FREEMAN / PROTOCOL</strong>
-        </a>
-        <a className={styles.return} href="/">
+        </Link>
+        <Link className={styles.return} href="/">
           ← RETURN TO MISSION
-        </a>
+        </Link>
       </header>
 
       <section className={styles.hero}>
         <div>
-          <p className={styles.eyebrow}>PRODUCTION INVENTORY · BUILD 004</p>
+          <p className={styles.eyebrow}>PRODUCTION INVENTORY · BUILD 007</p>
           <h1>
             Asset
             <em> Ledger</em>
           </h1>
           <p className={styles.lede}>
-            Every concept, runtime system and pending 3D model is tracked separately.
-            A reference image is not counted as a shipped model.
+            Every concept, runtime system and imported 3D model is tracked
+            separately. The five squad characters now use optimized rigged GLBs.
           </p>
         </div>
         <div className={styles.metrics} aria-label="Asset totals">
@@ -298,7 +316,7 @@ export default function AssetCatalog() {
             <small>3D REFERENCES READY</small>
           </span>
           <span>
-            <strong>00</strong>
+            <strong>{String(importedCount).padStart(2, "0")}</strong>
             <small>IMPORTED GLB MODELS</small>
           </span>
           <span>
@@ -344,7 +362,9 @@ export default function AssetCatalog() {
                 type="button"
                 key={asset.id}
                 className={`${styles.card} ${selected.id === asset.id ? styles.selectedCard : ""}`}
-                style={{ "--asset-accent": asset.accent } as React.CSSProperties}
+                style={
+                  { "--asset-accent": asset.accent } as React.CSSProperties
+                }
                 onClick={() => setSelectedId(asset.id)}
               >
                 <span className={styles.visual}>
@@ -380,7 +400,10 @@ export default function AssetCatalog() {
 
           {selected.image && (
             <div className={styles.inspectorImage}>
-              <img src={selected.image} alt={`${selected.name} production reference`} />
+              <img
+                src={selected.image}
+                alt={`${selected.name} production reference`}
+              />
             </div>
           )}
 
