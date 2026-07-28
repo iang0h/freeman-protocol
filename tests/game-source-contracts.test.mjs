@@ -37,3 +37,12 @@ test("WebGL targeting uses a spatial grid", () => {
   assert.match(game, /this\.enemyGrid\.rebuild\(this\.enemies\)/);
   assert.match(game, /this\.enemyGrid\.query\(position, maxDistance\)/);
 });
+
+test("both renderers pace spawns and include queued threats in the HUD", () => {
+  assert.match(game, /getActiveEnemyLimit\("webgl"\)/);
+  assert.match(game, /getActiveEnemyLimit\("canvas"\)/);
+  assert.ok((game.match(/private spawnQueue: EnemyType\[\] = \[\]/g) ?? []).length >= 2);
+  assert.ok((game.match(/releaseSpawnBatch\(/g) ?? []).length >= 2);
+  assert.ok((game.match(/remainingThreats\(/g) ?? []).length >= 2);
+  assert.ok((game.match(/canCompleteWave\(/g) ?? []).length >= 2);
+});

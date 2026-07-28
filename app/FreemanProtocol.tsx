@@ -9,6 +9,12 @@ import {
 } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import {
+  canCompleteWave,
+  getActiveEnemyLimit,
+  releaseSpawnBatch,
+  remainingThreats,
+} from "./game/combat-rules.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
 import { BoundedPool, disposeObject3D } from "./game/three-resources";
 
@@ -573,6 +579,10 @@ class FreemanEngine {
   private hudClock = 0;
   private reinforcementClock = 0;
   private reinforcementsRemaining = 0;
+  private spawnQueue: EnemyType[] = [];
+  private nextQueueReleaseAt = 0;
+  private scheduledReinforcementThreats = 0;
+  private readonly activeEnemyLimit = getActiveEnemyLimit("webgl");
   private reducedMotion = false;
   private hasPointerAim = false;
   private squadCommand: SquadCommand = "follow";
@@ -642,6 +652,9 @@ class FreemanEngine {
     this.hitStop = 0;
     this.reinforcementClock = 0;
     this.reinforcementsRemaining = 0;
+    this.spawnQueue = [];
+    this.nextQueueReleaseAt = 0;
+    this.scheduledReinforcementThreats = 0;
     this.player.hp = this.player.maxHp = 100;
     this.player.damage = 25;
     this.player.attackCooldown = 0;
@@ -2059,6 +2072,8 @@ class FreemanEngine {
     this.waveActive = true;
     this.waveEndClock = 0;
     this.reinforcementsRemaining = Math.min(4, 1 + Math.floor(wave / 2));
+    this.scheduledReinforcementThreats =
+      this.reinforcementsRemaining * Math.min(10, 4 + wave);
     this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
     this.spawnFormation(
       ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1],
@@ -2080,6 +2095,16 @@ class FreemanEngine {
   }
 
   private spawnFormation(types: EnemyType[]) {
+    const capacity = Math.max(
+      0,
+      this.activeEnemyLimit - this.enemies.length,
+    );
+    const immediate = types.slice(0, capacity);
+    this.spawnQueue.push(...types.slice(immediate.length));
+    this.spawnFormationImmediate(immediate);
+  }
+
+  private spawnFormationImmediate(types: EnemyType[]) {
     types.forEach((type, index) => {
       const angle =
         (index / types.length) * Math.PI * 2 +
@@ -2097,6 +2122,20 @@ class FreemanEngine {
       );
     });
     this.emitHud(true);
+  }
+
+  private releaseQueuedEnemies() {
+    const result = releaseSpawnBatch(
+      this.spawnQueue,
+      this.activeEnemyLimit - this.enemies.length,
+      this.elapsed,
+      this.nextQueueReleaseAt,
+    );
+    this.spawnQueue = result.queue;
+    this.nextQueueReleaseAt = result.nextReleaseAt;
+    if (result.released.length > 0) {
+      this.spawnFormationImmediate(result.released as EnemyType[]);
+    }
   }
 
   private bindEvents() {
@@ -2305,6 +2344,7 @@ class FreemanEngine {
     this.updateEnemies(delta);
     this.enemyGrid.rebuild(this.enemies);
     this.updateProjectiles(delta);
+    this.releaseQueuedEnemies();
     this.player.attackCooldown = Math.max(
       0,
       this.player.attackCooldown - delta,
@@ -2329,6 +2369,10 @@ class FreemanEngine {
               ? "phisher"
               : "virus",
         );
+        this.scheduledReinforcementThreats = Math.max(
+          0,
+          this.scheduledReinforcementThreats - count,
+        );
         this.spawnFormation(types);
         this.callbacks.onToast({
           eyebrow: "HORDE REINFORCEMENT",
@@ -2341,8 +2385,11 @@ class FreemanEngine {
 
     if (
       this.waveActive &&
-      this.enemies.length === 0 &&
-      this.reinforcementsRemaining === 0 &&
+      canCompleteWave({
+        active: this.enemies.length,
+        queued: this.spawnQueue.length,
+        scheduled: this.scheduledReinforcementThreats,
+      }) &&
       this.waveEndClock === 0
     ) {
       this.waveActive = false;
@@ -3597,6 +3644,9 @@ class FreemanEngine {
     this.defenses.length = 0;
     this.projectiles.length = 0;
     this.effects.length = 0;
+    this.spawnQueue = [];
+    this.nextQueueReleaseAt = 0;
+    this.scheduledReinforcementThreats = 0;
     this.waveActive = false;
     this.waveEndClock = 0;
   }
@@ -3629,7 +3679,11 @@ class FreemanEngine {
       maxCore: Math.round(this.core.maxHp),
       data: Math.round(this.data),
       wave: this.wave,
-      enemies: this.enemies.length,
+      enemies: remainingThreats({
+        active: this.enemies.length,
+        queued: this.spawnQueue.length,
+        scheduled: this.scheduledReinforcementThreats,
+      }),
       score: this.score,
       best: this.best,
       dash: clamp01(1 - this.player.dashCooldown / 3),
@@ -3789,6 +3843,10 @@ class FreemanCanvasEngine implements GameController {
   private hudClock = 0;
   private reinforcementClock = 0;
   private reinforcementsRemaining = 0;
+  private spawnQueue: EnemyType[] = [];
+  private nextQueueReleaseAt = 0;
+  private scheduledReinforcementThreats = 0;
+  private readonly activeEnemyLimit = getActiveEnemyLimit("canvas");
   private attackMultiplier = 1;
   private agentRateMultiplier = 1;
   private agentDamageMultiplier = 1;
@@ -3840,6 +3898,9 @@ class FreemanCanvasEngine implements GameController {
     this.placementActive = false;
     this.reinforcementClock = 0;
     this.reinforcementsRemaining = 0;
+    this.spawnQueue = [];
+    this.nextQueueReleaseAt = 0;
+    this.scheduledReinforcementThreats = 0;
     this.player.x = 0;
     this.player.z = 2.7;
     this.player.hp = this.player.maxHp = 100;
@@ -4361,6 +4422,7 @@ class FreemanCanvasEngine implements GameController {
     this.updateDefenses(delta);
     this.updateEnemies(delta);
     this.updateProjectiles(delta);
+    this.releaseQueuedEnemies();
     this.player.attackCooldown = Math.max(
       0,
       this.player.attackCooldown - delta,
@@ -4378,21 +4440,18 @@ class FreemanCanvasEngine implements GameController {
         this.reinforcementClock = Math.max(4, 6.6 - this.wave * 0.24);
         this.reinforcementsRemaining -= 1;
         const count = Math.min(10, 4 + this.wave);
-        for (let index = 0; index < count; index += 1) {
-          const angle =
-            (index / count) * Math.PI * 2 + this.elapsed * 0.17 + this.wave;
-          const type: EnemyType =
+        const types = Array.from({ length: count }, (_, index): EnemyType =>
             this.wave >= 6 && index === 0
               ? "trojan"
               : index % 3 === 0
                 ? "phisher"
-                : "virus";
-          this.createEnemy(
-            type,
-            Math.cos(angle) * SPAWN_RADIUS,
-            Math.sin(angle) * SPAWN_RADIUS,
-          );
-        }
+                : "virus",
+        );
+        this.scheduledReinforcementThreats = Math.max(
+          0,
+          this.scheduledReinforcementThreats - count,
+        );
+        this.spawnFormation(types);
         this.callbacks.onToast({
           eyebrow: "HORDE REINFORCEMENT",
           title: `${count} MORE THREATS ENTERED`,
@@ -4404,8 +4463,11 @@ class FreemanCanvasEngine implements GameController {
 
     if (
       this.waveActive &&
-      this.enemies.length === 0 &&
-      this.reinforcementsRemaining === 0 &&
+      canCompleteWave({
+        active: this.enemies.length,
+        queued: this.spawnQueue.length,
+        scheduled: this.scheduledReinforcementThreats,
+      }) &&
       this.waveEndClock === 0
     ) {
       this.waveActive = false;
@@ -4800,19 +4862,11 @@ class FreemanCanvasEngine implements GameController {
     this.waveActive = true;
     this.waveEndClock = 0;
     this.reinforcementsRemaining = Math.min(4, 1 + Math.floor(wave / 2));
+    this.scheduledReinforcementThreats =
+      this.reinforcementsRemaining * Math.min(10, 4 + wave);
     this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
     const types = ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1];
-    types.forEach((type, index) => {
-      const angle =
-        (index / types.length) * Math.PI * 2 + wave * 0.38 + (index % 2) * 0.12;
-      const radius =
-        type === "rootkit" ? SPAWN_RADIUS : SPAWN_RADIUS + (index % 4) * 1.1;
-      this.createEnemy(
-        type,
-        Math.cos(angle) * radius,
-        Math.sin(angle) * radius,
-      );
-    });
+    this.spawnFormation(types);
     if (wave === 4 || wave === 7) {
       this.callbacks.onToast({
         eyebrow: `ELITE BREACH · WAVE ${wave}`,
@@ -4828,6 +4882,46 @@ class FreemanCanvasEngine implements GameController {
       });
     }
     this.emitHud(true);
+  }
+
+  private spawnFormation(types: EnemyType[]) {
+    const capacity = Math.max(
+      0,
+      this.activeEnemyLimit - this.enemies.length,
+    );
+    const immediate = types.slice(0, capacity);
+    this.spawnQueue.push(...types.slice(immediate.length));
+    this.spawnFormationImmediate(immediate);
+  }
+
+  private spawnFormationImmediate(types: EnemyType[]) {
+    types.forEach((type, index) => {
+      const angle =
+        (index / types.length) * Math.PI * 2 +
+        this.wave * 0.38 +
+        (index % 2) * 0.12;
+      const radius =
+        type === "rootkit" ? SPAWN_RADIUS : SPAWN_RADIUS + (index % 4) * 1.1;
+      this.createEnemy(
+        type,
+        Math.cos(angle) * radius,
+        Math.sin(angle) * radius,
+      );
+    });
+  }
+
+  private releaseQueuedEnemies() {
+    const result = releaseSpawnBatch(
+      this.spawnQueue,
+      this.activeEnemyLimit - this.enemies.length,
+      this.elapsed,
+      this.nextQueueReleaseAt,
+    );
+    this.spawnQueue = result.queue;
+    this.nextQueueReleaseAt = result.nextReleaseAt;
+    if (result.released.length > 0) {
+      this.spawnFormationImmediate(result.released as EnemyType[]);
+    }
   }
 
   private createEnemy(type: EnemyType, x: number, z: number) {
@@ -6092,7 +6186,11 @@ class FreemanCanvasEngine implements GameController {
       maxCore: Math.round(this.core.maxHp),
       data: Math.round(this.data),
       wave: this.wave,
-      enemies: this.enemies.length,
+      enemies: remainingThreats({
+        active: this.enemies.length,
+        queued: this.spawnQueue.length,
+        scheduled: this.scheduledReinforcementThreats,
+      }),
       score: this.score,
       best: this.best,
       dash: clamp01(1 - this.player.dashCooldown / 3),
