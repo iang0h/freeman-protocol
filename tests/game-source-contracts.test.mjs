@@ -46,3 +46,12 @@ test("both renderers pace spawns and include queued threats in the HUD", () => {
   assert.ok((game.match(/remainingThreats\(/g) ?? []).length >= 2);
   assert.ok((game.match(/canCompleteWave\(/g) ?? []).length >= 2);
 });
+
+test("sentries support automatic deployment and optional manual placement", () => {
+  assert.match(game, /AUTO-DEPLOY SENTRY/);
+  assert.match(game, /PLACE MANUALLY/);
+  assert.match(game, /event\.shiftKey/);
+  assert.ok((game.match(/selectAutoSentryPosition\(/g) ?? []).length >= 2);
+  assert.ok((game.match(/private placeDefenseAt\(/g) ?? []).length >= 2);
+  assert.ok((game.match(/this\.placeDefenseAt\(/g) ?? []).length >= 4);
+});

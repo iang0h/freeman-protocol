@@ -15,6 +15,7 @@ import {
   releaseSpawnBatch,
   remainingThreats,
 } from "./game/combat-rules.mjs";
+import { selectAutoSentryPosition } from "./game/sentry-placement.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
 import { BoundedPool, disposeObject3D } from "./game/three-resources";
 
@@ -72,6 +73,7 @@ interface GameController {
   togglePause(): void;
   recruit(id: AgentId): void;
   buildDefense(): void;
+  beginManualDefensePlacement(): void;
   setSquadCommand(command: SquadCommand): void;
   attack(): void;
   melee(): void;
@@ -679,6 +681,35 @@ class FreemanEngine {
   }
 
   buildDefense() {
+    if (this.mode !== "playing") return;
+    if (this.placementActive) this.cancelDefensePlacement(false);
+    const selected = selectAutoSentryPosition(
+      this.defenses.map((defense) => ({
+        x: defense.group.position.x,
+        z: defense.group.position.z,
+      })),
+      [
+        { x: this.player.group.position.x, z: this.player.group.position.z, radius: 0.8 },
+        { x: this.core.group.position.x, z: this.core.group.position.z, radius: 1.5 },
+        ...this.enemies.map((enemy) => ({
+          x: enemy.group.position.x,
+          z: enemy.group.position.z,
+          radius: enemy.radius,
+        })),
+      ],
+    );
+    if (!selected) {
+      this.callbacks.onToast({
+        eyebrow: "NO VALID SENTRY POSITION",
+        title: "THE DEFENSE GRID IS BLOCKED",
+        detail: "Clear nearby threats or use manual placement.",
+      });
+      return;
+    }
+    this.placeDefenseAt(new THREE.Vector3(selected.x, 0.08, selected.z));
+  }
+
+  beginManualDefensePlacement() {
     if (this.mode !== "playing") return;
     if (this.placementActive) {
       this.cancelDefensePlacement();
@@ -2177,7 +2208,10 @@ class FreemanEngine {
     if (event.code === "KeyZ") this.rotateCamera(-1);
     if (event.code === "KeyC") this.rotateCamera(1);
     if (event.code === "KeyF") this.resetCamera();
-    if (event.code === "KeyB") this.buildDefense();
+    if (event.code === "KeyB") {
+      if (event.shiftKey) this.beginManualDefensePlacement();
+      else this.buildDefense();
+    }
     if (event.code === "KeyE") {
       const commands: SquadCommand[] = ["follow", "defend", "focus"];
       this.setSquadCommand(
@@ -3493,6 +3527,12 @@ class FreemanEngine {
       });
       return;
     }
+    this.placeDefenseAt(position);
+  }
+
+  private placeDefenseAt(position: THREE.Vector3) {
+    if (!this.isDefensePositionValid(position)) return { ok: false };
+    if (this.defenses.length >= 3) return { ok: false };
     const cost = 80 + this.defenses.length * 35;
     if (this.data < cost) {
       this.cancelDefensePlacement(false);
@@ -3501,7 +3541,7 @@ class FreemanEngine {
         title: `YOU NEED ${cost - this.data} MORE`,
         detail: "Destroy enemies to earn Compute, then build the sentry.",
       });
-      return;
+      return { ok: false };
     }
     const index = this.defenses.length;
     this.data -= cost;
@@ -3528,6 +3568,7 @@ class FreemanEngine {
       detail: "This sentry protects its chosen area and fires automatically.",
     });
     this.emitHud(true);
+    return { ok: true };
   }
 
   private cancelDefensePlacement(notify = true) {
@@ -3926,6 +3967,32 @@ class FreemanCanvasEngine implements GameController {
 
   buildDefense() {
     if (this.mode !== "playing") return;
+    if (this.placementActive) this.placementActive = false;
+    const selected = selectAutoSentryPosition(
+      this.defenses.map((defense) => ({ x: defense.x, z: defense.z })),
+      [
+        { x: this.player.x, z: this.player.z, radius: 0.8 },
+        { x: this.core.x, z: this.core.z, radius: 1.5 },
+        ...this.enemies.map((enemy) => ({
+          x: enemy.x,
+          z: enemy.z,
+          radius: enemy.radius,
+        })),
+      ],
+    );
+    if (!selected) {
+      this.callbacks.onToast({
+        eyebrow: "NO VALID SENTRY POSITION",
+        title: "THE DEFENSE GRID IS BLOCKED",
+        detail: "Clear nearby threats or use manual placement.",
+      });
+      return;
+    }
+    this.placeDefenseAt(selected);
+  }
+
+  beginManualDefensePlacement() {
+    if (this.mode !== "playing") return;
     if (this.placementActive) {
       this.placementActive = false;
       this.callbacks.onToast({
@@ -4316,7 +4383,10 @@ class FreemanCanvasEngine implements GameController {
     if (event.code === "KeyZ") this.rotateCamera(-1);
     if (event.code === "KeyC") this.rotateCamera(1);
     if (event.code === "KeyF") this.resetCamera();
-    if (event.code === "KeyB") this.buildDefense();
+    if (event.code === "KeyB") {
+      if (event.shiftKey) this.beginManualDefensePlacement();
+      else this.buildDefense();
+    }
     if (event.code === "KeyE") {
       const commands: SquadCommand[] = ["follow", "defend", "focus"];
       this.setSquadCommand(
@@ -5202,24 +5272,32 @@ class FreemanCanvasEngine implements GameController {
       });
       return;
     }
+    this.placeDefenseAt({ x: this.aim.x, z: this.aim.z });
+  }
+
+  private placeDefenseAt(position: { x: number; z: number }) {
+    if (!this.isFlatDefensePositionValid(position.x, position.z)) {
+      return { ok: false };
+    }
+    if (this.defenses.length >= 3) return { ok: false };
     const cost = 80 + this.defenses.length * 35;
     if (this.data < cost) {
       this.placementActive = false;
       this.emitHud(true);
-      return;
+      return { ok: false };
     }
     const index = this.defenses.length;
     this.data -= cost;
     this.placementActive = false;
     this.defenses.push({
-      x: this.aim.x,
-      z: this.aim.z,
+      x: position.x,
+      z: position.z,
       cooldownLeft: 0.35,
       index,
       rotation: 0,
     });
-    this.addRing(this.aim.x, this.aim.z, 0x9ed8dd, 0.2, 2.4, 0.7);
-    this.addBurst(this.aim.x, this.aim.z, 0x9ed8dd, 15);
+    this.addRing(position.x, position.z, 0x9ed8dd, 0.2, 2.4, 0.7);
+    this.addBurst(position.x, position.z, 0x9ed8dd, 15);
     this.audio.play("recruit");
     this.callbacks.onToast({
       eyebrow: `BASE SENTRY ${index + 1} BUILT`,
@@ -5227,6 +5305,7 @@ class FreemanCanvasEngine implements GameController {
       detail: "This sentry protects its chosen area and fires automatically.",
     });
     this.emitHud(true);
+    return { ok: true };
   }
 
   private getFlatPriorityEnemy() {
@@ -6483,14 +6562,12 @@ export default function FreemanProtocol() {
             >
               <span>
                 <small>
-                  {hud.placingDefense ? "TAP THE BATTLEFIELD" : "YOUR BASE"}
+                  {hud.placingDefense ? "MANUAL MODE ACTIVE" : "YOUR BASE"}
                 </small>
                 <strong>
-                  {hud.placingDefense
-                    ? "CANCEL SENTRY PLACEMENT"
-                    : hud.defenses >= hud.maxDefenses
-                      ? "SENTRY GRID COMPLETE"
-                      : "BUILD AUTO-SENTRY"}
+                  {hud.defenses >= hud.maxDefenses
+                    ? "SENTRY GRID COMPLETE"
+                    : "AUTO-DEPLOY SENTRY"}
                 </strong>
               </span>
               <b>
@@ -6503,6 +6580,17 @@ export default function FreemanProtocol() {
                     ? " · ONLINE"
                     : ""}
               </b>
+            </button>
+            <button
+              type="button"
+              className="base-builder__manual"
+              onClick={() =>
+                engineRef.current?.beginManualDefensePlacement()
+              }
+              disabled={mode !== "playing" || hud.defenses >= hud.maxDefenses}
+            >
+              {hud.placingDefense ? "CANCEL MANUAL PLACEMENT" : "PLACE MANUALLY"}
+              <kbd>SHIFT+B</kbd>
             </button>
           </aside>
 

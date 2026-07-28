@@ -29,3 +29,8 @@ test("pulls the camera back for portrait play", () => {
   assert.match(game, /const portraitPullback/);
   assert.match(game, /aspect < 0\.58 \? 1\.5/);
 });
+
+test("keeps both sentry deployment actions available on mobile", () => {
+  assert.match(game, /base-builder__manual/);
+  assert.match(styles, /\.base-builder__manual/);
+});

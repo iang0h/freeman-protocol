@@ -502,6 +502,30 @@ canvas:focus-visible {
   opacity: 0.68;
 }
 
+.base-builder__manual {
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 9px;
+  border: 1px solid rgba(158, 216, 221, 0.24);
+  background: rgba(5, 12, 15, 0.78);
+  color: var(--ivory);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.base-builder__manual kbd {
+  float: right;
+  color: var(--steel);
+}
+
+.base-builder__manual:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
 .base-builder span {
   display: flex;
   flex-direction: column;
