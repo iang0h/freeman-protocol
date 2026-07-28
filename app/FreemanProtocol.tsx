@@ -9,7 +9,6 @@ import {
 } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 
 type GameMode =
   "intro" | "playing" | "upgrade" | "paused" | "defeat" | "victory";
@@ -150,22 +149,6 @@ type AnimatedRig = {
   actions: Partial<Record<RigAnimation, THREE.AnimationAction>>;
   current: RigAnimation | null;
   lockedFor: number;
-};
-
-const CHARACTER_MODELS: Record<"operator" | AgentId, string> = {
-  operator: "/models/kaykit/Knight.glb",
-  kairos: "/models/kaykit/Mage.glb",
-  kira: "/models/kaykit/Rogue_Hooded.glb",
-  forge: "/models/kaykit/Barbarian.glb",
-  covenant: "/models/kaykit/Rogue.glb",
-};
-
-const CHARACTER_ATTACKS: Record<"operator" | AgentId, string> = {
-  operator: "2H_Ranged_Shoot",
-  kairos: "Spellcast_Shoot",
-  kira: "2H_Ranged_Shoot",
-  forge: "1H_Ranged_Shoot",
-  covenant: "Spellcast_Shoot",
 };
 
 const AGENTS: AgentDefinition[] = [
@@ -578,9 +561,7 @@ class FreemanEngine {
     120,
   );
   private readonly clock = new THREE.Clock();
-  private readonly gltfLoader = new GLTFLoader().setMeshoptDecoder(
-    MeshoptDecoder,
-  );
+  private readonly gltfLoader = new GLTFLoader();
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -676,7 +657,7 @@ class FreemanEngine {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.42;
+    this.renderer.toneMappingExposure = 1.08;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -686,12 +667,7 @@ class FreemanEngine {
     this.buildWorld();
     this.core = this.buildCore();
     this.player = this.buildOperator();
-    void this.attachCharacterRig(
-      this.player.group,
-      "operator",
-      0xe77d44,
-      this.player,
-    );
+    void this.attachOperatorRig();
     this.bindEvents();
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -857,7 +833,6 @@ class FreemanEngine {
       moving: false,
     };
     this.agents.push(runtime);
-    void this.attachCharacterRig(group, id, definition.color, runtime);
     this.addRing(group.position, definition.color, 0.3, 2.2, 0.65, "portal");
     this.addBurst(group.position, definition.color, 13);
     this.audio.play("recruit");
@@ -1030,10 +1005,10 @@ class FreemanEngine {
   }
 
   private buildWorld() {
-    const hemisphere = new THREE.HemisphereLight(0xb9d7dd, 0x28140d, 2.8);
+    const hemisphere = new THREE.HemisphereLight(0xa7c4ca, 0x1b0d08, 1.25);
     this.scene.add(hemisphere);
 
-    const keyLight = new THREE.DirectionalLight(0xffe2bf, 5.2);
+    const keyLight = new THREE.DirectionalLight(0xffd8b0, 3.15);
     keyLight.position.set(7, 14, 6);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.set(1024, 1024);
@@ -1043,11 +1018,11 @@ class FreemanEngine {
     keyLight.shadow.camera.bottom = -16;
     this.scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0x79b9ca, 2.2);
+    const fillLight = new THREE.DirectionalLight(0x6ca7b4, 0.95);
     fillLight.position.set(-9, 8, -5);
     this.scene.add(fillLight);
 
-    const rimLight = new THREE.PointLight(0xe98148, 58, 29, 2);
+    const rimLight = new THREE.PointLight(0xe98148, 32, 26, 2);
     rimLight.position.set(-6, 4, -7);
     this.scene.add(rimLight);
 
@@ -1264,103 +1239,216 @@ class FreemanEngine {
     const group = new THREE.Group();
     group.position.set(0, 0, 2.7);
 
-    const coatMaterial = new THREE.MeshStandardMaterial({
-      color: 0x26333a,
-      roughness: 0.58,
-      metalness: 0.34,
-      emissive: 0x081820,
-      emissiveIntensity: 0.8,
-    });
-    const armorMaterial = new THREE.MeshStandardMaterial({
-      color: 0x9d694d,
-      roughness: 0.38,
-      metalness: 0.72,
-      emissive: 0x6c2d12,
-      emissiveIntensity: 0.75,
-    });
-    const skinMaterial = new THREE.MeshStandardMaterial({
-      color: 0xb98b72,
+    const bodyRoot = new THREE.Group();
+    bodyRoot.name = "operator-body-root";
+    group.add(bodyRoot);
+
+    const undersuit = new THREE.MeshStandardMaterial({
+      color: 0x11181c,
       roughness: 0.78,
+      metalness: 0.18,
+    });
+    const graphite = new THREE.MeshStandardMaterial({
+      color: 0x293137,
+      roughness: 0.34,
+      metalness: 0.76,
+      emissive: 0x071116,
+      emissiveIntensity: 0.35,
+    });
+    const armour = new THREE.MeshStandardMaterial({
+      color: 0x70402d,
+      roughness: 0.31,
+      metalness: 0.84,
+      emissive: 0x351308,
+      emissiveIntensity: 0.38,
+    });
+    const gunmetal = new THREE.MeshStandardMaterial({
+      color: 0x0c1114,
+      roughness: 0.28,
+      metalness: 0.92,
+    });
+    const visorMaterial = new THREE.MeshStandardMaterial({
+      color: 0xa8eef2,
+      emissive: 0x55c4d0,
+      emissiveIntensity: 2.4,
+      roughness: 0.12,
+      metalness: 0.46,
+    });
+    const signalMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffa063,
+      emissive: 0xe75f27,
+      emissiveIntensity: 2,
+      roughness: 0.18,
+      metalness: 0.58,
     });
 
-    const lower = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.34, 0.5, 0.9, 6),
-      coatMaterial,
+    const pelvis = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.36, 0.42, 0.38, 8),
+      graphite,
     );
-    lower.position.y = 0.52;
-    lower.castShadow = true;
-    group.add(lower);
+    pelvis.position.y = 1.02;
+    bodyRoot.add(pelvis);
 
     const torso = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.42, 0.36, 0.8, 6),
-      armorMaterial,
+      new THREE.CylinderGeometry(0.45, 0.34, 0.78, 8),
+      undersuit,
     );
-    torso.position.y = 1.15;
-    torso.castShadow = true;
-    group.add(torso);
+    torso.position.y = 1.42;
+    bodyRoot.add(torso);
 
-    const legGeometry = new THREE.CylinderGeometry(0.11, 0.14, 0.58, 6);
-    for (const side of [-1, 1]) {
-      const leg = new THREE.Mesh(legGeometry, coatMaterial);
-      leg.position.set(side * 0.18, 0.31, 0.04);
-      leg.castShadow = true;
-      group.add(leg);
+    const chestPlate = new THREE.Mesh(
+      new THREE.BoxGeometry(0.84, 0.6, 0.3),
+      graphite,
+    );
+    chestPlate.position.set(0, 1.47, -0.28);
+    chestPlate.rotation.x = -0.08;
+    bodyRoot.add(chestPlate);
+
+    const sternum = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.42, 0.08),
+      armour,
+    );
+    sternum.position.set(0, 1.47, -0.44);
+    bodyRoot.add(sternum);
+
+    const collar = new THREE.Mesh(
+      new THREE.TorusGeometry(0.31, 0.095, 8, 20, Math.PI * 1.55),
+      graphite,
+    );
+    collar.position.set(0, 1.83, 0);
+    collar.rotation.set(Math.PI / 2, 0, -Math.PI * 0.27);
+    bodyRoot.add(collar);
+
+    for (const side of [-1, 1] as const) {
+      const leg = new THREE.Group();
+      leg.name = side < 0 ? "operator-leg-left" : "operator-leg-right";
+      leg.position.set(side * 0.2, 0.97, 0.03);
+      const thigh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.21, 0.58, 8),
+        undersuit,
+      );
+      thigh.position.y = -0.28;
+      leg.add(thigh);
+      const thighPlate = new THREE.Mesh(
+        new THREE.BoxGeometry(0.29, 0.44, 0.25),
+        armour,
+      );
+      thighPlate.position.set(0, -0.25, -0.12);
+      leg.add(thighPlate);
+      const knee = new THREE.Mesh(
+        new THREE.SphereGeometry(0.16, 10, 7),
+        graphite,
+      );
+      knee.scale.set(1, 0.8, 1);
+      knee.position.set(0, -0.58, -0.04);
+      leg.add(knee);
+      const shin = new THREE.Mesh(
+        new THREE.BoxGeometry(0.28, 0.54, 0.27),
+        graphite,
+      );
+      shin.position.set(0, -0.84, 0);
+      leg.add(shin);
+      const boot = new THREE.Mesh(
+        new THREE.BoxGeometry(0.26, 0.2, 0.42),
+        gunmetal,
+      );
+      boot.position.set(0, -1.07, -0.09);
+      leg.add(boot);
+      bodyRoot.add(leg);
+
+      const arm = new THREE.Group();
+      arm.name = side < 0 ? "operator-arm-left" : "operator-arm-right";
+      arm.position.set(side * 0.5, 1.7, 0);
+      const shoulder = new THREE.Mesh(
+        new THREE.BoxGeometry(0.38, 0.29, 0.46),
+        armour,
+      );
+      shoulder.position.set(side * 0.04, -0.03, -0.01);
+      shoulder.rotation.z = side * -0.12;
+      arm.add(shoulder);
+      const upperArm = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.14, 0.16, 0.48, 8),
+        undersuit,
+      );
+      upperArm.position.y = -0.3;
+      arm.add(upperArm);
+      const forearm = new THREE.Mesh(
+        new THREE.BoxGeometry(0.26, 0.44, 0.27),
+        graphite,
+      );
+      forearm.position.set(0, -0.68, -0.06);
+      arm.add(forearm);
+      bodyRoot.add(arm);
     }
 
     const coatTail = new THREE.Mesh(
-      new THREE.BoxGeometry(0.58, 0.72, 0.08),
-      coatMaterial,
+      new THREE.BoxGeometry(0.66, 0.72, 0.1),
+      undersuit,
     );
-    coatTail.position.set(0, 0.66, 0.33);
+    coatTail.position.set(0, 0.83, 0.3);
     coatTail.rotation.x = -0.12;
-    group.add(coatTail);
+    bodyRoot.add(coatTail);
 
-    const shoulderGeometry = new THREE.BoxGeometry(0.34, 0.18, 0.46);
-    for (const side of [-1, 1]) {
-      const shoulder = new THREE.Mesh(shoulderGeometry, armorMaterial);
-      shoulder.position.set(side * 0.43, 1.32, -0.02);
-      shoulder.rotation.z = side * -0.12;
-      group.add(shoulder);
-    }
-
-    const chestLight = new THREE.Mesh(
-      new THREE.BoxGeometry(0.2, 0.22, 0.07),
-      new THREE.MeshBasicMaterial({ color: 0xffb078 }),
+    const backpack = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.72, 0.25),
+      gunmetal,
     );
-    chestLight.position.set(0, 1.2, -0.4);
-    group.add(chestLight);
+    backpack.position.set(0, 1.43, 0.35);
+    bodyRoot.add(backpack);
 
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.28, 12, 8),
-      skinMaterial,
+    const helmet = new THREE.Mesh(
+      new THREE.SphereGeometry(0.34, 16, 10),
+      graphite,
     );
-    head.position.y = 1.78;
-    head.castShadow = true;
-    group.add(head);
+    helmet.name = "operator-helmet";
+    helmet.scale.set(0.94, 1.05, 1);
+    helmet.position.y = 2.08;
+    bodyRoot.add(helmet);
+
+    const jaw = new THREE.Mesh(
+      new THREE.BoxGeometry(0.42, 0.23, 0.25),
+      gunmetal,
+    );
+    jaw.position.set(0, 1.97, -0.14);
+    bodyRoot.add(jaw);
 
     const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.42, 0.1, 0.08),
-      new THREE.MeshBasicMaterial({ color: 0x9ebfc0 }),
+      new THREE.BoxGeometry(0.49, 0.105, 0.08),
+      visorMaterial,
     );
-    visor.position.set(0, 1.8, -0.23);
-    group.add(visor);
+    visor.position.set(0, 2.12, -0.285);
+    bodyRoot.add(visor);
 
     const weapon = new THREE.Group();
-    weapon.position.set(0.5, 1.12, -0.24);
+    weapon.name = "operator-weapon";
+    weapon.position.set(0.53, 1.28, -0.25);
     const stock = new THREE.Mesh(
-      new THREE.BoxGeometry(0.13, 0.14, 0.85),
-      armorMaterial,
+      new THREE.BoxGeometry(0.22, 0.24, 1.05),
+      gunmetal,
     );
-    stock.position.z = -0.3;
+    stock.position.z = -0.32;
     weapon.add(stock);
+    const upperRail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.13, 0.1, 0.74),
+      armour,
+    );
+    upperRail.position.set(0, 0.16, -0.4);
+    weapon.add(upperRail);
     const barrel = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.035, 0.035, 0.55, 8),
-      new THREE.MeshBasicMaterial({ color: 0xff9a5d }),
+      new THREE.CylinderGeometry(0.045, 0.055, 0.72, 10),
+      gunmetal,
     );
     barrel.rotation.x = Math.PI / 2;
-    barrel.position.z = -0.82;
+    barrel.position.z = -1.05;
     weapon.add(barrel);
-    group.add(weapon);
+    const muzzle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.075, 0.075, 0.14, 10),
+      signalMaterial,
+    );
+    muzzle.rotation.x = Math.PI / 2;
+    muzzle.position.z = -1.43;
+    weapon.add(muzzle);
+    bodyRoot.add(weapon);
 
     const operatorRing = new THREE.Mesh(
       new THREE.RingGeometry(0.72, 0.78, 32),
@@ -1376,17 +1464,17 @@ class FreemanEngine {
     operatorRing.name = "operator-ring";
     group.add(operatorRing);
 
-    const operatorLight = new THREE.PointLight(0xff8a4a, 18, 5, 2);
+    const operatorLight = new THREE.PointLight(0xff8a4a, 10, 4.5, 2);
     operatorLight.position.set(0, 1.1, 0);
     operatorLight.name = "operator-light";
     group.add(operatorLight);
 
-    const health = this.createWorldHealthBar(1.62, 0xe77d44);
-    health.group.position.y = 2.25;
+    const health = this.createWorldHealthBar(1.78, 0xe77d44);
+    health.group.position.y = 2.72;
     health.group.name = "operator-health";
     group.add(health.group);
 
-    group.scale.setScalar(1.14);
+    group.scale.setScalar(1.24);
     group.traverse((object) => {
       if (object instanceof THREE.Mesh) object.castShadow = true;
     });
@@ -1488,110 +1576,189 @@ class FreemanEngine {
 
   private createAgentModel(definition: AgentDefinition) {
     const group = new THREE.Group();
+    const root = new THREE.Group();
+    root.name = "agent-body-root";
+    group.add(root);
     const coreMaterial = new THREE.MeshStandardMaterial({
       color: definition.color,
       emissive: definition.color,
-      emissiveIntensity: 1.55,
-      roughness: 0.28,
-      metalness: 0.68,
+      emissiveIntensity: 2.1,
+      roughness: 0.18,
+      metalness: 0.72,
     });
     const darkMaterial = new THREE.MeshStandardMaterial({
-      color: 0x263238,
-      roughness: 0.4,
-      metalness: 0.8,
+      color: 0x171f24,
+      roughness: 0.32,
+      metalness: 0.88,
       emissive: definition.color,
-      emissiveIntensity: 0.18,
+      emissiveIntensity: 0.1,
     });
-    const torso = new THREE.Mesh(
-      definition.id === "forge"
-        ? new THREE.BoxGeometry(0.62, 0.48, 0.72)
-        : new THREE.CylinderGeometry(0.3, 0.42, 0.66, 6),
-      darkMaterial,
-    );
-    torso.position.y = 0.08;
-    torso.castShadow = true;
-    group.add(torso);
-
-    const chest = new THREE.Mesh(
-      definition.id === "kira"
-        ? new THREE.TetrahedronGeometry(0.28, 0)
-        : new THREE.OctahedronGeometry(0.25, 0),
-      coreMaterial,
-    );
-    chest.position.set(0, 0.1, -0.34);
-    chest.castShadow = true;
-    group.add(chest);
-
-    const head = new THREE.Mesh(
-      new THREE.BoxGeometry(0.42, 0.28, 0.38),
-      darkMaterial,
-    );
-    head.position.y = 0.58;
-    group.add(head);
-    const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.3, 0.07, 0.04),
-      coreMaterial,
-    );
-    visor.position.set(0, 0.6, -0.21);
-    visor.name = "agent-eye";
-    group.add(visor);
-
-    for (const side of [-1, 1]) {
-      const wing = new THREE.Group();
-      wing.name = side < 0 ? "agent-wing-left" : "agent-wing-right";
-      wing.position.set(side * 0.44, 0.12, 0.05);
-      const shoulder = new THREE.Mesh(
-        new THREE.SphereGeometry(0.14, 8, 6),
-        coreMaterial,
-      );
-      wing.add(shoulder);
-      const blade = new THREE.Mesh(
-        new THREE.BoxGeometry(
-          definition.id === "kira" ? 0.62 : 0.42,
-          0.1,
-          definition.id === "kairos" ? 0.72 : 0.52,
-        ),
-        darkMaterial,
-      );
-      blade.position.x = side * 0.22;
-      blade.rotation.z = side * 0.12;
-      wing.add(blade);
-      group.add(wing);
-    }
-
     const weapon = new THREE.Group();
     weapon.name = "agent-weapon";
-    weapon.position.set(0.46, 0.05, -0.34);
-    const cannon = new THREE.Mesh(
-      new THREE.CylinderGeometry(
-        0.055,
-        0.075,
-        definition.id === "kira" ? 0.9 : 0.62,
-        8,
-      ),
-      coreMaterial,
-    );
-    cannon.rotation.x = Math.PI / 2;
-    cannon.position.z = -0.3;
-    weapon.add(cannon);
-    group.add(weapon);
+    root.add(weapon);
+
+    if (definition.id === "kairos") {
+      const shell = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.38, 1),
+        darkMaterial,
+      );
+      root.add(shell);
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.18, 16, 10),
+        coreMaterial,
+      );
+      core.position.z = -0.29;
+      root.add(core);
+      [
+        [0, 0, 0.58],
+        [Math.PI / 2, 0.35, 0.72],
+        [0.45, Math.PI / 2, 0.88],
+      ].forEach(([x, y, radius], index) => {
+        const orbit = new THREE.Mesh(
+          new THREE.TorusGeometry(radius, 0.035, 8, 42),
+          index === 0 ? coreMaterial : darkMaterial,
+        );
+        orbit.name = index === 0 ? "agent-ring" : "agent-rotor";
+        orbit.rotation.set(x, y, index * 0.5);
+        root.add(orbit);
+      });
+      for (let index = 0; index < 4; index += 1) {
+        const blade = new THREE.Mesh(
+          new THREE.ConeGeometry(0.17, 0.5, 4),
+          darkMaterial,
+        );
+        const angle = (index / 4) * Math.PI * 2;
+        blade.position.set(Math.cos(angle) * 0.62, 0, Math.sin(angle) * 0.62);
+        blade.rotation.z = Math.PI / 2;
+        blade.rotation.y = -angle;
+        root.add(blade);
+      }
+    } else if (definition.id === "kira") {
+      const chassis = new THREE.Mesh(
+        new THREE.ConeGeometry(0.44, 0.82, 5),
+        darkMaterial,
+      );
+      chassis.rotation.x = -Math.PI / 2;
+      chassis.position.z = 0.08;
+      root.add(chassis);
+      const eye = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.07, 0.05),
+        coreMaterial,
+      );
+      eye.name = "agent-eye";
+      eye.position.set(0, 0.1, -0.42);
+      root.add(eye);
+      weapon.position.set(0, -0.18, -0.72);
+      const rail = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.18, 1.48),
+        darkMaterial,
+      );
+      weapon.add(rail);
+      const railCore = new THREE.Mesh(
+        new THREE.BoxGeometry(0.055, 0.07, 1.18),
+        coreMaterial,
+      );
+      railCore.position.y = 0.11;
+      weapon.add(railCore);
+      for (const side of [-1, 1] as const) {
+        const wing = new THREE.Mesh(
+          new THREE.BoxGeometry(0.72, 0.08, 0.4),
+          darkMaterial,
+        );
+        wing.name =
+          side < 0 ? "agent-wing-left" : "agent-wing-right";
+        wing.position.set(side * 0.46, 0, 0.12);
+        wing.rotation.y = side * 0.18;
+        root.add(wing);
+      }
+    } else if (definition.id === "forge") {
+      const chassis = new THREE.Mesh(
+        new THREE.BoxGeometry(0.9, 0.52, 0.78),
+        darkMaterial,
+      );
+      chassis.rotation.x = 0.06;
+      root.add(chassis);
+      const core = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.22, 0),
+        coreMaterial,
+      );
+      core.position.set(0, 0.02, -0.46);
+      root.add(core);
+      for (const side of [-1, 1] as const) {
+        const pod = new THREE.Group();
+        pod.name = side < 0 ? "agent-wing-left" : "agent-wing-right";
+        pod.position.set(side * 0.57, 0.04, -0.1);
+        const housing = new THREE.Mesh(
+          new THREE.BoxGeometry(0.28, 0.34, 0.62),
+          darkMaterial,
+        );
+        pod.add(housing);
+        for (const barrelX of [-0.07, 0.07]) {
+          const cannon = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.035, 0.045, 0.72, 8),
+            coreMaterial,
+          );
+          cannon.rotation.x = Math.PI / 2;
+          cannon.position.set(barrelX, 0, -0.62);
+          pod.add(cannon);
+        }
+        root.add(pod);
+      }
+      const rotor = new THREE.Mesh(
+        new THREE.TorusGeometry(0.47, 0.04, 8, 32),
+        coreMaterial,
+      );
+      rotor.name = "agent-rotor";
+      rotor.rotation.x = Math.PI / 2;
+      rotor.position.y = 0.34;
+      root.add(rotor);
+    } else {
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.34, 16, 10),
+        coreMaterial,
+      );
+      root.add(core);
+      const halo = new THREE.Mesh(
+        new THREE.TorusGeometry(0.65, 0.045, 8, 40),
+        coreMaterial,
+      );
+      halo.name = "agent-ring";
+      halo.rotation.y = Math.PI / 2;
+      root.add(halo);
+      for (let index = 0; index < 4; index += 1) {
+        const plate = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 0.52, 0.09),
+          darkMaterial,
+        );
+        const angle = (index / 4) * Math.PI * 2;
+        plate.position.set(Math.cos(angle) * 0.58, 0, Math.sin(angle) * 0.58);
+        plate.rotation.y = -angle;
+        plate.rotation.z = Math.PI / 4;
+        plate.name =
+          index === 0
+            ? "agent-wing-left"
+            : index === 2
+              ? "agent-wing-right"
+              : "";
+        root.add(plate);
+      }
+      const eye = new THREE.Mesh(
+        new THREE.BoxGeometry(0.34, 0.08, 0.05),
+        coreMaterial,
+      );
+      eye.name = "agent-eye";
+      eye.position.z = -0.34;
+      root.add(eye);
+    }
 
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.62, 0.055, 8, 40),
-      darkMaterial,
-    );
-    ring.rotation.x = Math.PI / 2;
-    ring.name = "agent-ring";
-    group.add(ring);
-
-    const rotor = new THREE.Mesh(
-      new THREE.TorusGeometry(0.42, 0.025, 6, 28),
+      new THREE.TorusGeometry(0.78, 0.028, 8, 40),
       coreMaterial,
     );
-    rotor.position.y = 0.84;
-    rotor.rotation.x = Math.PI / 2;
-    rotor.name = "agent-rotor";
-    group.add(rotor);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = -0.54;
+    ring.name = "agent-pad-ring";
+    root.add(ring);
 
     const agentPad = new THREE.Mesh(
       new THREE.RingGeometry(0.52, 0.68, 32),
@@ -1607,9 +1774,14 @@ class FreemanEngine {
     agentPad.name = "agent-pad";
     group.add(agentPad);
 
-    const light = new THREE.PointLight(definition.color, 18, 5.5, 2);
+    const light = new THREE.PointLight(definition.color, 9, 4.6, 2);
     group.add(light);
-    group.scale.setScalar(1.2);
+    root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      object.castShadow = true;
+      object.receiveShadow = true;
+    });
+    group.scale.setScalar(definition.id === "forge" ? 1.08 : 1.15);
     return group;
   }
 
@@ -2051,6 +2223,32 @@ class FreemanEngine {
       0,
       1 - Math.exp(-delta * 13),
     );
+    const operatorBody = this.player.group.getObjectByName("operator-body-root");
+    const leftLeg = this.player.group.getObjectByName("operator-leg-left");
+    const rightLeg = this.player.group.getObjectByName("operator-leg-right");
+    const leftArm = this.player.group.getObjectByName("operator-arm-left");
+    const rightArm = this.player.group.getObjectByName("operator-arm-right");
+    const helmet = this.player.group.getObjectByName("operator-helmet");
+    const stride = this.playerMoving ? Math.sin(this.elapsed * 10.5) : 0;
+    if (operatorBody) {
+      operatorBody.position.y =
+        this.playerMoving
+          ? Math.abs(Math.sin(this.elapsed * 10.5)) * 0.045
+          : Math.sin(this.elapsed * 2.2) * 0.016;
+      operatorBody.rotation.z =
+        this.mode === "defeat" && this.player.hp <= 0
+          ? THREE.MathUtils.lerp(operatorBody.rotation.z, -1.28, 0.08)
+          : THREE.MathUtils.lerp(
+              operatorBody.rotation.z,
+              this.playerMoving ? stride * 0.025 : 0,
+              0.16,
+            );
+    }
+    if (leftLeg) leftLeg.rotation.x = stride * 0.5;
+    if (rightLeg) rightLeg.rotation.x = -stride * 0.5;
+    if (leftArm) leftArm.rotation.x = -stride * 0.32 - 0.12;
+    if (rightArm) rightArm.rotation.x = stride * 0.2 - 0.24;
+    if (helmet) helmet.rotation.y = Math.sin(this.elapsed * 1.4) * 0.035;
     this.core.shield.scale.setScalar(1 + Math.sin(this.elapsed * 1.4) * 0.025);
     (this.core.shield.material as THREE.MeshBasicMaterial).opacity =
       0.035 + (this.core.hp / this.core.maxHp) * 0.05;
@@ -2624,10 +2822,10 @@ class FreemanEngine {
       this.desiredCameraTarget,
       1 - Math.exp(-delta * 4.2),
     );
-    const distance = 20;
+    const distance = 19;
     const cameraOffset = new THREE.Vector3(
       Math.sin(this.yaw) * distance,
-      15,
+      12.5,
       Math.cos(this.yaw) * distance,
     );
     const shakeAmount =
@@ -2967,18 +3165,16 @@ class FreemanEngine {
     });
   }
 
-  private async attachCharacterRig(
-    parent: THREE.Group,
-    key: "operator" | AgentId,
-    accent: number,
-    target: { rig: AnimatedRig | null },
-  ) {
+  private async attachOperatorRig() {
+    this.canvas.dataset.operatorRig = "loading";
     try {
-      const gltf = await this.gltfLoader.loadAsync(CHARACTER_MODELS[key]);
+      const gltf = await this.gltfLoader.loadAsync(
+        "/models/quaternius/Character.gltf",
+      );
       const root = gltf.scene;
-      root.name = `${key}-animated-rig`;
+      root.name = "operator-production-rig";
       root.rotation.y = Math.PI;
-      root.scale.setScalar(key === "operator" ? 0.8 : 0.84);
+      root.scale.setScalar(0.92);
       root.traverse((object) => {
         if (!(object instanceof THREE.Mesh)) return;
         object.castShadow = true;
@@ -2988,59 +3184,45 @@ class FreemanEngine {
           : [object.material];
         object.material = materials.map((source) => {
           const material = source.clone() as THREE.MeshStandardMaterial;
-          if (material.color) {
-            material.color.lerp(new THREE.Color(0x263239), 0.22);
+          material.roughness = 0.36;
+          material.metalness = material.name.includes("Black") ? 0.72 : 0.48;
+          if (
+            material.name.includes("Accent") ||
+            material.name.includes("Blade")
+          ) {
+            material.emissive = new THREE.Color(0x8b2f13);
+            material.emissiveIntensity = 0.24;
           }
-          material.roughness = 0.42;
-          material.metalness = 0.5;
-          material.emissive = new THREE.Color(accent);
-          material.emissiveIntensity = 0.16;
           return material;
         });
       });
 
-      const protectedNames =
-        key === "operator"
-          ? new Set(["operator-ring", "operator-light", "operator-health"])
-          : new Set(["agent-ring", "agent-pad"]);
-      for (const child of [...parent.children]) {
-        if (protectedNames.has(child.name) || child instanceof THREE.Light) {
-          continue;
-        }
-        child.visible = false;
-      }
-      parent.add(root);
-
-      const techBand = new THREE.Mesh(
-        new THREE.TorusGeometry(key === "operator" ? 0.48 : 0.42, 0.025, 6, 32),
-        new THREE.MeshBasicMaterial({
-          color: accent,
-          transparent: true,
-          opacity: 0.78,
-          depthWrite: false,
-        }),
-      );
-      techBand.name = `${key}-tech-band`;
-      techBand.position.y = key === "operator" ? 1.26 : 1.2;
-      techBand.rotation.x = Math.PI / 2;
-      parent.add(techBand);
+      const bodyRoot = this.player.group.getObjectByName("operator-body-root");
+      if (bodyRoot) bodyRoot.visible = false;
+      this.player.group.add(root);
 
       const visor = new THREE.Mesh(
-        new THREE.BoxGeometry(0.34, 0.055, 0.045),
-        new THREE.MeshBasicMaterial({ color: accent }),
+        new THREE.BoxGeometry(0.42, 0.07, 0.055),
+        new THREE.MeshStandardMaterial({
+          color: 0xb8f7f3,
+          emissive: 0x64d9dd,
+          emissiveIntensity: 2.4,
+          roughness: 0.1,
+          metalness: 0.4,
+        }),
       );
-      visor.name = `${key}-visor`;
-      visor.position.set(0, key === "operator" ? 1.78 : 1.7, -0.3);
-      parent.add(visor);
+      visor.name = "operator-production-visor";
+      visor.position.set(0, 1.78, -0.27);
+      this.player.group.add(visor);
 
       const mixer = new THREE.AnimationMixer(root);
       const clipNames: Record<RigAnimation, string> = {
-        idle: "Idle",
-        run: "Running_A",
-        attack: CHARACTER_ATTACKS[key],
-        hit: "Hit_A",
-        death: "Death_A",
-        cheer: "Cheer",
+        idle: "Idle_Gun_Pointing",
+        run: "Run_Shoot",
+        attack: "Gun_Shoot",
+        hit: "HitRecieve",
+        death: "Death",
+        cheer: "Wave",
       };
       const actions: Partial<Record<RigAnimation, THREE.AnimationAction>> = {};
       for (const [state, clipName] of Object.entries(clipNames) as Array<
@@ -3056,10 +3238,15 @@ class FreemanEngine {
         current: null,
         lockedFor: 0,
       };
-      target.rig = rig;
+      this.player.rig = rig;
       this.playRig(rig, "idle");
+      this.canvas.dataset.operatorRig = "ready";
     } catch (error) {
-      console.warn(`Animated ${key} model could not be loaded.`, error);
+      this.canvas.dataset.operatorRig = "failed";
+      console.error(
+        "Operator production rig could not be loaded. Using the built-in cyber operator.",
+        error,
+      );
     }
   }
 
@@ -3302,7 +3489,7 @@ class FreemanEngine {
     const width = Math.max(1, parent.clientWidth);
     const height = Math.max(1, parent.clientHeight);
     const aspect = width / height;
-    const viewHeight = 14 * this.zoom;
+    const viewHeight = 12.8 * this.zoom;
     this.camera.left = (-viewHeight * aspect) / 2;
     this.camera.right = (viewHeight * aspect) / 2;
     this.camera.top = viewHeight / 2;
@@ -5128,17 +5315,20 @@ class FreemanCanvasEngine implements GameController {
   private drawPlayer() {
     const context = this.context;
     const feet = this.project(this.player.x, this.player.z);
-    const torso = this.project(this.player.x, this.player.z, 1);
-    const head = this.project(this.player.x, this.player.z, 1.72);
+    const waist = this.project(this.player.x, this.player.z, 0.82);
+    const chest = this.project(this.player.x, this.player.z, 1.42);
+    const head = this.project(this.player.x, this.player.z, 2.08);
     const scale = feet.scale;
     context.save();
+
+    // Grounded shadow and command ring.
     context.fillStyle = "rgba(0,0,0,.5)";
     context.beginPath();
     context.ellipse(
       feet.x,
       feet.y + 6,
-      scale * 0.52,
-      scale * 0.2,
+      scale * 0.66,
+      scale * 0.23,
       0,
       0,
       Math.PI * 2,
@@ -5157,82 +5347,171 @@ class FreemanCanvasEngine implements GameController {
       Math.PI * 2,
     );
     context.stroke();
-    context.fillStyle = "#34464f";
+
+    // Coat silhouette and armoured legs.
+    context.fillStyle = "#11191e";
+    context.strokeStyle = "#31454e";
+    context.lineWidth = Math.max(1, scale * 0.035);
     context.beginPath();
-    context.moveTo(torso.x - scale * 0.37, torso.y - scale * 0.25);
-    context.lineTo(torso.x + scale * 0.37, torso.y - scale * 0.25);
-    context.lineTo(feet.x + scale * 0.44, feet.y);
-    context.lineTo(feet.x - scale * 0.44, feet.y);
+    context.moveTo(chest.x - scale * 0.44, chest.y - scale * 0.08);
+    context.lineTo(chest.x + scale * 0.44, chest.y - scale * 0.08);
+    context.lineTo(feet.x + scale * 0.48, feet.y + scale * 0.04);
+    context.lineTo(feet.x, feet.y - scale * 0.12);
+    context.lineTo(feet.x - scale * 0.48, feet.y + scale * 0.04);
     context.closePath();
     context.fill();
-    context.strokeStyle = "#ff9a5d";
     context.stroke();
 
-    context.fillStyle = "#17262d";
-    context.strokeStyle = "#6b8e98";
-    context.lineWidth = 1;
-    for (const side of [-1, 1]) {
+    for (const side of [-1, 1] as const) {
+      context.fillStyle = "#29373e";
+      context.strokeStyle = "#5a737b";
       context.beginPath();
-      context.moveTo(feet.x + side * scale * 0.08, feet.y - scale * 0.05);
-      context.lineTo(feet.x + side * scale * 0.31, feet.y + scale * 0.2);
-      context.lineTo(feet.x + side * scale * 0.5, feet.y + scale * 0.17);
-      context.lineTo(feet.x + side * scale * 0.25, feet.y - scale * 0.12);
+      context.moveTo(waist.x + side * scale * 0.08, waist.y);
+      context.lineTo(waist.x + side * scale * 0.34, waist.y + scale * 0.04);
+      context.lineTo(feet.x + side * scale * 0.47, feet.y + scale * 0.13);
+      context.lineTo(feet.x + side * scale * 0.15, feet.y + scale * 0.08);
       context.closePath();
       context.fill();
       context.stroke();
-    }
 
-    context.fillStyle = "#a6603f";
-    for (const side of [-1, 1]) {
+      context.fillStyle = "#7d452f";
       context.beginPath();
       context.roundRect(
-        torso.x + side * scale * 0.37 - scale * 0.15,
-        torso.y - scale * 0.34,
-        scale * 0.3,
-        scale * 0.18,
-        scale * 0.05,
+        feet.x + side * scale * 0.3 - scale * 0.11,
+        feet.y - scale * 0.2,
+        scale * 0.22,
+        scale * 0.2,
+        scale * 0.04,
       );
       context.fill();
     }
 
+    // Broad chest plate and shoulder armour.
+    context.fillStyle = "#2b383f";
+    context.strokeStyle = "#76949b";
+    context.beginPath();
+    context.moveTo(chest.x - scale * 0.48, chest.y - scale * 0.28);
+    context.lineTo(chest.x + scale * 0.48, chest.y - scale * 0.28);
+    context.lineTo(waist.x + scale * 0.34, waist.y + scale * 0.05);
+    context.lineTo(waist.x - scale * 0.34, waist.y + scale * 0.05);
+    context.closePath();
+    context.fill();
+    context.stroke();
+
+    context.fillStyle = "#8a4b31";
+    for (const side of [-1, 1] as const) {
+      context.beginPath();
+      context.roundRect(
+        chest.x + side * scale * 0.49 - scale * 0.19,
+        chest.y - scale * 0.35,
+        scale * 0.38,
+        scale * 0.24,
+        scale * 0.07,
+      );
+      context.fill();
+    }
+
+    // Chest power bus.
     context.shadowColor = "#ff9a5d";
-    context.shadowBlur = 15;
-    context.fillStyle = "#ffd0ae";
-    context.fillRect(
-      torso.x - scale * 0.07,
-      torso.y - scale * 0.11,
-      scale * 0.14,
+    context.shadowBlur = 12;
+    context.fillStyle = "#f08a4b";
+    context.beginPath();
+    context.roundRect(
+      chest.x - scale * 0.09,
+      chest.y - scale * 0.16,
       scale * 0.18,
+      scale * 0.3,
+      scale * 0.03,
     );
+    context.fill();
     context.shadowBlur = 0;
 
-    context.fillStyle = "#b98b72";
+    // Full helmet with a cyan visor.
+    context.fillStyle = "#1b252a";
+    context.strokeStyle = "#718b91";
+    context.lineWidth = Math.max(1, scale * 0.04);
     context.beginPath();
-    context.arc(head.x, head.y, scale * 0.24, 0, Math.PI * 2);
+    context.arc(head.x, head.y, scale * 0.34, 0, Math.PI * 2);
     context.fill();
-    context.strokeStyle = "#bde7ec";
-    context.lineWidth = Math.max(1, scale * 0.07);
-    context.beginPath();
-    context.moveTo(head.x - scale * 0.19, head.y);
-    context.lineTo(head.x + scale * 0.19, head.y);
     context.stroke();
+    context.fillStyle = "#0c1317";
+    context.beginPath();
+    context.roundRect(
+      head.x - scale * 0.25,
+      head.y + scale * 0.05,
+      scale * 0.5,
+      scale * 0.21,
+      scale * 0.06,
+    );
+    context.fill();
+    context.shadowColor = "#9eeaf0";
+    context.shadowBlur = 14;
+    context.strokeStyle = "#bde7ec";
+    context.lineWidth = Math.max(2, scale * 0.09);
+    context.beginPath();
+    context.moveTo(head.x - scale * 0.24, head.y - scale * 0.03);
+    context.lineTo(head.x + scale * 0.24, head.y - scale * 0.03);
+    context.stroke();
+    context.shadowBlur = 0;
+
+    // Arms and a solid rifle silhouette aligned to the current aim.
     const aimScreen = this.project(this.aim.x, this.aim.z, 0.8);
-    let dx = aimScreen.x - torso.x;
-    let dy = aimScreen.y - torso.y;
+    let dx = aimScreen.x - chest.x;
+    let dy = aimScreen.y - chest.y;
     const length = Math.hypot(dx, dy) || 1;
     dx /= length;
     dy /= length;
-    context.strokeStyle = "#ff9a5d";
-    context.lineWidth = Math.max(2, scale * 0.08);
+    const px = -dy;
+    const py = dx;
+    const gunStartX = chest.x + dx * scale * 0.1;
+    const gunStartY = chest.y + dy * scale * 0.1;
+    const gunEndX = chest.x + dx * scale * 1.28;
+    const gunEndY = chest.y + dy * scale * 1.28;
+
+    context.strokeStyle = "#202b31";
+    context.lineWidth = Math.max(4, scale * 0.19);
     context.beginPath();
-    context.moveTo(torso.x, torso.y);
-    context.lineTo(torso.x + dx * scale * 0.9, torso.y + dy * scale * 0.9);
+    context.moveTo(chest.x - px * scale * 0.26, chest.y - py * scale * 0.26);
+    context.lineTo(
+      gunStartX + dx * scale * 0.42,
+      gunStartY + dy * scale * 0.42,
+    );
+    context.moveTo(chest.x + px * scale * 0.26, chest.y + py * scale * 0.26);
+    context.lineTo(
+      gunStartX + dx * scale * 0.2,
+      gunStartY + dy * scale * 0.2,
+    );
     context.stroke();
+
+    context.fillStyle = "#0d1418";
+    context.strokeStyle = "#b66841";
+    context.lineWidth = Math.max(1, scale * 0.035);
+    context.beginPath();
+    context.moveTo(
+      gunStartX + px * scale * 0.13,
+      gunStartY + py * scale * 0.13,
+    );
+    context.lineTo(gunEndX + px * scale * 0.08, gunEndY + py * scale * 0.08);
+    context.lineTo(gunEndX - px * scale * 0.08, gunEndY - py * scale * 0.08);
+    context.lineTo(
+      gunStartX - px * scale * 0.13,
+      gunStartY - py * scale * 0.13,
+    );
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.shadowColor = "#ff9a5d";
+    context.shadowBlur = 10;
+    context.fillStyle = "#ff9a5d";
+    context.beginPath();
+    context.arc(gunEndX, gunEndY, scale * 0.065, 0, Math.PI * 2);
+    context.fill();
+
     this.drawWorldHealthBar(
       this.player.x,
       this.player.z,
-      2.25,
-      52,
+      2.72,
+      62,
       this.player.hp / this.player.maxHp,
       "#e77d44",
     );
@@ -5246,46 +5525,111 @@ class FreemanCanvasEngine implements GameController {
       agent.z,
       1.05 + Math.sin(this.elapsed * 2.3 + Number(agent.code)) * 0.14,
     );
-    const size = point.scale * 0.3;
+    const size = point.scale * (agent.id === "forge" ? 0.42 : 0.36);
     context.save();
     context.shadowColor = toCssColor(agent.color);
     context.shadowBlur = 24;
     context.strokeStyle = toCssColor(agent.color);
-    context.fillStyle = "#26353c";
     context.lineWidth = 2;
-    const wingWave =
-      Math.sin(this.elapsed * 3 + Number(agent.code)) * size * 0.2;
-    context.beginPath();
-    context.moveTo(point.x - size * 0.35, point.y);
-    context.lineTo(point.x - size * 1.35, point.y + wingWave);
-    context.lineTo(point.x - size * 0.75, point.y + size * 0.46);
-    context.closePath();
-    context.fill();
-    context.stroke();
-    context.beginPath();
-    context.moveTo(point.x + size * 0.35, point.y);
-    context.lineTo(point.x + size * 1.35, point.y - wingWave);
-    context.lineTo(point.x + size * 0.75, point.y + size * 0.46);
-    context.closePath();
-    context.fill();
-    context.stroke();
-    context.beginPath();
-    context.moveTo(point.x, point.y - size * 0.9);
-    context.lineTo(point.x + size * 0.72, point.y - size * 0.2);
-    context.lineTo(point.x + size * 0.55, point.y + size * 0.82);
-    context.lineTo(point.x - size * 0.55, point.y + size * 0.82);
-    context.lineTo(point.x - size * 0.72, point.y - size * 0.2);
-    context.closePath();
-    context.fill();
-    context.stroke();
+
+    if (agent.id === "kairos") {
+      context.fillStyle = "#172126";
+      context.beginPath();
+      context.arc(point.x, point.y, size * 0.62, 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
+      context.fillStyle = toCssColor(agent.color);
+      context.beginPath();
+      context.arc(point.x, point.y, size * 0.24, 0, Math.PI * 2);
+      context.fill();
+      for (const [rx, ry, rotation] of [
+        [1.3, 0.42, 0],
+        [1.05, 0.34, Math.PI / 3],
+        [0.95, 0.3, -Math.PI / 3],
+      ] as const) {
+        context.beginPath();
+        context.ellipse(
+          point.x,
+          point.y,
+          size * rx,
+          size * ry,
+          rotation + this.elapsed * 0.25,
+          0,
+          Math.PI * 2,
+        );
+        context.stroke();
+      }
+    } else if (agent.id === "kira") {
+      context.fillStyle = "#182329";
+      context.beginPath();
+      context.moveTo(point.x, point.y - size * 0.9);
+      context.lineTo(point.x + size * 0.85, point.y + size * 0.62);
+      context.lineTo(point.x, point.y + size * 0.35);
+      context.lineTo(point.x - size * 0.85, point.y + size * 0.62);
+      context.closePath();
+      context.fill();
+      context.stroke();
+      context.fillStyle = "#0b1115";
+      context.fillRect(
+        point.x - size * 0.13,
+        point.y + size * 0.2,
+        size * 0.26,
+        size * 1.65,
+      );
+      context.fillStyle = toCssColor(agent.color);
+      context.fillRect(
+        point.x - size * 0.38,
+        point.y - size * 0.18,
+        size * 0.76,
+        Math.max(2, size * 0.13),
+      );
+    } else if (agent.id === "forge") {
+      context.fillStyle = "#1a252b";
+      context.beginPath();
+      context.roundRect(
+        point.x - size,
+        point.y - size * 0.62,
+        size * 2,
+        size * 1.24,
+        size * 0.18,
+      );
+      context.fill();
+      context.stroke();
+      context.fillStyle = toCssColor(agent.color);
+      context.beginPath();
+      context.arc(point.x, point.y, size * 0.27, 0, Math.PI * 2);
+      context.fill();
+      context.lineWidth = Math.max(3, size * 0.18);
+      for (const side of [-1, 1] as const) {
+        context.beginPath();
+        context.moveTo(point.x + side * size * 0.58, point.y);
+        context.lineTo(point.x + side * size * 0.58, point.y + size * 1.35);
+        context.stroke();
+      }
+    } else {
+      context.fillStyle = "#172126";
+      context.beginPath();
+      context.arc(point.x, point.y, size * 0.48, 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
+      context.fillStyle = toCssColor(agent.color);
+      context.beginPath();
+      context.arc(point.x, point.y, size * 0.2, 0, Math.PI * 2);
+      context.fill();
+      for (let index = 0; index < 4; index += 1) {
+        const angle = (index / 4) * Math.PI * 2 + this.elapsed * 0.4;
+        const x = point.x + Math.cos(angle) * size * 0.9;
+        const y = point.y + Math.sin(angle) * size * 0.55;
+        context.save();
+        context.translate(x, y);
+        context.rotate(angle + Math.PI / 4);
+        context.fillStyle = "#26373e";
+        context.fillRect(-size * 0.25, -size * 0.25, size * 0.5, size * 0.5);
+        context.restore();
+      }
+    }
+
     context.shadowBlur = 0;
-    context.fillStyle = toCssColor(agent.color);
-    context.fillRect(
-      point.x - size * 0.44,
-      point.y - size * 0.35,
-      size * 0.88,
-      Math.max(2, size * 0.13),
-    );
     context.strokeStyle = toCssColor(agent.color);
     context.lineWidth = 1.5;
     context.beginPath();

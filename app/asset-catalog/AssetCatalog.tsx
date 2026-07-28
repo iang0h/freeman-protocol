@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import styles from "./AssetCatalog.module.css";
 
-type AssetStatus = "concept-ready" | "runtime" | "queued";
+type AssetStatus = "concept-ready" | "prototype" | "runtime" | "queued";
 
 type Asset = {
   id: string;
@@ -31,17 +31,17 @@ const assets: Asset[] = [
     category: "Characters",
     role: "Playable cyber operator",
     description:
-      "Fully rigged field operator, restyled with graphite armour, burnt-orange hardware, a cyan visor and a live combat animation controller.",
-    source: "KayKit CC0 rig · Freeman cyber restyle",
-    runtime: "Animated humanoid active",
-    model: "Knight GLB imported · 330 KB",
+      "Animated cyber operator with a readable combat silhouette, rifle-ready motion set, graphite armour, burnt-orange hardware and a cyan tactical visor.",
+    source: "Quaternius CC0 Cyberpunk Game Kit · Freeman material pass",
+    runtime: "Animated production candidate active",
+    model: "Embedded glTF · 1.5 MB",
     status: "runtime",
     image: "/asset-catalog/ian-freeman.webp",
     accent: "#dc7540",
-    target: "Rigged humanoid · 7K upload vertices · mobile-safe",
-    textures: "Embedded WebP atlas · runtime metallic and emissive restyle",
+    target: "Meshy multi-view GLB · 20–30K polygons · 2K PBR",
+    textures: "Graphite metal · burnt-orange armour · cyan optics",
     animations: ["Idle", "Run", "Shoot", "Hit", "Death", "Victory"],
-    next: "Add a bespoke Freeman head and armour pass without changing the proven game-ready rig.",
+    next: "Use this coherent production candidate until the custom Meshy multi-view Freeman model passes the same gameplay-camera test.",
   },
   {
     id: "agent-kairos",
@@ -49,17 +49,17 @@ const assets: Asset[] = [
     category: "AI Agents",
     role: "Time-control support AI",
     description:
-      "Fully rigged time-control specialist with a cyber visor, orbital support ring and spellcast-based slow-field animation.",
-    source: "KayKit CC0 rig · Freeman cyber restyle",
-    runtime: "Animated humanoid active",
-    model: "Mage GLB imported · 310 KB",
-    status: "runtime",
+      "Floating temporal intelligence with a pulsing core, three independent orbital rings and four stabiliser blades.",
+    source: "Custom Freeman runtime mesh",
+    runtime: "Playable prototype active",
+    model: "Procedural orbital AI",
+    status: "prototype",
     image: "/asset-catalog/kairos-agent.webp",
     accent: "#83d7df",
-    target: "Rigged humanoid · optimized GLB · mobile-safe",
-    textures: "Embedded WebP atlas · restrained cyan emissive channel",
-    animations: ["Idle", "Run", "Slow field", "Hit", "Shutdown", "Victory"],
-    next: "Replace the temporary costume with a bespoke temporal-agent armour shell.",
+    target: "Rigid-body GLB · segmented rings · 10–15K polygons",
+    textures: "Blackened metal · cyan temporal core",
+    animations: ["Hover", "Orbit", "Slow field", "Hit", "Shutdown", "Victory"],
+    next: "Convert this approved orbital silhouette into a segmented hard-surface GLB.",
   },
   {
     id: "enemy-virus",
@@ -85,11 +85,11 @@ const assets: Asset[] = [
     category: "AI Agents",
     role: "Heavy-damage sniper AI",
     description:
-      "Hooded precision specialist with a full humanoid rig, long-range firing animation and pale-cyan targeting hardware.",
-    source: "KayKit CC0 rig · Freeman cyber restyle",
-    runtime: "Animated humanoid active",
-    model: "Rogue Hooded GLB imported · 311 KB",
-    status: "runtime",
+      "Angular sniper drone with a long under-slung rail rifle, narrow targeting eye and swept stabiliser wings.",
+    source: "Custom Freeman runtime mesh",
+    runtime: "Playable prototype active",
+    model: "Procedural sniper AI",
+    status: "prototype",
     accent: "#9ebfc0",
     animations: ["Idle", "Run", "Precision shot", "Hit", "Shutdown", "Victory"],
     next: "Add a purpose-built rail rifle and a sharper targeting silhouette.",
@@ -100,11 +100,11 @@ const assets: Asset[] = [
     category: "AI Agents",
     role: "Rapid-fire assault AI",
     description:
-      "Heavy assault specialist with a full humanoid rig, broad armour silhouette and rapid-fire combat animation.",
-    source: "KayKit CC0 rig · Freeman cyber restyle",
-    runtime: "Animated humanoid active",
-    model: "Barbarian GLB imported · 319 KB",
-    status: "runtime",
+      "Heavy gunship AI with broad armour, twin rotary weapon pods and a visible amber power core.",
+    source: "Custom Freeman runtime mesh",
+    runtime: "Playable prototype active",
+    model: "Procedural assault AI",
+    status: "prototype",
     accent: "#d8a14b",
     animations: ["Idle", "Run", "Rapid fire", "Hit", "Shutdown", "Victory"],
     next: "Replace the melee prop with a compact rotary cannon and ammo backpack.",
@@ -115,11 +115,11 @@ const assets: Asset[] = [
     category: "AI Agents",
     role: "Healing and shield AI",
     description:
-      "Fully rigged protection specialist with a calm restoration animation, bright shield accents and active squad healing.",
-    source: "KayKit CC0 rig · Freeman cyber restyle",
-    runtime: "Animated humanoid active",
-    model: "Rogue GLB imported · 315 KB",
-    status: "runtime",
+      "Shield intelligence built around a luminous restoration core, four rotating protection plates and a vertical halo.",
+    source: "Custom Freeman runtime mesh",
+    runtime: "Playable prototype active",
+    model: "Procedural shield AI",
+    status: "prototype",
     accent: "#d2ddd7",
     animations: ["Idle", "Run", "Repair cast", "Hit", "Shutdown", "Victory"],
     next: "Add folding shield emitters so the support role reads instantly from the isometric camera.",
@@ -249,6 +249,7 @@ const categories = [
 
 const statusLabel: Record<AssetStatus, string> = {
   "concept-ready": "CONCEPT READY",
+  prototype: "PLAYABLE PROTOTYPE",
   runtime: "RUNTIME",
   queued: "QUEUED",
 };
@@ -278,8 +279,8 @@ export default function AssetCatalog() {
   const runtimeCount = assets.filter((asset) =>
     asset.runtime.toLowerCase().includes("active"),
   ).length;
-  const importedCount = assets.filter((asset) =>
-    asset.model.includes("GLB imported"),
+  const prototypeCount = assets.filter(
+    (asset) => asset.status === "prototype",
   ).length;
 
   return (
@@ -296,14 +297,15 @@ export default function AssetCatalog() {
 
       <section className={styles.hero}>
         <div>
-          <p className={styles.eyebrow}>PRODUCTION INVENTORY · BUILD 007</p>
+          <p className={styles.eyebrow}>PRODUCTION INVENTORY · BUILD 008</p>
           <h1>
             Asset
             <em> Ledger</em>
           </h1>
           <p className={styles.lede}>
-            Every concept, runtime system and imported 3D model is tracked
-            separately. The five squad characters now use optimized rigged GLBs.
+            Concept art, playable prototypes and final production models are
+            tracked separately. Nothing is labelled final until the in-game
+            model matches the visual target.
           </p>
         </div>
         <div className={styles.metrics} aria-label="Asset totals">
@@ -316,8 +318,8 @@ export default function AssetCatalog() {
             <small>3D REFERENCES READY</small>
           </span>
           <span>
-            <strong>{String(importedCount).padStart(2, "0")}</strong>
-            <small>IMPORTED GLB MODELS</small>
+            <strong>{String(prototypeCount).padStart(2, "0")}</strong>
+            <small>PLAYABLE PROTOTYPES</small>
           </span>
           <span>
             <strong>{String(runtimeCount).padStart(2, "0")}</strong>
