@@ -3174,15 +3174,14 @@ class FreemanEngine {
       const root = gltf.scene;
       root.name = "operator-production-rig";
       root.rotation.y = Math.PI;
-      root.scale.setScalar(0.92);
+      let visibleMeshCount = 0;
       root.traverse((object) => {
-        if (!(object instanceof THREE.Mesh)) return;
-        object.castShadow = true;
-        object.receiveShadow = true;
-        const materials = Array.isArray(object.material)
-          ? object.material
-          : [object.material];
-        object.material = materials.map((source) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        visibleMeshCount += 1;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        const cloneMaterial = (source: THREE.Material) => {
           const material = source.clone() as THREE.MeshStandardMaterial;
           material.roughness = 0.36;
           material.metalness = material.name.includes("Black") ? 0.72 : 0.48;
@@ -3194,12 +3193,45 @@ class FreemanEngine {
             material.emissiveIntensity = 0.24;
           }
           return material;
-        });
+        };
+        mesh.material = Array.isArray(mesh.material)
+          ? mesh.material.map(cloneMaterial)
+          : cloneMaterial(mesh.material);
       });
 
-      const bodyRoot = this.player.group.getObjectByName("operator-body-root");
-      if (bodyRoot) bodyRoot.visible = false;
+      root.updateMatrixWorld(true);
+      const sourceBounds = new THREE.Box3().setFromObject(root);
+      const sourceSize = sourceBounds.getSize(new THREE.Vector3());
+      if (
+        visibleMeshCount === 0 ||
+        !Number.isFinite(sourceSize.y) ||
+        sourceSize.y < 0.1
+      ) {
+        throw new Error("The operator GLTF contains no visible character mesh.");
+      }
+
+      const targetHeight = 2.3;
+      root.scale.setScalar(targetHeight / sourceSize.y);
+      root.updateMatrixWorld(true);
+      const fittedBounds = new THREE.Box3().setFromObject(root);
+      const fittedCenter = fittedBounds.getCenter(new THREE.Vector3());
+      root.position.set(
+        -fittedCenter.x,
+        -fittedBounds.min.y,
+        -fittedCenter.z,
+      );
       this.player.group.add(root);
+      root.updateMatrixWorld(true);
+
+      const finalBounds = new THREE.Box3().setFromObject(root);
+      const finalSize = finalBounds.getSize(new THREE.Vector3());
+      if (
+        !Number.isFinite(finalSize.y) ||
+        finalSize.y < targetHeight * 0.7
+      ) {
+        this.player.group.remove(root);
+        throw new Error("The operator GLTF could not be fitted to the arena.");
+      }
 
       const visor = new THREE.Mesh(
         new THREE.BoxGeometry(0.42, 0.07, 0.055),
@@ -3214,6 +3246,9 @@ class FreemanEngine {
       visor.name = "operator-production-visor";
       visor.position.set(0, 1.78, -0.27);
       this.player.group.add(visor);
+
+      const bodyRoot = this.player.group.getObjectByName("operator-body-root");
+      if (bodyRoot) bodyRoot.visible = false;
 
       const mixer = new THREE.AnimationMixer(root);
       const clipNames: Record<RigAnimation, string> = {
