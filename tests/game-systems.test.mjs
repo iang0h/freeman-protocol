@@ -18,6 +18,16 @@ import {
   purchaseEvolution,
 } from "../app/game/progression.mjs";
 import { takeNextTrack } from "../app/game/playlist.mjs";
+import {
+  FIRST_WAVE,
+  OBSERVE_BREACH,
+  TUTORIAL_STEPS,
+  advanceTutorial,
+  canPerformTutorialAction,
+  canRetryFirstWave,
+  isTutorialProtected,
+} from "../app/game/tutorial-rules.mjs";
+import { normalizeStickInput } from "../app/game/input-rules.mjs";
 
 test("paces queued enemies without changing the remaining threat total", () => {
   assert.equal(getActiveEnemyLimit("webgl"), 36);
@@ -162,4 +172,88 @@ test("shuffle bag plays every track and avoids boundary repeats", () => {
   assert.deepEqual(new Set(played.slice(0, 3)), new Set(tracks));
   assert.notEqual(played[2], played[3]);
   assert.notEqual(played[5], played[6]);
+});
+
+test("tutorial advances only from the expected event", () => {
+  assert.deepEqual(TUTORIAL_STEPS, [
+    "move",
+    "shoot",
+    "recruit",
+    "command",
+    "observe",
+    "complete",
+    "skipped",
+  ]);
+  assert.equal(advanceTutorial("move", "enemy-defeated"), "move");
+  assert.equal(advanceTutorial("move", "movement-complete"), "shoot");
+  assert.equal(advanceTutorial("shoot", "training-cleared"), "recruit");
+  assert.equal(advanceTutorial("recruit", "kairos-recruited"), "command");
+  assert.equal(advanceTutorial("command", "guard-selected"), "observe");
+  assert.equal(advanceTutorial("observe", "breach-cleared"), "complete");
+  assert.equal(advanceTutorial("complete", "movement-complete"), "complete");
+});
+
+test("tutorial milestones are phase-gated and never replayed later", () => {
+  let step = "move";
+  step = advanceTutorial(step, "kairos-recruited");
+  step = advanceTutorial(step, "guard-selected");
+  assert.equal(step, "move");
+
+  step = advanceTutorial(step, "movement-complete");
+  step = advanceTutorial(step, "training-cleared");
+  assert.equal(step, "recruit");
+  assert.equal(advanceTutorial(step, "guard-selected"), "recruit");
+  assert.equal(advanceTutorial(step, "kairos-recruited"), "command");
+  assert.equal(advanceTutorial("command", "guard-selected"), "observe");
+});
+
+test("tutorial action gates only allow the required recruitment and let GUARD CORE be restored during observe", () => {
+  assert.equal(canPerformTutorialAction("move", "recruit-kairos"), false);
+  assert.equal(canPerformTutorialAction("recruit", "recruit-kairos"), true);
+  assert.equal(canPerformTutorialAction("recruit", "recruit-other"), false);
+  assert.equal(canPerformTutorialAction("observe", "recruit-kairos"), false);
+  assert.equal(canPerformTutorialAction("shoot", "guard-core"), false);
+  assert.equal(canPerformTutorialAction("command", "guard-core"), true);
+  assert.equal(canPerformTutorialAction("observe", "guard-core"), true);
+  assert.equal(canPerformTutorialAction(null, "recruit-kairos"), true);
+});
+
+test("observe breach uses one shared five-virus roster", () => {
+  assert.deepEqual(OBSERVE_BREACH, [
+    { type: "virus", x: -3, z: -3.2, speed: 0.85, damage: 3, reward: 8 },
+    { type: "virus", x: 0, z: -4.2, speed: 0.85, damage: 3, reward: 8 },
+    { type: "virus", x: 3, z: -3.2, speed: 0.85, damage: 3, reward: 8 },
+    { type: "virus", x: -1.4, z: -5.1, speed: 0.85, damage: 3, reward: 8 },
+    { type: "virus", x: 1.4, z: -5.1, speed: 0.85, damage: 3, reward: 8 },
+  ]);
+});
+
+test("tutorial protection and first-wave retry are explicit", () => {
+  assert.equal(isTutorialProtected("move"), true);
+  assert.equal(isTutorialProtected("observe"), true);
+  assert.equal(isTutorialProtected("complete"), false);
+  assert.equal(isTutorialProtected("skipped"), false);
+  assert.equal(
+    canRetryFirstWave({ wave: 1, tutorialResolved: true, checkpoint: true }),
+    true,
+  );
+  assert.equal(
+    canRetryFirstWave({ wave: 2, tutorialResolved: true, checkpoint: true }),
+    false,
+  );
+  assert.deepEqual(FIRST_WAVE.initial, [
+    "virus", "virus", "virus", "virus",
+    "virus", "virus", "virus", "virus",
+    "phisher",
+  ]);
+  assert.deepEqual(FIRST_WAVE.reinforcement, ["virus", "virus", "virus"]);
+  assert.equal(FIRST_WAVE.damageMultiplier, 0.72);
+});
+
+test("virtual stick applies a dead zone and preserves direction", () => {
+  assert.deepEqual(normalizeStickInput(0.05, -0.04), { x: 0, y: 0 });
+  assert.deepEqual(normalizeStickInput(2, 0), { x: 1, y: 0 });
+  const diagonal = normalizeStickInput(0.6, 0.8);
+  assert.equal(diagonal.x, 0.6);
+  assert.equal(diagonal.y, 0.8);
 });

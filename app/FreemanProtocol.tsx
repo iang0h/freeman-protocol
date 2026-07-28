@@ -22,6 +22,16 @@ import {
   getUpgradeDraft,
   purchaseEvolution,
 } from "./game/progression.mjs";
+import { normalizeStickInput } from "./game/input-rules.mjs";
+import {
+  FIRST_WAVE,
+  OBSERVE_BREACH,
+  advanceTutorial,
+  canPerformTutorialAction,
+  canRetryFirstWave,
+  isTutorialProtected,
+} from "./game/tutorial-rules.mjs";
+import { readStoredNumber, readStoredValue, writeStoredValue } from "./game/storage.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
 import { BoundedPool, disposeObject3D } from "./game/three-resources";
 import { AudioManager } from "./game/AudioManager";
@@ -42,10 +52,26 @@ type EvolutionId =
   | "aegis-relay" | "nanite-repair";
 type UpgradeStacks = Record<UpgradeId, number>;
 type Evolutions = Record<AgentId, EvolutionId | null>;
+type TutorialStep =
+  | "move" | "shoot" | "recruit" | "command"
+  | "observe" | "complete" | "skipped";
+type TutorialEvent =
+  | "movement-complete" | "training-cleared" | "kairos-recruited"
+  | "guard-selected" | "breach-cleared";
+type StartOptions = { tutorial: boolean };
+
+type FirstWaveCheckpoint = {
+  data: number;
+  score: number;
+  agents: AgentId[];
+  defenses: Array<{ x: number; z: number }>;
+  command: SquadCommand;
+};
 
 const TOTAL_WAVES = 8;
 const ARENA_RADIUS = 17.5;
 const SPAWN_RADIUS = 15.2;
+const TUTORIAL_STORAGE_KEY = "freeman-tutorial-complete";
 
 type HudState = {
   hp: number;
@@ -68,6 +94,8 @@ type HudState = {
   agents: Record<AgentId, boolean>;
   upgradeStacks: UpgradeStacks;
   evolutions: Evolutions;
+  tutorialStep: TutorialStep | null;
+  canRetryWave: boolean;
 };
 
 type ToastState = {
@@ -81,10 +109,13 @@ type GameCallbacks = {
   onMode: (mode: GameMode) => void;
   onHud: (hud: HudState) => void;
   onToast: (toast: Omit<ToastState, "id">) => void;
+  onTutorialComplete(): void;
 };
 
 interface GameController {
-  start(): void;
+  start(options?: StartOptions): void;
+  skipTutorial(): void;
+  retryWave(): void;
   setMuted(muted: boolean): void;
   setMusicVolume(value: number): void;
   setSfxVolume(value: number): void;
@@ -157,6 +188,7 @@ type EnemyRuntime = {
   slow: number;
   bossPhase: number;
   hitFlash: number;
+  tutorial: boolean;
 };
 
 type ProjectileRuntime = {
@@ -362,6 +394,39 @@ const INITIAL_HUD: HudState = {
   },
   upgradeStacks: { ...EMPTY_UPGRADE_STACKS },
   evolutions: { ...EMPTY_EVOLUTIONS },
+  tutorialStep: null,
+  canRetryWave: false,
+};
+
+const TUTORIAL_COPY: Record<
+  Exclude<TutorialStep, "complete" | "skipped">,
+  { title: string; detail: string; target: string }
+> = {
+  move: {
+    title: "MOVE INTO THE RING",
+    detail: "Use WASD or the left stick.",
+    target: "move",
+  },
+  shoot: {
+    title: "CLEAR 3 TRAINING THREATS",
+    detail: "Shoot with left click, Space, or the attack button.",
+    target: "attack",
+  },
+  recruit: {
+    title: "RECRUIT KAIROS",
+    detail: "Spend Compute to add your first AI agent.",
+    target: "agents",
+  },
+  command: {
+    title: "ORDER: GUARD CORE",
+    detail: "Tell KAIROS where the army should fight.",
+    target: "agents",
+  },
+  observe: {
+    title: "FIGHT WITH YOUR AI ARMY",
+    detail: "Help KAIROS contain the breach.",
+    target: "arena",
+  },
 };
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
@@ -637,16 +702,22 @@ class FreemanEngine {
   private placementGhost: THREE.Group | null = null;
   private playerMoving = false;
   private hitStop = 0;
+  private tutorialStep: TutorialStep | null = null;
+  private tutorialMoveDistance = 0;
+  private tutorialKills = 0;
+  private tutorialResolved = false;
+  private firstWaveCheckpoint: FirstWaveCheckpoint | null = null;
+  private tutorialMarker: THREE.Group | null = null;
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
     this.callbacks = callbacks;
+    this.resetInput = this.resetInput.bind(this);
+    this.onVisibilityChange = this.onVisibilityChange.bind(this);
     this.reducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
-    this.best = Number(
-      window.localStorage.getItem("freeman-protocol-best") || 0,
-    );
+    this.best = readStoredNumber("freeman-protocol-best");
 
     const graphicsContext = canvas.getContext("webgl2", {
       antialias: true,
@@ -684,9 +755,29 @@ class FreemanEngine {
     this.animate();
   }
 
-  start() {
+  start(options: StartOptions = { tutorial: false }) {
+    this.resetInput();
     this.audio.unlock();
+    this.resetMissionState();
+    if (options.tutorial) {
+      this.tutorialStep = "move";
+      this.createTutorialMarker();
+      this.mode = "playing";
+      this.callbacks.onMode("playing");
+      this.emitHud(true);
+      return;
+    }
+    this.resolveTutorial("skipped");
+  }
+
+  skipTutorial() {
+    if (!this.tutorialStep || this.tutorialResolved) return;
+    this.resolveTutorial("skipped");
+  }
+
+  private resetMissionState() {
     this.clearDynamic();
+    this.clearTutorialMarker();
     this.wave = 1;
     this.score = 0;
     this.data = 55;
@@ -697,6 +788,11 @@ class FreemanEngine {
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
     this.squadCommand = "follow";
+    this.firstWaveCheckpoint = null;
+    this.tutorialStep = null;
+    this.tutorialMoveDistance = 0;
+    this.tutorialKills = 0;
+    this.tutorialResolved = false;
     this.cancelDefensePlacement(false);
     this.hitStop = 0;
     this.reinforcementClock = 0;
@@ -710,19 +806,46 @@ class FreemanEngine {
     this.player.meleeCooldown = 0;
     this.player.dashCooldown = 0;
     this.player.ultimate = 0;
+    this.player.invulnerable = 0;
     this.player.group.position.set(0, 0, 2.7);
     this.player.group.visible = true;
     this.playRig(this.player.rig, "idle");
     this.core.hp = this.core.maxHp = 180;
+  }
+
+  private emitTutorialEvent(event: TutorialEvent) {
+    if (!this.tutorialStep || this.tutorialResolved) return;
+    const next = advanceTutorial(this.tutorialStep, event) as TutorialStep;
+    if (next === this.tutorialStep) return;
+    this.tutorialStep = next;
+    this.applyTutorialTransition(next);
+    this.emitHud(true);
+  }
+
+  private applyTutorialTransition(next: TutorialStep) {
+    if (next === "shoot") {
+      this.clearTutorialMarker();
+      this.spawnTutorialTraining();
+    }
+    if (next === "recruit") this.data = Math.max(this.data, AGENTS[0].cost);
+    if (next === "observe") this.spawnTutorialBreach();
+    if (next === "complete") {
+      this.resolveTutorial("complete");
+    }
+  }
+
+  private resolveTutorial(result: "complete" | "skipped") {
+    if (this.tutorialResolved) return;
+    this.resetInput();
+    this.tutorialResolved = true;
+    this.clearTutorialMarker();
+    this.clearTutorialThreats();
+    this.tutorialStep = result;
+    this.callbacks.onTutorialComplete();
+    this.captureFirstWaveCheckpoint();
     this.mode = "playing";
     this.callbacks.onMode("playing");
     this.spawnWave(1);
-    this.callbacks.onToast({
-      eyebrow: "WAVE 1 STARTED",
-      title: "DEFEND THE CORE",
-      detail:
-        "Move with WASD. Left-click to shoot. Right-click to slash nearby viruses.",
-    });
     this.audio.play("wave");
     this.emitHud(true);
   }
@@ -808,6 +931,7 @@ class FreemanEngine {
   }
 
   setSquadCommand(command: SquadCommand) {
+    if (!canPerformTutorialAction(this.tutorialStep, "guard-core") && command === "defend") return;
     if (this.squadCommand === command) return;
     this.squadCommand = command;
     const copy: Record<SquadCommand, { title: string; detail: string }> = {
@@ -828,6 +952,7 @@ class FreemanEngine {
       eyebrow: "SQUAD ORDER UPDATED",
       ...copy[command],
     });
+    if (command === "defend") this.emitTutorialEvent("guard-selected");
     this.emitHud(true);
   }
 
@@ -845,12 +970,14 @@ class FreemanEngine {
 
   togglePause() {
     if (this.mode === "playing") {
+      this.resetInput();
       this.mode = "paused";
       this.audio.setPaused(true);
       this.callbacks.onMode("paused");
       return;
     }
     if (this.mode === "paused") {
+      this.resetInput();
       this.mode = "playing";
       this.audio.setPaused(false);
       this.callbacks.onMode("playing");
@@ -858,18 +985,28 @@ class FreemanEngine {
   }
 
   recruit(id: AgentId) {
+    if (!canPerformTutorialAction(this.tutorialStep, `recruit-${id}`)) return;
     if (this.mode !== "playing") return;
+    if (this.addAgent(id, { charge: true, notify: true }) && id === "kairos") {
+      this.emitTutorialEvent("kairos-recruited");
+    }
+  }
+
+  private addAgent(
+    id: AgentId,
+    options: { charge: boolean; notify: boolean },
+  ): boolean {
     const definition = AGENTS.find((agent) => agent.id === id);
-    if (!definition || this.agents.some((agent) => agent.id === id)) return;
-    if (this.data < definition.cost) {
+    if (!definition || this.agents.some((agent) => agent.id === id)) return false;
+    if (options.charge && this.data < definition.cost) {
       this.callbacks.onToast({
         eyebrow: "NOT ENOUGH COMPUTE",
         title: `YOU NEED ${definition.cost - this.data} MORE`,
         detail: "Destroy enemies to earn Compute, then recruit this agent.",
       });
-      return;
+      return false;
     }
-    this.data -= definition.cost;
+    if (options.charge) this.data -= definition.cost;
     const group = this.createAgentModel(definition);
     group.position
       .copy(this.player.group.position)
@@ -885,15 +1022,22 @@ class FreemanEngine {
       moving: false,
     };
     this.agents.push(runtime);
-    this.addRing(group.position, definition.color, 0.3, 2.2, 0.65, "portal");
-    this.addBurst(group.position, definition.color, 13);
-    this.audio.play("recruit");
-    this.callbacks.onToast({
-      eyebrow: `AI AGENT ${definition.code} RECRUITED`,
-      title: `${definition.name} JOINED YOUR TEAM`,
-      detail: definition.detail,
-    });
-    this.emitHud(true);
+    if (options.notify) {
+      this.addRing(group.position, definition.color, 0.3, 2.2, 0.65, "portal");
+      this.addBurst(group.position, definition.color, 13);
+      this.audio.play("recruit");
+      this.callbacks.onToast({
+        eyebrow: `AI AGENT ${definition.code} RECRUITED`,
+        title: `${definition.name} JOINED YOUR TEAM`,
+        detail: definition.detail,
+      });
+      this.emitHud(true);
+    }
+    return true;
+  }
+
+  private restoreAgent(id: AgentId) {
+    this.addAgent(id, { charge: false, notify: false });
   }
 
   attack() {
@@ -986,6 +1130,7 @@ class FreemanEngine {
     const start = this.player.group.position.clone();
     this.player.group.position.add(direction.multiplyScalar(3.6));
     this.clampToArena(this.player.group.position, ARENA_RADIUS);
+    this.recordTutorialMovement(start);
     this.player.dashCooldown = 3;
     this.player.invulnerable = 0.34;
     this.addBeam(
@@ -1066,6 +1211,7 @@ class FreemanEngine {
       title: selected?.name ?? "TEAM UPGRADED",
       detail: selected?.outcome ?? "Your team is stronger.",
     });
+    this.resetInput();
     this.mode = "evolution";
     this.callbacks.onMode("evolution");
     this.emitHud(true);
@@ -1109,6 +1255,7 @@ class FreemanEngine {
   }
 
   private startNextWave() {
+    this.resetInput();
     this.wave += 1;
     this.mode = "playing";
     this.callbacks.onMode("playing");
@@ -1140,6 +1287,7 @@ class FreemanEngine {
     cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
     this.unbindEvents();
+    this.resetInput();
     this.audio.dispose();
     this.clearDynamic();
     this.projectilePool.clear((mesh) => this.disposeDynamicObject(mesh));
@@ -1972,7 +2120,11 @@ class FreemanEngine {
     return group;
   }
 
-  private createEnemy(type: EnemyType, position: THREE.Vector3) {
+  private createEnemy(
+    type: EnemyType,
+    position: THREE.Vector3,
+    options: { tutorial?: boolean; speed?: number; damage?: number; reward?: number } = {},
+  ) {
     const definitions: Record<
       EnemyType,
       {
@@ -2179,19 +2331,26 @@ class FreemanEngine {
       healthFill,
       hp: scaledHp,
       maxHp: scaledHp,
-      speed: definition.speed * speedScale,
-      damage: Math.round(definition.damage * damageScale),
+      speed: options.speed ?? definition.speed * speedScale,
+      damage:
+        options.damage ??
+        Math.round(
+          definition.damage *
+            damageScale *
+            (this.wave === 1 ? FIRST_WAVE.damageMultiplier : 1),
+        ),
       range: definition.range,
       attackCooldown: definition.cooldown * attackRateScale,
       cooldownLeft: 0.4 + Math.random() * 0.8,
       telegraphLeft: 0,
       telegraphTotal:
         type === "phisher" ? 0.82 : type === "rootkit" ? 1.05 : 0.6,
-      reward: definition.reward,
+      reward: options.reward ?? definition.reward,
       radius: definition.radius,
       slow: 0,
       bossPhase: type === "rootkit" ? 1 : 0,
       hitFlash: 0,
+      tutorial: options.tutorial ?? false,
     };
     this.enemies.push(enemy);
     this.addRing(
@@ -2205,16 +2364,131 @@ class FreemanEngine {
     return enemy;
   }
 
+  private createTutorialMarker() {
+    this.clearTutorialMarker();
+    const group = new THREE.Group();
+    group.name = "tutorial-training-ring";
+    group.position.set(0, 0, -0.5);
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(1.08, 0.07, 8, 40),
+      new THREE.MeshBasicMaterial({ color: 0x9ed8dd }),
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.06;
+    group.add(ring);
+    const center = new THREE.Mesh(
+      new THREE.CircleGeometry(0.86, 40),
+      new THREE.MeshBasicMaterial({
+        color: 0x9ed8dd,
+        transparent: true,
+        opacity: 0.14,
+        side: THREE.DoubleSide,
+      }),
+    );
+    center.rotation.x = -Math.PI / 2;
+    center.position.y = 0.055;
+    group.add(center);
+    this.scene.add(group);
+    this.tutorialMarker = group;
+  }
+
+  private clearTutorialMarker() {
+    if (!this.tutorialMarker) return;
+    this.disposeDynamicObject(this.tutorialMarker);
+    this.tutorialMarker = null;
+  }
+
+  private spawnTutorialTraining() {
+    this.clearTutorialThreats();
+    this.scheduledReinforcementThreats = 0;
+    this.reinforcementsRemaining = 0;
+    for (const [x, z] of [[-2.2, -1.8], [0, -2.6], [2.2, -1.8]]) {
+      this.createEnemy("virus", new THREE.Vector3(x, 0, z), {
+        tutorial: true,
+        speed: 0.65,
+        damage: 2,
+      });
+    }
+  }
+
+  private spawnTutorialBreach() {
+    this.clearTutorialThreats();
+    this.scheduledReinforcementThreats = 0;
+    this.reinforcementsRemaining = 0;
+    for (const threat of OBSERVE_BREACH) {
+      this.createEnemy(threat.type as EnemyType, new THREE.Vector3(threat.x, 0, threat.z), {
+        tutorial: true,
+        speed: threat.speed,
+        damage: threat.damage,
+        reward: threat.reward,
+      });
+    }
+  }
+
+  private clearTutorialThreats() {
+    for (let index = this.enemies.length - 1; index >= 0; index -= 1) {
+      const enemy = this.enemies[index];
+      if (!enemy.tutorial) continue;
+      this.disposeDynamicObject(enemy.group);
+      this.enemies.splice(index, 1);
+    }
+  }
+
+  private captureFirstWaveCheckpoint() {
+    this.firstWaveCheckpoint = {
+      data: this.data,
+      score: this.score,
+      agents: this.agents.map((agent) => agent.id),
+      defenses: this.defenses.map((defense) => ({
+        x: defense.group.position.x,
+        z: defense.group.position.z,
+      })),
+      command: this.squadCommand,
+    };
+  }
+
+  retryWave() {
+    if (!canRetryFirstWave({
+      wave: this.wave,
+      tutorialResolved:
+        this.tutorialStep === "complete" || this.tutorialStep === "skipped",
+      checkpoint: this.firstWaveCheckpoint !== null,
+    })) return;
+    const checkpoint = this.firstWaveCheckpoint!;
+    this.resetInput();
+    this.clearDynamic();
+    this.cancelDefensePlacement(false);
+    this.data = checkpoint.data;
+    this.score = checkpoint.score;
+    this.squadCommand = checkpoint.command;
+    this.player.hp = this.player.maxHp;
+    this.core.hp = this.core.maxHp;
+    for (const id of checkpoint.agents) this.restoreAgent(id);
+    for (const position of checkpoint.defenses) this.restoreDefense(position);
+    this.wave = 1;
+    this.mode = "playing";
+    this.callbacks.onMode("playing");
+    this.spawnWave(1);
+    this.emitHud(true);
+  }
+
   private spawnWave(wave: number) {
     this.waveActive = true;
     this.waveEndClock = 0;
-    this.reinforcementsRemaining = Math.min(4, 1 + Math.floor(wave / 2));
-    this.scheduledReinforcementThreats =
-      this.reinforcementsRemaining * Math.min(10, 4 + wave);
-    this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
-    this.spawnFormation(
-      ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1],
-    );
+    if (wave === 1) {
+      this.reinforcementsRemaining = 1;
+      this.scheduledReinforcementThreats = FIRST_WAVE.reinforcement.length;
+      this.reinforcementClock = FIRST_WAVE.reinforcementDelay;
+      this.spawnFormation(FIRST_WAVE.initial as EnemyType[]);
+    } else {
+      this.reinforcementsRemaining = Math.min(4, 1 + Math.floor(wave / 2));
+      this.scheduledReinforcementThreats =
+        this.reinforcementsRemaining * Math.min(10, 4 + wave);
+      this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
+      this.spawnFormation(
+        ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1],
+      );
+    }
     if (wave === 4 || wave === 7) {
       this.callbacks.onToast({
         eyebrow: `ELITE BREACH · WAVE ${wave}`,
@@ -2278,10 +2552,13 @@ class FreemanEngine {
   private bindEvents() {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("blur", this.resetInput);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
     this.canvas.addEventListener("pointermove", this.onPointerMove);
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
     this.canvas.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("pointercancel", this.onPointerUp);
+    this.canvas.addEventListener("pointercancel", this.onPointerCancel);
+    this.canvas.addEventListener("lostpointercapture", this.resetInput);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.canvas.addEventListener("contextmenu", this.preventContextMenu);
   }
@@ -2289,10 +2566,13 @@ class FreemanEngine {
   private unbindEvents() {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("blur", this.resetInput);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.canvas.removeEventListener("pointermove", this.onPointerMove);
     this.canvas.removeEventListener("pointerdown", this.onPointerDown);
     this.canvas.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("pointercancel", this.onPointerUp);
+    this.canvas.removeEventListener("pointercancel", this.onPointerCancel);
+    this.canvas.removeEventListener("lostpointercapture", this.resetInput);
     this.canvas.removeEventListener("wheel", this.onWheel);
     this.canvas.removeEventListener("contextmenu", this.preventContextMenu);
   }
@@ -2339,6 +2619,23 @@ class FreemanEngine {
     this.keys.delete(event.code);
   };
 
+  private resetInput() {
+    this.keys.clear();
+    this.touchMove.set(0, 0);
+    if (
+      this.dragPointer !== null &&
+      this.canvas.hasPointerCapture(this.dragPointer)
+    ) {
+      this.canvas.releasePointerCapture(this.dragPointer);
+    }
+    this.dragPointer = null;
+    this.playerMoving = false;
+  }
+
+  private onVisibilityChange() {
+    if (document.hidden) this.resetInput();
+  }
+
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
     if (event.button === 1) {
@@ -2379,6 +2676,10 @@ class FreemanEngine {
         this.canvas.releasePointerCapture(event.pointerId);
       }
     }
+  };
+
+  private onPointerCancel = () => {
+    this.resetInput();
   };
 
   private onWheel = (event: WheelEvent) => {
@@ -2499,27 +2800,35 @@ class FreemanEngine {
     if (this.reinforcementsRemaining > 0) {
       this.reinforcementClock -= delta;
       if (this.reinforcementClock <= 0) {
-        this.reinforcementClock = Math.max(4, 6.6 - this.wave * 0.24);
         this.reinforcementsRemaining -= 1;
-        const count = Math.min(10, 4 + this.wave);
-        const types = Array.from({ length: count }, (_, index): EnemyType =>
-          this.wave >= 6 && index === 0
-            ? "trojan"
-            : index % 3 === 0
-              ? "phisher"
-              : "virus",
-        );
+        const types = this.wave === 1
+          ? FIRST_WAVE.reinforcement as unknown as EnemyType[]
+          : Array.from(
+              { length: Math.min(10, 4 + this.wave) },
+              (_, index): EnemyType =>
+                this.wave >= 6 && index === 0
+                  ? "trojan"
+                  : index % 3 === 0
+                    ? "phisher"
+                    : "virus",
+            );
+        if (this.wave !== 1) {
+          this.reinforcementClock = Math.max(4, 6.6 - this.wave * 0.24);
+        }
+        const count = types.length;
         this.scheduledReinforcementThreats = Math.max(
           0,
           this.scheduledReinforcementThreats - count,
         );
         this.spawnFormation(types);
-        this.callbacks.onToast({
-          eyebrow: "HORDE REINFORCEMENT",
-          title: `${count} MORE THREATS ENTERED`,
-          detail:
-            "Later waves keep sending reinforcements. Hold the perimeter.",
-        });
+        if (this.wave !== 1) {
+          this.callbacks.onToast({
+            eyebrow: "HORDE REINFORCEMENT",
+            title: `${count} MORE THREATS ENTERED`,
+            detail:
+              "Later waves keep sending reinforcements. Hold the perimeter.",
+          });
+        }
       }
     }
 
@@ -2576,9 +2885,24 @@ class FreemanEngine {
         .add(right.multiplyScalar(input.x))
         .normalize();
       this.lastMove.copy(movement);
+      const previousPosition = this.player.group.position.clone();
       this.player.group.position.add(movement.multiplyScalar(delta * 4.8));
       this.clampToArena(this.player.group.position, ARENA_RADIUS);
       this.faceDirection(this.player.group, this.lastMove);
+      this.recordTutorialMovement(previousPosition);
+    }
+  }
+
+  private recordTutorialMovement(previousPosition: THREE.Vector3) {
+    if (this.tutorialStep !== "move" || !this.tutorialMarker) return;
+    this.tutorialMoveDistance += previousPosition.distanceTo(
+      this.player.group.position,
+    );
+    if (
+      this.tutorialMoveDistance >= 2.5 &&
+      this.player.group.position.distanceTo(this.tutorialMarker.position) <= 1.25
+    ) {
+      this.emitTutorialEvent("movement-complete");
     }
   }
 
@@ -3136,12 +3460,13 @@ class FreemanEngine {
   }
 
   private completeWave() {
+    this.resetInput();
     this.cancelDefensePlacement(false);
     if (this.wave >= TOTAL_WAVES) {
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
-      window.localStorage.setItem("freeman-protocol-best", String(this.best));
+      writeStoredValue("freeman-protocol-best", String(this.best));
       this.callbacks.onMode("victory");
       this.triggerRig(this.player.rig, "cheer", 2.2);
       for (const agent of this.agents) {
@@ -3170,9 +3495,10 @@ class FreemanEngine {
   }
 
   private damageTarget(target: "player" | "core", damage: number) {
+    const floor = isTutorialProtected(this.tutorialStep) ? 1 : 0;
     if (target === "player") {
       if (this.player.invulnerable > 0) return;
-      this.player.hp = Math.max(0, this.player.hp - damage);
+      this.player.hp = Math.max(floor, this.player.hp - damage);
       this.player.invulnerable = 0.28;
       this.triggerRig(this.player.rig, "hit", 0.34);
       this.addDamageNumber(
@@ -3186,7 +3512,7 @@ class FreemanEngine {
         8,
       );
     } else {
-      this.core.hp = Math.max(0, this.core.hp - damage);
+      this.core.hp = Math.max(floor, this.core.hp - damage);
       this.addDamageNumber(
         this.core.group.position.clone().add(new THREE.Vector3(0, 2.55, 0)),
         `-${Math.round(damage)}`,
@@ -3207,6 +3533,7 @@ class FreemanEngine {
 
   private defeat() {
     if (this.mode === "defeat") return;
+    this.resetInput();
     this.mode = "defeat";
     this.waveActive = false;
     if (this.player.hp <= 0) {
@@ -3283,6 +3610,17 @@ class FreemanEngine {
       enemy.type === "rootkit" ? 22 : 11,
     );
     this.audio.play("kill");
+    if (enemy.tutorial && this.tutorialStep === "shoot") {
+      this.tutorialKills += 1;
+      if (this.tutorialKills === 3) this.emitTutorialEvent("training-cleared");
+    }
+    if (
+      enemy.tutorial &&
+      this.tutorialStep === "observe" &&
+      !this.enemies.some((threat) => threat.tutorial)
+    ) {
+      this.emitTutorialEvent("breach-cleared");
+    }
     this.emitHud(true);
   }
 
@@ -3683,23 +4021,37 @@ class FreemanEngine {
   }
 
   private placeDefenseAt(position: THREE.Vector3) {
-    if (!this.isDefensePositionValid(position)) return { ok: false };
-    if (this.defenses.length >= 3) return { ok: false };
+    return {
+      ok: this.addDefense(
+        { x: position.x, z: position.z },
+        { charge: true, notify: true },
+      ),
+    };
+  }
+
+  private addDefense(
+    position: { x: number; z: number },
+    options: { charge: boolean; notify: boolean },
+  ): boolean {
+    const worldPosition = new THREE.Vector3(position.x, 0.08, position.z);
+    if (!this.isDefensePositionValid(worldPosition)) return false;
+    if (this.defenses.length >= 3) return false;
     const cost = 80 + this.defenses.length * 35;
-    if (this.data < cost) {
-      this.cancelDefensePlacement(false);
-      this.callbacks.onToast({
-        eyebrow: "NOT ENOUGH COMPUTE",
-        title: `YOU NEED ${cost - this.data} MORE`,
-        detail: "Destroy enemies to earn Compute, then build the sentry.",
-      });
-      return { ok: false };
+    if (options.charge && this.data < cost) {
+      if (options.notify) {
+        this.callbacks.onToast({
+          eyebrow: "NOT ENOUGH COMPUTE",
+          title: `YOU NEED ${cost - this.data} MORE`,
+          detail: "Destroy enemies to earn Compute, then build the sentry.",
+        });
+      }
+      return false;
     }
     const index = this.defenses.length;
-    this.data -= cost;
+    if (options.charge) this.data -= cost;
     this.cancelDefensePlacement(false);
     const group = this.createDefenseModel(index);
-    group.position.copy(position);
+    group.position.copy(worldPosition);
     this.scene.add(group);
     this.defenses.push({
       group,
@@ -3707,20 +4059,26 @@ class FreemanEngine {
       cooldownLeft: 0.35,
       index,
     });
-    this.addRing(group.position, 0x9ed8dd, 0.2, 2.4, 0.7, "portal");
-    this.addBurst(
-      group.position.clone().add(new THREE.Vector3(0, 0.8, 0)),
-      0x9ed8dd,
-      15,
-    );
-    this.audio.play("recruit");
-    this.callbacks.onToast({
-      eyebrow: `BASE SENTRY ${index + 1} BUILT`,
-      title: "AUTOMATED DEFENSE ONLINE",
-      detail: "This sentry protects its chosen area and fires automatically.",
-    });
-    this.emitHud(true);
-    return { ok: true };
+    if (options.notify) {
+      this.addRing(group.position, 0x9ed8dd, 0.2, 2.4, 0.7, "portal");
+      this.addBurst(
+        group.position.clone().add(new THREE.Vector3(0, 0.8, 0)),
+        0x9ed8dd,
+        15,
+      );
+      this.audio.play("recruit");
+      this.callbacks.onToast({
+        eyebrow: `BASE SENTRY ${index + 1} BUILT`,
+        title: "AUTOMATED DEFENSE ONLINE",
+        detail: "This sentry protects its chosen area and fires automatically.",
+      });
+      this.emitHud(true);
+    }
+    return true;
+  }
+
+  private restoreDefense(position: { x: number; z: number }) {
+    this.addDefense(position, { charge: false, notify: false });
   }
 
   private cancelDefensePlacement(notify = true) {
@@ -3904,6 +4262,13 @@ class FreemanEngine {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      tutorialStep: this.tutorialStep,
+      canRetryWave: canRetryFirstWave({
+        wave: this.wave,
+        tutorialResolved:
+          this.tutorialStep === "complete" || this.tutorialStep === "skipped",
+        checkpoint: this.firstWaveCheckpoint !== null,
+      }),
     });
   }
 }
@@ -3926,6 +4291,7 @@ type FlatEnemy = {
   radius: number;
   slow: number;
   bossPhase: number;
+  tutorial: boolean;
 };
 
 type FlatAgent = AgentDefinition & {
@@ -4055,6 +4421,12 @@ class FreemanCanvasEngine implements GameController {
   private hasPointerAim = false;
   private squadCommand: SquadCommand = "follow";
   private placementActive = false;
+  private tutorialStep: TutorialStep | null = null;
+  private tutorialMoveDistance = 0;
+  private tutorialKills = 0;
+  private tutorialResolved = false;
+  private firstWaveCheckpoint: FirstWaveCheckpoint | null = null;
+  private tutorialMarker: { x: number; z: number } | null = null;
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     const context = canvas.getContext("2d");
@@ -4062,9 +4434,9 @@ class FreemanCanvasEngine implements GameController {
     this.canvas = canvas;
     this.context = context;
     this.callbacks = callbacks;
-    this.best = Number(
-      window.localStorage.getItem("freeman-protocol-best") || 0,
-    );
+    this.resetInput = this.resetInput.bind(this);
+    this.onVisibilityChange = this.onVisibilityChange.bind(this);
+    this.best = readStoredNumber("freeman-protocol-best");
     this.reducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
@@ -4077,8 +4449,27 @@ class FreemanCanvasEngine implements GameController {
     this.animate(performance.now());
   }
 
-  start() {
+  start(options: StartOptions = { tutorial: false }) {
+    this.resetInput();
     this.audio.unlock();
+    this.resetMissionState();
+    if (options.tutorial) {
+      this.tutorialStep = "move";
+      this.tutorialMarker = { x: 0, z: -0.5 };
+      this.mode = "playing";
+      this.callbacks.onMode("playing");
+      this.emitHud(true);
+      return;
+    }
+    this.resolveTutorial("skipped");
+  }
+
+  skipTutorial() {
+    if (!this.tutorialStep || this.tutorialResolved) return;
+    this.resolveTutorial("skipped");
+  }
+
+  private resetMissionState() {
     this.enemies.length = 0;
     this.agents.length = 0;
     this.defenses.length = 0;
@@ -4094,7 +4485,15 @@ class FreemanCanvasEngine implements GameController {
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
     this.squadCommand = "follow";
+    this.firstWaveCheckpoint = null;
+    this.tutorialStep = null;
+    this.tutorialMarker = null;
+    this.tutorialMoveDistance = 0;
+    this.tutorialKills = 0;
+    this.tutorialResolved = false;
     this.placementActive = false;
+    this.waveActive = false;
+    this.waveEndClock = 0;
     this.reinforcementClock = 0;
     this.reinforcementsRemaining = 0;
     this.spawnQueue = [];
@@ -4110,16 +4509,40 @@ class FreemanCanvasEngine implements GameController {
     this.player.ultimate = 0;
     this.player.invulnerable = 0;
     this.core.hp = this.core.maxHp = 180;
+  }
+
+  private emitTutorialEvent(event: TutorialEvent) {
+    if (!this.tutorialStep || this.tutorialResolved) return;
+    const next = advanceTutorial(this.tutorialStep, event) as TutorialStep;
+    if (next === this.tutorialStep) return;
+    this.tutorialStep = next;
+    this.applyTutorialTransition(next);
+    this.emitHud(true);
+  }
+
+  private applyTutorialTransition(next: TutorialStep) {
+    if (next === "shoot") {
+      this.tutorialMarker = null;
+      this.spawnTutorialTraining();
+    }
+    if (next === "recruit") this.data = Math.max(this.data, AGENTS[0].cost);
+    if (next === "observe") this.spawnTutorialBreach();
+    if (next === "complete") this.resolveTutorial("complete");
+  }
+
+  private resolveTutorial(result: "complete" | "skipped") {
+    if (this.tutorialResolved) return;
+    this.resetInput();
+    this.tutorialResolved = true;
+    this.tutorialMarker = null;
+    this.clearTutorialThreats();
+    this.tutorialStep = result;
+    this.callbacks.onTutorialComplete();
+    this.captureFirstWaveCheckpoint();
     this.mode = "playing";
     this.callbacks.onMode("playing");
     this.spawnWave(1);
     this.audio.play("wave");
-    this.callbacks.onToast({
-      eyebrow: "WAVE 1 STARTED",
-      title: "DEFEND THE CORE",
-      detail:
-        "Move with WASD. Left-click to shoot. Right-click to slash nearby viruses.",
-    });
     this.emitHud(true);
   }
 
@@ -4189,6 +4612,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   setSquadCommand(command: SquadCommand) {
+    if (!canPerformTutorialAction(this.tutorialStep, "guard-core") && command === "defend") return;
     if (this.squadCommand === command) return;
     this.squadCommand = command;
     const titles: Record<SquadCommand, string> = {
@@ -4206,6 +4630,7 @@ class FreemanCanvasEngine implements GameController {
             ? "Agents hold the center and protect the Core."
             : "Agents hunt the boss or strongest enemy.",
     });
+    if (command === "defend") this.emitTutorialEvent("guard-selected");
     this.emitHud(true);
   }
 
@@ -4223,10 +4648,12 @@ class FreemanCanvasEngine implements GameController {
 
   togglePause() {
     if (this.mode === "playing") {
+      this.resetInput();
       this.mode = "paused";
       this.audio.setPaused(true);
       this.callbacks.onMode("paused");
     } else if (this.mode === "paused") {
+      this.resetInput();
       this.mode = "playing";
       this.audio.setPaused(false);
       this.callbacks.onMode("playing");
@@ -4234,18 +4661,28 @@ class FreemanCanvasEngine implements GameController {
   }
 
   recruit(id: AgentId) {
+    if (!canPerformTutorialAction(this.tutorialStep, `recruit-${id}`)) return;
     if (this.mode !== "playing") return;
+    if (this.addAgent(id, { charge: true, notify: true }) && id === "kairos") {
+      this.emitTutorialEvent("kairos-recruited");
+    }
+  }
+
+  private addAgent(
+    id: AgentId,
+    options: { charge: boolean; notify: boolean },
+  ): boolean {
     const definition = AGENTS.find((agent) => agent.id === id);
-    if (!definition || this.agents.some((agent) => agent.id === id)) return;
-    if (this.data < definition.cost) {
+    if (!definition || this.agents.some((agent) => agent.id === id)) return false;
+    if (options.charge && this.data < definition.cost) {
       this.callbacks.onToast({
         eyebrow: "NOT ENOUGH COMPUTE",
         title: `YOU NEED ${definition.cost - this.data} MORE`,
         detail: "Destroy enemies to earn Compute, then recruit this agent.",
       });
-      return;
+      return false;
     }
-    this.data -= definition.cost;
+    if (options.charge) this.data -= definition.cost;
     this.agents.push({
       ...definition,
       x: this.player.x,
@@ -4254,6 +4691,7 @@ class FreemanCanvasEngine implements GameController {
       supportClock: 5,
       disabledLeft: 0,
     });
+    if (!options.notify) return true;
     this.addRing(
       this.player.x,
       this.player.z,
@@ -4270,6 +4708,11 @@ class FreemanCanvasEngine implements GameController {
       detail: definition.detail,
     });
     this.emitHud(true);
+    return true;
+  }
+
+  private restoreAgent(id: AgentId) {
+    this.addAgent(id, { charge: false, notify: false });
   }
 
   attack() {
@@ -4446,6 +4889,7 @@ class FreemanCanvasEngine implements GameController {
       title: selected?.name ?? "TEAM UPGRADED",
       detail: selected?.outcome ?? "Your team is stronger.",
     });
+    this.resetInput();
     this.mode = "evolution";
     this.callbacks.onMode("evolution");
     this.emitHud(true);
@@ -4489,6 +4933,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private startNextWave() {
+    this.resetInput();
     this.wave += 1;
     this.mode = "playing";
     this.callbacks.onMode("playing");
@@ -4519,6 +4964,7 @@ class FreemanCanvasEngine implements GameController {
     cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
     this.unbindEvents();
+    this.resetInput();
     this.audio.dispose();
   }
 
@@ -4564,10 +5010,13 @@ class FreemanCanvasEngine implements GameController {
   private bindEvents() {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("blur", this.resetInput);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
     this.canvas.addEventListener("pointermove", this.onPointerMove);
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
     this.canvas.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("pointercancel", this.onPointerUp);
+    this.canvas.addEventListener("pointercancel", this.onPointerCancel);
+    this.canvas.addEventListener("lostpointercapture", this.resetInput);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.canvas.addEventListener("contextmenu", this.preventContextMenu);
   }
@@ -4575,10 +5024,13 @@ class FreemanCanvasEngine implements GameController {
   private unbindEvents() {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("blur", this.resetInput);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.canvas.removeEventListener("pointermove", this.onPointerMove);
     this.canvas.removeEventListener("pointerdown", this.onPointerDown);
     this.canvas.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("pointercancel", this.onPointerUp);
+    this.canvas.removeEventListener("pointercancel", this.onPointerCancel);
+    this.canvas.removeEventListener("lostpointercapture", this.resetInput);
     this.canvas.removeEventListener("wheel", this.onWheel);
     this.canvas.removeEventListener("contextmenu", this.preventContextMenu);
   }
@@ -4629,6 +5081,23 @@ class FreemanCanvasEngine implements GameController {
     this.keys.delete(event.code);
   };
 
+  private resetInput() {
+    this.keys.clear();
+    this.touchMove.x = 0;
+    this.touchMove.y = 0;
+    if (
+      this.dragPointer !== null &&
+      this.canvas.hasPointerCapture(this.dragPointer)
+    ) {
+      this.canvas.releasePointerCapture(this.dragPointer);
+    }
+    this.dragPointer = null;
+  }
+
+  private onVisibilityChange() {
+    if (document.hidden) this.resetInput();
+  }
+
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
     if (event.button === 1) {
@@ -4669,6 +5138,10 @@ class FreemanCanvasEngine implements GameController {
         this.canvas.releasePointerCapture(event.pointerId);
       }
     }
+  };
+
+  private onPointerCancel = () => {
+    this.resetInput();
   };
 
   private onWheel = (event: WheelEvent) => {
@@ -4724,27 +5197,35 @@ class FreemanCanvasEngine implements GameController {
     if (this.reinforcementsRemaining > 0) {
       this.reinforcementClock -= delta;
       if (this.reinforcementClock <= 0) {
-        this.reinforcementClock = Math.max(4, 6.6 - this.wave * 0.24);
         this.reinforcementsRemaining -= 1;
-        const count = Math.min(10, 4 + this.wave);
-        const types = Array.from({ length: count }, (_, index): EnemyType =>
-            this.wave >= 6 && index === 0
-              ? "trojan"
-              : index % 3 === 0
-                ? "phisher"
-                : "virus",
-        );
+        const types = this.wave === 1
+          ? FIRST_WAVE.reinforcement as unknown as EnemyType[]
+          : Array.from(
+              { length: Math.min(10, 4 + this.wave) },
+              (_, index): EnemyType =>
+                this.wave >= 6 && index === 0
+                  ? "trojan"
+                  : index % 3 === 0
+                    ? "phisher"
+                    : "virus",
+            );
+        if (this.wave !== 1) {
+          this.reinforcementClock = Math.max(4, 6.6 - this.wave * 0.24);
+        }
+        const count = types.length;
         this.scheduledReinforcementThreats = Math.max(
           0,
           this.scheduledReinforcementThreats - count,
         );
         this.spawnFormation(types);
-        this.callbacks.onToast({
-          eyebrow: "HORDE REINFORCEMENT",
-          title: `${count} MORE THREATS ENTERED`,
-          detail:
-            "Later waves keep sending reinforcements. Hold the perimeter.",
-        });
+        if (this.wave !== 1) {
+          this.callbacks.onToast({
+            eyebrow: "HORDE REINFORCEMENT",
+            title: `${count} MORE THREATS ENTERED`,
+            detail:
+              "Later waves keep sending reinforcements. Hold the perimeter.",
+          });
+        }
       }
     }
 
@@ -4797,9 +5278,32 @@ class FreemanCanvasEngine implements GameController {
     dz /= length;
     this.lastMove.x = dx;
     this.lastMove.z = dz;
+    const previousPosition = { x: this.player.x, z: this.player.z };
     this.player.x += dx * delta * 4.8;
     this.player.z += dz * delta * 4.8;
     this.clampToArena(this.player, ARENA_RADIUS);
+    this.recordTutorialMovement(previousPosition);
+  }
+
+  private recordTutorialMovement(previousPosition: { x: number; z: number }) {
+    if (this.tutorialStep !== "move" || !this.tutorialMarker) return;
+    this.tutorialMoveDistance += this.distance(
+      previousPosition.x,
+      previousPosition.z,
+      this.player.x,
+      this.player.z,
+    );
+    if (
+      this.tutorialMoveDistance >= 2.5 &&
+      this.distance(
+        this.player.x,
+        this.player.z,
+        this.tutorialMarker.x,
+        this.tutorialMarker.z,
+      ) <= 1.25
+    ) {
+      this.emitTutorialEvent("movement-complete");
+    }
   }
 
   private updateAgents(delta: number) {
@@ -5196,12 +5700,20 @@ class FreemanCanvasEngine implements GameController {
   private spawnWave(wave: number) {
     this.waveActive = true;
     this.waveEndClock = 0;
-    this.reinforcementsRemaining = Math.min(4, 1 + Math.floor(wave / 2));
-    this.scheduledReinforcementThreats =
-      this.reinforcementsRemaining * Math.min(10, 4 + wave);
-    this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
-    const types = ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1];
-    this.spawnFormation(types);
+    if (wave === 1) {
+      this.reinforcementsRemaining = 1;
+      this.scheduledReinforcementThreats = FIRST_WAVE.reinforcement.length;
+      this.reinforcementClock = FIRST_WAVE.reinforcementDelay;
+      this.spawnFormation(FIRST_WAVE.initial as EnemyType[]);
+    } else {
+      this.reinforcementsRemaining = Math.min(4, 1 + Math.floor(wave / 2));
+      this.scheduledReinforcementThreats =
+        this.reinforcementsRemaining * Math.min(10, 4 + wave);
+      this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
+      this.spawnFormation(
+        ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1],
+      );
+    }
     if (wave === 4 || wave === 7) {
       this.callbacks.onToast({
         eyebrow: `ELITE BREACH · WAVE ${wave}`,
@@ -5259,7 +5771,12 @@ class FreemanCanvasEngine implements GameController {
     }
   }
 
-  private createEnemy(type: EnemyType, x: number, z: number) {
+  private createEnemy(
+    type: EnemyType,
+    x: number,
+    z: number,
+    options: { tutorial?: boolean; speed?: number; damage?: number; reward?: number } = {},
+  ) {
     const definitions: Record<
       EnemyType,
       Omit<
@@ -5273,6 +5790,7 @@ class FreemanCanvasEngine implements GameController {
         | "telegraphLeft"
         | "slow"
         | "bossPhase"
+        | "tutorial"
       >
     > = {
       virus: {
@@ -5331,13 +5849,21 @@ class FreemanCanvasEngine implements GameController {
       ...definition,
       hp: scaledHp,
       maxHp: scaledHp,
-      speed: definition.speed * speedScale,
-      damage: Math.round(definition.damage * damageScale),
+      speed: options.speed ?? definition.speed * speedScale,
+      damage:
+        options.damage ??
+        Math.round(
+          definition.damage *
+            damageScale *
+            (this.wave === 1 ? FIRST_WAVE.damageMultiplier : 1),
+        ),
+      reward: options.reward ?? definition.reward,
       attackCooldown: definition.attackCooldown * attackRateScale,
       cooldownLeft: 0.4 + Math.random() * 0.8,
       telegraphLeft: 0,
       slow: 0,
       bossPhase: type === "rootkit" ? 1 : 0,
+      tutorial: options.tutorial ?? false,
     };
     this.enemies.push(enemy);
     this.addRing(
@@ -5350,13 +5876,106 @@ class FreemanCanvasEngine implements GameController {
     );
   }
 
+  private spawnTutorialTraining() {
+    this.clearTutorialThreats();
+    this.scheduledReinforcementThreats = 0;
+    this.reinforcementsRemaining = 0;
+    this.createEnemy("virus", -2.2, -1.8, {
+      tutorial: true,
+      speed: 0.65,
+      damage: 2,
+    });
+    this.createEnemy("virus", 0, -2.6, {
+      tutorial: true,
+      speed: 0.65,
+      damage: 2,
+    });
+    this.createEnemy("virus", 2.2, -1.8, {
+      tutorial: true,
+      speed: 0.65,
+      damage: 2,
+    });
+  }
+
+  private spawnTutorialBreach() {
+    this.clearTutorialThreats();
+    this.scheduledReinforcementThreats = 0;
+    this.reinforcementsRemaining = 0;
+    for (const threat of OBSERVE_BREACH) {
+      this.createEnemy(threat.type as EnemyType, threat.x, threat.z, {
+        tutorial: true,
+        speed: threat.speed,
+        damage: threat.damage,
+        reward: threat.reward,
+      });
+    }
+  }
+
+  private clearTutorialThreats() {
+    for (let index = this.enemies.length - 1; index >= 0; index -= 1) {
+      if (this.enemies[index].tutorial) this.enemies.splice(index, 1);
+    }
+  }
+
+  private captureFirstWaveCheckpoint() {
+    this.firstWaveCheckpoint = {
+      data: this.data,
+      score: this.score,
+      agents: this.agents.map((agent) => agent.id),
+      defenses: this.defenses.map((defense) => ({
+        x: defense.x,
+        z: defense.z,
+      })),
+      command: this.squadCommand,
+    };
+  }
+
+  retryWave() {
+    if (!canRetryFirstWave({
+      wave: this.wave,
+      tutorialResolved:
+        this.tutorialStep === "complete" || this.tutorialStep === "skipped",
+      checkpoint: this.firstWaveCheckpoint !== null,
+    })) return;
+    const checkpoint = this.firstWaveCheckpoint!;
+    this.resetInput();
+    this.clearDynamic();
+    this.data = checkpoint.data;
+    this.score = checkpoint.score;
+    this.squadCommand = checkpoint.command;
+    this.player.hp = this.player.maxHp;
+    this.core.hp = this.core.maxHp;
+    for (const id of checkpoint.agents) this.restoreAgent(id);
+    for (const position of checkpoint.defenses) this.restoreDefense(position);
+    this.wave = 1;
+    this.mode = "playing";
+    this.callbacks.onMode("playing");
+    this.spawnWave(1);
+    this.emitHud(true);
+  }
+
+  private clearDynamic() {
+    this.enemies.length = 0;
+    this.agents.length = 0;
+    this.defenses.length = 0;
+    this.projectiles.length = 0;
+    this.effects.length = 0;
+    this.spawnQueue = [];
+    this.nextQueueReleaseAt = 0;
+    this.scheduledReinforcementThreats = 0;
+    this.waveActive = false;
+    this.waveEndClock = 0;
+    this.placementActive = false;
+  }
+
   private completeWave() {
+    this.resetInput();
     this.placementActive = false;
     if (this.wave >= TOTAL_WAVES) {
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
-      window.localStorage.setItem("freeman-protocol-best", String(this.best));
+      writeStoredValue("freeman-protocol-best", String(this.best));
       this.callbacks.onMode("victory");
       this.audio.play("victory");
       this.callbacks.onToast({
@@ -5381,13 +6000,14 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private damageTarget(target: "player" | "core", damage: number) {
+    const floor = isTutorialProtected(this.tutorialStep) ? 1 : 0;
     if (target === "player") {
       if (this.player.invulnerable > 0) return;
-      this.player.hp = Math.max(0, this.player.hp - damage);
+      this.player.hp = Math.max(floor, this.player.hp - damage);
       this.player.invulnerable = 0.28;
       this.addBurst(this.player.x, this.player.z, 0xb7422e, 8);
     } else {
-      this.core.hp = Math.max(0, this.core.hp - damage);
+      this.core.hp = Math.max(floor, this.core.hp - damage);
       this.addBurst(this.core.x, this.core.z, 0xb7422e, 8);
     }
     this.shake = Math.max(this.shake, this.reducedMotion ? 0.03 : 0.2);
@@ -5398,6 +6018,7 @@ class FreemanCanvasEngine implements GameController {
 
   private defeat() {
     if (this.mode === "defeat") return;
+    this.resetInput();
     this.mode = "defeat";
     this.waveActive = false;
     this.callbacks.onMode("defeat");
@@ -5435,6 +6056,17 @@ class FreemanCanvasEngine implements GameController {
       enemy.type === "rootkit" ? 22 : 11,
     );
     this.audio.play("kill");
+    if (enemy.tutorial && this.tutorialStep === "shoot") {
+      this.tutorialKills += 1;
+      if (this.tutorialKills === 3) this.emitTutorialEvent("training-cleared");
+    }
+    if (
+      enemy.tutorial &&
+      this.tutorialStep === "observe" &&
+      !this.enemies.some((threat) => threat.tutorial)
+    ) {
+      this.emitTutorialEvent("breach-cleared");
+    }
     this.emitHud(true);
   }
 
@@ -5541,18 +6173,27 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private placeDefenseAt(position: { x: number; z: number }) {
+    return {
+      ok: this.addDefense(position, { charge: true, notify: true }),
+    };
+  }
+
+  private addDefense(
+    position: { x: number; z: number },
+    options: { charge: boolean; notify: boolean },
+  ): boolean {
     if (!this.isFlatDefensePositionValid(position.x, position.z)) {
-      return { ok: false };
+      return false;
     }
-    if (this.defenses.length >= 3) return { ok: false };
+    if (this.defenses.length >= 3) return false;
     const cost = 80 + this.defenses.length * 35;
-    if (this.data < cost) {
+    if (options.charge && this.data < cost) {
       this.placementActive = false;
       this.emitHud(true);
-      return { ok: false };
+      return false;
     }
     const index = this.defenses.length;
-    this.data -= cost;
+    if (options.charge) this.data -= cost;
     this.placementActive = false;
     this.defenses.push({
       x: position.x,
@@ -5561,16 +6202,22 @@ class FreemanCanvasEngine implements GameController {
       index,
       rotation: 0,
     });
-    this.addRing(position.x, position.z, 0x9ed8dd, 0.2, 2.4, 0.7);
-    this.addBurst(position.x, position.z, 0x9ed8dd, 15);
-    this.audio.play("recruit");
-    this.callbacks.onToast({
-      eyebrow: `BASE SENTRY ${index + 1} BUILT`,
-      title: "AUTOMATED DEFENSE ONLINE",
-      detail: "This sentry protects its chosen area and fires automatically.",
-    });
-    this.emitHud(true);
-    return { ok: true };
+    if (options.notify) {
+      this.addRing(position.x, position.z, 0x9ed8dd, 0.2, 2.4, 0.7);
+      this.addBurst(position.x, position.z, 0x9ed8dd, 15);
+      this.audio.play("recruit");
+      this.callbacks.onToast({
+        eyebrow: `BASE SENTRY ${index + 1} BUILT`,
+        title: "AUTOMATED DEFENSE ONLINE",
+        detail: "This sentry protects its chosen area and fires automatically.",
+      });
+      this.emitHud(true);
+    }
+    return true;
+  }
+
+  private restoreDefense(position: { x: number; z: number }) {
+    this.addDefense(position, { charge: false, notify: false });
   }
 
   private getFlatPriorityEnemy() {
@@ -5703,6 +6350,7 @@ class FreemanCanvasEngine implements GameController {
 
     this.drawGrid();
     this.drawPlatform();
+    if (this.tutorialMarker) this.drawTutorialMarker();
     if (this.placementActive) this.drawPlacementPreview();
 
     const drawables: Array<{
@@ -5768,6 +6416,23 @@ class FreemanCanvasEngine implements GameController {
       context.lineTo(verticalEnd.x, verticalEnd.y);
       context.stroke();
     }
+    context.restore();
+  }
+
+  private drawTutorialMarker() {
+    if (!this.tutorialMarker) return;
+    const context = this.context;
+    const point = this.project(this.tutorialMarker.x, this.tutorialMarker.z, 0.05);
+    context.save();
+    context.strokeStyle = "#9ed8dd";
+    context.fillStyle = "rgba(158,216,221,.14)";
+    context.shadowColor = "#9ed8dd";
+    context.shadowBlur = 16;
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(point.x, point.y, point.scale * 1.08, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
     context.restore();
   }
 
@@ -6562,14 +7227,43 @@ class FreemanCanvasEngine implements GameController {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      tutorialStep: this.tutorialStep,
+      canRetryWave: canRetryFirstWave({
+        wave: this.wave,
+        tutorialResolved:
+          this.tutorialStep === "complete" || this.tutorialStep === "skipped",
+        checkpoint: this.firstWaveCheckpoint !== null,
+      }),
     });
   }
 }
 
-function VirtualStick({ onMove }: { onMove: (x: number, y: number) => void }) {
+function VirtualStick({
+  onMove,
+  highlighted,
+}: {
+  onMove: (x: number, y: number) => void;
+  highlighted: boolean;
+}) {
   const baseRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<number | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+
+  const reset = useCallback(() => {
+    pointerRef.current = null;
+    setPosition({ x: 0, y: 0 });
+    onMove(0, 0);
+  }, [onMove]);
+
+  useEffect(() => {
+    window.addEventListener("blur", reset);
+    document.addEventListener("visibilitychange", reset);
+    return () => {
+      window.removeEventListener("blur", reset);
+      document.removeEventListener("visibilitychange", reset);
+      reset();
+    };
+  }, [reset]);
 
   const update = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -6585,7 +7279,11 @@ function VirtualStick({ onMove }: { onMove: (x: number, y: number) => void }) {
         y = (y / length) * radius * 0.66;
       }
       setPosition({ x, y });
-      onMove(x / (radius * 0.66), y / (radius * 0.66));
+      const normalized = normalizeStickInput(
+        x / (radius * 0.66),
+        y / (radius * 0.66),
+      );
+      onMove(normalized.x, normalized.y);
     },
     [onMove],
   );
@@ -6593,7 +7291,7 @@ function VirtualStick({ onMove }: { onMove: (x: number, y: number) => void }) {
   return (
     <div
       ref={baseRef}
-      className="virtual-stick"
+      className={`virtual-stick ${highlighted ? "tutorial-highlight" : ""}`}
       aria-label="Movement control"
       onPointerDown={(event) => {
         pointerRef.current = event.pointerId;
@@ -6604,16 +7302,10 @@ function VirtualStick({ onMove }: { onMove: (x: number, y: number) => void }) {
         if (pointerRef.current === event.pointerId) update(event);
       }}
       onPointerUp={(event) => {
-        if (pointerRef.current !== event.pointerId) return;
-        pointerRef.current = null;
-        setPosition({ x: 0, y: 0 });
-        onMove(0, 0);
+        if (pointerRef.current === event.pointerId) reset();
       }}
-      onPointerCancel={() => {
-        pointerRef.current = null;
-        setPosition({ x: 0, y: 0 });
-        onMove(0, 0);
-      }}
+      onPointerCancel={reset}
+      onLostPointerCapture={reset}
     >
       <span
         className="virtual-stick__knob"
@@ -6636,6 +7328,13 @@ export default function FreemanProtocol() {
   const [sfxVolume, setSfxVolume] = useState(0.72);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
+  const [tutorialComplete, setTutorialComplete] = useState(false);
+
+  useEffect(() => {
+    if (readStoredValue(TUTORIAL_STORAGE_KEY) !== "1") return;
+    const timer = window.setTimeout(() => setTutorialComplete(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -6643,6 +7342,10 @@ export default function FreemanProtocol() {
     const callbacks: GameCallbacks = {
       onMode: setMode,
       onHud: setHud,
+      onTutorialComplete: () => {
+        setTutorialComplete(true);
+        writeStoredValue(TUTORIAL_STORAGE_KEY, "1");
+      },
       onToast: (nextToast) => {
         setToast({ ...nextToast, id: Date.now() });
         if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -6694,6 +7397,24 @@ export default function FreemanProtocol() {
 
   const isOverlay = mode !== "playing";
   const recruitedCount = Object.values(hud.agents).filter(Boolean).length;
+  const tutorial =
+    hud.tutorialStep &&
+    hud.tutorialStep !== "complete" &&
+    hud.tutorialStep !== "skipped"
+      ? TUTORIAL_COPY[hud.tutorialStep]
+      : null;
+
+  useEffect(() => {
+    const open =
+      hud.tutorialStep === "recruit" || hud.tutorialStep === "command"
+        ? true
+        : hud.tutorialStep === "observe" || hud.tutorialStep === "complete"
+          ? false
+          : null;
+    if (open === null) return;
+    const timer = window.setTimeout(() => setMobileSquadOpen(open), 0);
+    return () => window.clearTimeout(timer);
+  }, [hud.tutorialStep]);
 
   return (
     <main className="game-shell">
@@ -6783,6 +7504,23 @@ export default function FreemanProtocol() {
                 Keep it near the Core, but not on top of another sentry.
               </span>
             </div>
+          )}
+
+          {tutorial && (
+            <aside
+              className={`tutorial-card ${tutorial.target === "agents" || mobileSquadOpen ? "tutorial-card--above-squad" : ""}`}
+              role="status"
+            >
+              <small>TRAINING OBJECTIVE</small>
+              <strong>{tutorial.title}</strong>
+              <span>{tutorial.detail}</span>
+              <button
+                type="button"
+                onClick={() => engineRef.current?.skipTutorial()}
+              >
+                SKIP TUTORIAL
+              </button>
+            </aside>
           )}
 
           <aside className="vitals-panel">
@@ -6902,7 +7640,7 @@ export default function FreemanProtocol() {
           </aside>
 
           <section
-            className={`agent-dock ${mobileSquadOpen ? "is-mobile-open" : ""}`}
+            className={`agent-dock ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
             aria-label="AI agent recruitment"
           >
             <button
@@ -7028,7 +7766,7 @@ export default function FreemanProtocol() {
             </button>
             <button
               type="button"
-              className="ability ability--attack"
+              className={`ability ability--attack ${tutorial?.target === "attack" ? "tutorial-highlight" : ""}`}
               onClick={() => engineRef.current?.attack()}
               disabled={mode !== "playing"}
               aria-label="Shoot at the nearest enemy"
@@ -7060,7 +7798,10 @@ export default function FreemanProtocol() {
           </div>
 
           <div className="mobile-stick">
-            <VirtualStick onMove={setTouchMovement} />
+            <VirtualStick
+              onMove={setTouchMovement}
+              highlighted={tutorial?.target === "move"}
+            />
           </div>
         </>
       )}
@@ -7098,11 +7839,22 @@ export default function FreemanProtocol() {
             <button
               type="button"
               className="enter-button"
-              onClick={() => engineRef.current?.start()}
+              onClick={() =>
+                engineRef.current?.start({ tutorial: !tutorialComplete })
+              }
             >
               <span>START MISSION</span>
               <i>→</i>
             </button>
+            {tutorialComplete && (
+              <button
+                type="button"
+                className="intro-tutorial-button"
+                onClick={() => engineRef.current?.start({ tutorial: true })}
+              >
+                PLAY TUTORIAL
+              </button>
+            )}
           </div>
 
           <div className="intro-brief">
@@ -7262,12 +8014,22 @@ export default function FreemanProtocol() {
               <strong>{recruitedCount}/4</strong>
             </span>
           </div>
+          {mode === "defeat" && hud.canRetryWave && (
+            <button
+              type="button"
+              className="enter-button enter-button--compact"
+              onClick={() => engineRef.current?.retryWave()}
+            >
+              <span>RETRY WAVE</span>
+              <i>→</i>
+            </button>
+          )}
           <button
             type="button"
-            className="enter-button enter-button--compact"
-            onClick={() => engineRef.current?.start()}
+            className={`enter-button enter-button--compact ${mode === "defeat" && hud.canRetryWave ? "enter-button--secondary" : ""}`}
+            onClick={() => engineRef.current?.start({ tutorial: false })}
           >
-            <span>{mode === "victory" ? "PLAY AGAIN" : "TRY AGAIN"}</span>
+            <span>{mode === "victory" ? "PLAY AGAIN" : "RESTART MISSION"}</span>
             <i>→</i>
           </button>
         </section>

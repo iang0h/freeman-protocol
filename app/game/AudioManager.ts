@@ -1,4 +1,5 @@
 import { takeNextTrack } from "./playlist.mjs";
+import { readStoredNumber, readStoredValue, writeStoredValue } from "./storage.mjs";
 
 export type AudioCue =
   | "attack" | "hit" | "kill" | "dash" | "recruit"
@@ -13,7 +14,7 @@ const TRACKS = [
 
 const clamp = (value: number) => Math.min(1, Math.max(0, value));
 const storedNumber = (key: string, fallback: number) => {
-  const value = Number(window.localStorage.getItem(key));
+  const value = readStoredNumber(key, fallback);
   return Number.isFinite(value) ? clamp(value) : fallback;
 };
 
@@ -27,7 +28,7 @@ export class AudioManager {
   private playerGains: GainNode[] = [];
   private activePlayer = 0;
   private playlist = { tracks: TRACKS.map((track) => track.id), bag: [] as string[], previous: null as string | null };
-  private muted = window.localStorage.getItem("freeman-audio-muted") === "true";
+  private muted = readStoredValue("freeman-audio-muted") === "true";
   private musicVolume = storedNumber("freeman-music-volume", 0.42);
   private sfxVolume = storedNumber("freeman-sfx-volume", 0.72);
   private paused = false;
@@ -54,19 +55,19 @@ export class AudioManager {
 
   setMuted(value: boolean) {
     this.muted = value;
-    window.localStorage.setItem("freeman-audio-muted", String(value));
+    writeStoredValue("freeman-audio-muted", String(value));
     this.applyVolumes();
   }
 
   setMusicVolume(value: number) {
     this.musicVolume = clamp(value);
-    window.localStorage.setItem("freeman-music-volume", String(this.musicVolume));
+    writeStoredValue("freeman-music-volume", String(this.musicVolume));
     this.applyVolumes();
   }
 
   setSfxVolume(value: number) {
     this.sfxVolume = clamp(value);
-    window.localStorage.setItem("freeman-sfx-volume", String(this.sfxVolume));
+    writeStoredValue("freeman-sfx-volume", String(this.sfxVolume));
     this.applyVolumes();
   }
 

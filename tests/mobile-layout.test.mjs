@@ -34,3 +34,28 @@ test("keeps both sentry deployment actions available on mobile", () => {
   assert.match(game, /base-builder__manual/);
   assert.match(styles, /\.base-builder__manual/);
 });
+
+test("keeps the guided tutorial clear of mobile combat controls", () => {
+  assert.match(game, /tutorial-card/);
+  assert.match(game, /SKIP TUTORIAL/);
+  assert.match(styles, /\.tutorial-card/);
+  assert.match(styles, /bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 112px\)/);
+  assert.match(styles, /\.tutorial-highlight/);
+});
+
+test("reflows the tutorial above an expanded mobile AI squad", () => {
+  assert.match(game, /tutorial-card--above-squad/);
+  assert.match(
+    game,
+    /tutorial\.target === "agents" \|\| mobileSquadOpen/,
+  );
+  assert.match(styles, /\.tutorial-card--above-squad/);
+  assert.match(
+    styles,
+    /\.tutorial-card--above-squad\s*\{\s*bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 278px\)/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\) and \(orientation: landscape\)[\s\S]*?\.tutorial-card--above-squad\s*\{\s*bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 230px\)/,
+  );
+});
