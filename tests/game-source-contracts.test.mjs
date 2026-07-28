@@ -100,3 +100,12 @@ test("both engines clear latched input across lifecycle boundaries", () => {
   assert.match(game, /onLostPointerCapture=\{reset\}/);
   assert.match(game, /normalizeStickInput/);
 });
+
+test("WebGL engine runs the shared tutorial and checkpoints wave one", () => {
+  assert.match(webglGame, /advanceTutorial/);
+  assert.match(webglGame, /FIRST_WAVE\.initial/);
+  assert.match(webglGame, /isTutorialProtected/);
+  assert.match(webglGame, /private firstWaveCheckpoint/);
+  assert.match(webglGame, /retryWave\(\)/);
+  assert.match(webglGame, /onTutorialComplete/);
+});
