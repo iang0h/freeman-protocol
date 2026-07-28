@@ -647,6 +647,58 @@ canvas:focus-visible {
   pointer-events: auto;
 }
 
+.tutorial-card {
+  position: absolute;
+  z-index: 28;
+  bottom: 120px;
+  left: 50%;
+  display: flex;
+  width: min(420px, calc(100vw - 32px));
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 16px;
+  border: 1px solid rgba(220, 117, 64, 0.72);
+  background: rgba(5, 10, 13, 0.94);
+  color: var(--ivory);
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.tutorial-card small,
+.tutorial-card button {
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: 7px;
+  letter-spacing: 0.12em;
+}
+
+.tutorial-card strong {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+
+.tutorial-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tutorial-card button {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tutorial-highlight {
+  outline: 2px solid var(--signal);
+  outline-offset: 4px;
+  animation: tutorial-pulse 1.2s ease-in-out infinite alternate;
+}
+
 .agent-dock__heading {
   display: flex;
   align-items: flex-end;
@@ -1448,6 +1500,27 @@ canvas:focus-visible {
   width: 232px;
 }
 
+.enter-button--secondary,
+.intro-tutorial-button {
+  border-color: rgba(158, 191, 192, 0.52);
+  background: rgba(6, 12, 15, 0.88);
+}
+
+.enter-button--secondary::before {
+  background: var(--ice);
+}
+
+.intro-tutorial-button {
+  width: 250px;
+  min-height: 38px;
+  margin-top: 10px;
+  color: var(--ice);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
 .end-stats {
   display: grid;
   width: min(480px, 90vw);
@@ -1880,6 +1953,12 @@ canvas:focus-visible {
     pointer-events: none;
   }
 
+  .tutorial-card {
+    bottom: calc(env(safe-area-inset-bottom) + 112px);
+    width: min(310px, calc(100vw - 28px));
+    padding: 8px 10px;
+  }
+
   .agent-dock.is-mobile-open {
     right: 10px;
     left: 10px;
@@ -2257,6 +2336,10 @@ canvas:focus-visible {
   .agent-dock {
     bottom: calc(env(safe-area-inset-bottom) + 82px);
   }
+
+  .tutorial-card {
+    bottom: calc(env(safe-area-inset-bottom) + 90px);
+  }
 }
 
 @media (pointer: fine) and (min-width: 821px) {
@@ -2266,6 +2349,10 @@ canvas:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .tutorial-highlight {
+    animation: none;
+  }
+
   *,
   *::before,
   *::after {
@@ -2273,5 +2360,11 @@ canvas:focus-visible {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
+  }
+}
+
+@keyframes tutorial-pulse {
+  to {
+    filter: drop-shadow(0 0 10px rgba(220, 117, 64, 0.7));
   }
 }

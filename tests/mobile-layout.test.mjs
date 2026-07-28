@@ -34,3 +34,11 @@ test("keeps both sentry deployment actions available on mobile", () => {
   assert.match(game, /base-builder__manual/);
   assert.match(styles, /\.base-builder__manual/);
 });
+
+test("keeps the guided tutorial clear of mobile combat controls", () => {
+  assert.match(game, /tutorial-card/);
+  assert.match(game, /SKIP TUTORIAL/);
+  assert.match(styles, /\.tutorial-card/);
+  assert.match(styles, /bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 112px\)/);
+  assert.match(styles, /\.tutorial-highlight/);
+});

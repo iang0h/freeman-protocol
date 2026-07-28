@@ -68,6 +68,15 @@ type FirstWaveCheckpoint = {
 const TOTAL_WAVES = 8;
 const ARENA_RADIUS = 17.5;
 const SPAWN_RADIUS = 15.2;
+const TUTORIAL_STORAGE_KEY = "freeman-tutorial-complete";
+
+const readTutorialComplete = () => {
+  try {
+    return window.localStorage.getItem(TUTORIAL_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
 
 type HudState = {
   hp: number;
@@ -392,6 +401,37 @@ const INITIAL_HUD: HudState = {
   evolutions: { ...EMPTY_EVOLUTIONS },
   tutorialStep: null,
   canRetryWave: false,
+};
+
+const TUTORIAL_COPY: Record<
+  Exclude<TutorialStep, "complete" | "skipped">,
+  { title: string; detail: string; target: string }
+> = {
+  move: {
+    title: "MOVE INTO THE RING",
+    detail: "Use WASD or the left stick.",
+    target: "move",
+  },
+  shoot: {
+    title: "CLEAR 3 TRAINING THREATS",
+    detail: "Shoot with left click, Space, or the attack button.",
+    target: "attack",
+  },
+  recruit: {
+    title: "RECRUIT KAIROS",
+    detail: "Spend Compute to add your first AI agent.",
+    target: "agents",
+  },
+  command: {
+    title: "ORDER: GUARD CORE",
+    detail: "Tell KAIROS where the army should fight.",
+    target: "agents",
+  },
+  observe: {
+    title: "FIGHT WITH YOUR AI ARMY",
+    detail: "Help KAIROS contain the breach.",
+    target: "arena",
+  },
 };
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
@@ -7211,7 +7251,13 @@ class FreemanCanvasEngine implements GameController {
   }
 }
 
-function VirtualStick({ onMove }: { onMove: (x: number, y: number) => void }) {
+function VirtualStick({
+  onMove,
+  highlighted,
+}: {
+  onMove: (x: number, y: number) => void;
+  highlighted: boolean;
+}) {
   const baseRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<number | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -7258,7 +7304,7 @@ function VirtualStick({ onMove }: { onMove: (x: number, y: number) => void }) {
   return (
     <div
       ref={baseRef}
-      className="virtual-stick"
+      className={`virtual-stick ${highlighted ? "tutorial-highlight" : ""}`}
       aria-label="Movement control"
       onPointerDown={(event) => {
         pointerRef.current = event.pointerId;
@@ -7295,6 +7341,13 @@ export default function FreemanProtocol() {
   const [sfxVolume, setSfxVolume] = useState(0.72);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
+  const [tutorialComplete, setTutorialComplete] = useState(false);
+
+  useEffect(() => {
+    if (!readTutorialComplete()) return;
+    const timer = window.setTimeout(() => setTutorialComplete(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -7302,7 +7355,12 @@ export default function FreemanProtocol() {
     const callbacks: GameCallbacks = {
       onMode: setMode,
       onHud: setHud,
-      onTutorialComplete: () => {},
+      onTutorialComplete: () => {
+        setTutorialComplete(true);
+        try {
+          window.localStorage.setItem(TUTORIAL_STORAGE_KEY, "1");
+        } catch {}
+      },
       onToast: (nextToast) => {
         setToast({ ...nextToast, id: Date.now() });
         if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -7354,6 +7412,24 @@ export default function FreemanProtocol() {
 
   const isOverlay = mode !== "playing";
   const recruitedCount = Object.values(hud.agents).filter(Boolean).length;
+  const tutorial =
+    hud.tutorialStep &&
+    hud.tutorialStep !== "complete" &&
+    hud.tutorialStep !== "skipped"
+      ? TUTORIAL_COPY[hud.tutorialStep]
+      : null;
+
+  useEffect(() => {
+    const open =
+      hud.tutorialStep === "recruit" || hud.tutorialStep === "command"
+        ? true
+        : hud.tutorialStep === "observe" || hud.tutorialStep === "complete"
+          ? false
+          : null;
+    if (open === null) return;
+    const timer = window.setTimeout(() => setMobileSquadOpen(open), 0);
+    return () => window.clearTimeout(timer);
+  }, [hud.tutorialStep]);
 
   return (
     <main className="game-shell">
@@ -7443,6 +7519,20 @@ export default function FreemanProtocol() {
                 Keep it near the Core, but not on top of another sentry.
               </span>
             </div>
+          )}
+
+          {tutorial && (
+            <aside className="tutorial-card" role="status">
+              <small>TRAINING OBJECTIVE</small>
+              <strong>{tutorial.title}</strong>
+              <span>{tutorial.detail}</span>
+              <button
+                type="button"
+                onClick={() => engineRef.current?.skipTutorial()}
+              >
+                SKIP TUTORIAL
+              </button>
+            </aside>
           )}
 
           <aside className="vitals-panel">
@@ -7562,7 +7652,7 @@ export default function FreemanProtocol() {
           </aside>
 
           <section
-            className={`agent-dock ${mobileSquadOpen ? "is-mobile-open" : ""}`}
+            className={`agent-dock ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
             aria-label="AI agent recruitment"
           >
             <button
@@ -7688,7 +7778,7 @@ export default function FreemanProtocol() {
             </button>
             <button
               type="button"
-              className="ability ability--attack"
+              className={`ability ability--attack ${tutorial?.target === "attack" ? "tutorial-highlight" : ""}`}
               onClick={() => engineRef.current?.attack()}
               disabled={mode !== "playing"}
               aria-label="Shoot at the nearest enemy"
@@ -7720,7 +7810,10 @@ export default function FreemanProtocol() {
           </div>
 
           <div className="mobile-stick">
-            <VirtualStick onMove={setTouchMovement} />
+            <VirtualStick
+              onMove={setTouchMovement}
+              highlighted={tutorial?.target === "move"}
+            />
           </div>
         </>
       )}
@@ -7758,11 +7851,22 @@ export default function FreemanProtocol() {
             <button
               type="button"
               className="enter-button"
-              onClick={() => engineRef.current?.start()}
+              onClick={() =>
+                engineRef.current?.start({ tutorial: !tutorialComplete })
+              }
             >
               <span>START MISSION</span>
               <i>→</i>
             </button>
+            {tutorialComplete && (
+              <button
+                type="button"
+                className="intro-tutorial-button"
+                onClick={() => engineRef.current?.start({ tutorial: true })}
+              >
+                PLAY TUTORIAL
+              </button>
+            )}
           </div>
 
           <div className="intro-brief">
@@ -7922,12 +8026,22 @@ export default function FreemanProtocol() {
               <strong>{recruitedCount}/4</strong>
             </span>
           </div>
+          {mode === "defeat" && hud.canRetryWave && (
+            <button
+              type="button"
+              className="enter-button enter-button--compact"
+              onClick={() => engineRef.current?.retryWave()}
+            >
+              <span>RETRY WAVE</span>
+              <i>→</i>
+            </button>
+          )}
           <button
             type="button"
-            className="enter-button enter-button--compact"
-            onClick={() => engineRef.current?.start()}
+            className={`enter-button enter-button--compact ${mode === "defeat" && hud.canRetryWave ? "enter-button--secondary" : ""}`}
+            onClick={() => engineRef.current?.start({ tutorial: false })}
           >
-            <span>{mode === "victory" ? "PLAY AGAIN" : "TRY AGAIN"}</span>
+            <span>{mode === "victory" ? "PLAY AGAIN" : "RESTART MISSION"}</span>
             <i>→</i>
           </button>
         </section>

@@ -136,3 +136,9 @@ test("WebGL tutorial queues early recruit and command events and resolves once",
   assert.match(webglGame, /if \(this\.tutorialResolved\) return;/);
   assert.match(webglGame, /this\.tutorialResolved = true;/);
 });
+
+test("persists completion and offers a first-wave retry", () => {
+  assert.match(game, /freeman-tutorial-complete/);
+  assert.match(game, /RETRY WAVE/);
+  assert.match(game, /engineRef\.current\?\.retryWave\(\)/);
+});
