@@ -364,6 +364,8 @@ const INITIAL_HUD: HudState = {
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
+// Kept as a compact fallback reference while the streamed manager rolls out.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 class SynthAudio {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
