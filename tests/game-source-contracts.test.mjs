@@ -91,3 +91,12 @@ test("streams a shuffled soundtrack through a crossfading audio manager", () => 
   assert.match(audioManager, /freeman-sfx-volume/);
   assert.match(audioManager, /\.play\(\)\.catch/);
 });
+
+test("both engines clear latched input across lifecycle boundaries", () => {
+  assert.ok((game.match(/private resetInput\(\)/g) ?? []).length >= 2);
+  assert.ok((game.match(/window\.addEventListener\("blur", this\.resetInput\)/g) ?? []).length >= 2);
+  assert.ok((game.match(/document\.addEventListener\("visibilitychange", this\.onVisibilityChange\)/g) ?? []).length >= 2);
+  assert.ok((game.match(/this\.resetInput\(\);/g) ?? []).length >= 8);
+  assert.match(game, /onLostPointerCapture=\{reset\}/);
+  assert.match(game, /normalizeStickInput/);
+});

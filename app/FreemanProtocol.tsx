@@ -22,6 +22,7 @@ import {
   getUpgradeDraft,
   purchaseEvolution,
 } from "./game/progression.mjs";
+import { normalizeStickInput } from "./game/input-rules.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
 import { BoundedPool, disposeObject3D } from "./game/three-resources";
 import { AudioManager } from "./game/AudioManager";
@@ -641,6 +642,8 @@ class FreemanEngine {
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
     this.callbacks = callbacks;
+    this.resetInput = this.resetInput.bind(this);
+    this.onVisibilityChange = this.onVisibilityChange.bind(this);
     this.reducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
@@ -685,6 +688,7 @@ class FreemanEngine {
   }
 
   start() {
+    this.resetInput();
     this.audio.unlock();
     this.clearDynamic();
     this.wave = 1;
@@ -845,6 +849,7 @@ class FreemanEngine {
 
   togglePause() {
     if (this.mode === "playing") {
+      this.resetInput();
       this.mode = "paused";
       this.audio.setPaused(true);
       this.callbacks.onMode("paused");
@@ -1140,6 +1145,7 @@ class FreemanEngine {
     cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
     this.unbindEvents();
+    this.resetInput();
     this.audio.dispose();
     this.clearDynamic();
     this.projectilePool.clear((mesh) => this.disposeDynamicObject(mesh));
@@ -2278,10 +2284,13 @@ class FreemanEngine {
   private bindEvents() {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("blur", this.resetInput);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
     this.canvas.addEventListener("pointermove", this.onPointerMove);
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
     this.canvas.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("pointercancel", this.onPointerUp);
+    this.canvas.addEventListener("pointercancel", this.onPointerCancel);
+    this.canvas.addEventListener("lostpointercapture", this.resetInput);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.canvas.addEventListener("contextmenu", this.preventContextMenu);
   }
@@ -2289,10 +2298,13 @@ class FreemanEngine {
   private unbindEvents() {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("blur", this.resetInput);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.canvas.removeEventListener("pointermove", this.onPointerMove);
     this.canvas.removeEventListener("pointerdown", this.onPointerDown);
     this.canvas.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("pointercancel", this.onPointerUp);
+    this.canvas.removeEventListener("pointercancel", this.onPointerCancel);
+    this.canvas.removeEventListener("lostpointercapture", this.resetInput);
     this.canvas.removeEventListener("wheel", this.onWheel);
     this.canvas.removeEventListener("contextmenu", this.preventContextMenu);
   }
@@ -2339,6 +2351,23 @@ class FreemanEngine {
     this.keys.delete(event.code);
   };
 
+  private resetInput() {
+    this.keys.clear();
+    this.touchMove.set(0, 0);
+    if (
+      this.dragPointer !== null &&
+      this.canvas.hasPointerCapture(this.dragPointer)
+    ) {
+      this.canvas.releasePointerCapture(this.dragPointer);
+    }
+    this.dragPointer = null;
+    this.playerMoving = false;
+  }
+
+  private onVisibilityChange() {
+    if (document.hidden) this.resetInput();
+  }
+
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
     if (event.button === 1) {
@@ -2379,6 +2408,10 @@ class FreemanEngine {
         this.canvas.releasePointerCapture(event.pointerId);
       }
     }
+  };
+
+  private onPointerCancel = () => {
+    this.resetInput();
   };
 
   private onWheel = (event: WheelEvent) => {
@@ -4062,6 +4095,8 @@ class FreemanCanvasEngine implements GameController {
     this.canvas = canvas;
     this.context = context;
     this.callbacks = callbacks;
+    this.resetInput = this.resetInput.bind(this);
+    this.onVisibilityChange = this.onVisibilityChange.bind(this);
     this.best = Number(
       window.localStorage.getItem("freeman-protocol-best") || 0,
     );
@@ -4078,6 +4113,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   start() {
+    this.resetInput();
     this.audio.unlock();
     this.enemies.length = 0;
     this.agents.length = 0;
@@ -4223,6 +4259,7 @@ class FreemanCanvasEngine implements GameController {
 
   togglePause() {
     if (this.mode === "playing") {
+      this.resetInput();
       this.mode = "paused";
       this.audio.setPaused(true);
       this.callbacks.onMode("paused");
@@ -4519,6 +4556,7 @@ class FreemanCanvasEngine implements GameController {
     cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
     this.unbindEvents();
+    this.resetInput();
     this.audio.dispose();
   }
 
@@ -4564,10 +4602,13 @@ class FreemanCanvasEngine implements GameController {
   private bindEvents() {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("blur", this.resetInput);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
     this.canvas.addEventListener("pointermove", this.onPointerMove);
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
     this.canvas.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("pointercancel", this.onPointerUp);
+    this.canvas.addEventListener("pointercancel", this.onPointerCancel);
+    this.canvas.addEventListener("lostpointercapture", this.resetInput);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.canvas.addEventListener("contextmenu", this.preventContextMenu);
   }
@@ -4575,10 +4616,13 @@ class FreemanCanvasEngine implements GameController {
   private unbindEvents() {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("blur", this.resetInput);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.canvas.removeEventListener("pointermove", this.onPointerMove);
     this.canvas.removeEventListener("pointerdown", this.onPointerDown);
     this.canvas.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("pointercancel", this.onPointerUp);
+    this.canvas.removeEventListener("pointercancel", this.onPointerCancel);
+    this.canvas.removeEventListener("lostpointercapture", this.resetInput);
     this.canvas.removeEventListener("wheel", this.onWheel);
     this.canvas.removeEventListener("contextmenu", this.preventContextMenu);
   }
@@ -4629,6 +4673,23 @@ class FreemanCanvasEngine implements GameController {
     this.keys.delete(event.code);
   };
 
+  private resetInput() {
+    this.keys.clear();
+    this.touchMove.x = 0;
+    this.touchMove.y = 0;
+    if (
+      this.dragPointer !== null &&
+      this.canvas.hasPointerCapture(this.dragPointer)
+    ) {
+      this.canvas.releasePointerCapture(this.dragPointer);
+    }
+    this.dragPointer = null;
+  }
+
+  private onVisibilityChange() {
+    if (document.hidden) this.resetInput();
+  }
+
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
     if (event.button === 1) {
@@ -4669,6 +4730,10 @@ class FreemanCanvasEngine implements GameController {
         this.canvas.releasePointerCapture(event.pointerId);
       }
     }
+  };
+
+  private onPointerCancel = () => {
+    this.resetInput();
   };
 
   private onWheel = (event: WheelEvent) => {
@@ -6571,6 +6636,22 @@ function VirtualStick({ onMove }: { onMove: (x: number, y: number) => void }) {
   const pointerRef = useRef<number | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
 
+  const reset = useCallback(() => {
+    pointerRef.current = null;
+    setPosition({ x: 0, y: 0 });
+    onMove(0, 0);
+  }, [onMove]);
+
+  useEffect(() => {
+    window.addEventListener("blur", reset);
+    document.addEventListener("visibilitychange", reset);
+    return () => {
+      window.removeEventListener("blur", reset);
+      document.removeEventListener("visibilitychange", reset);
+      reset();
+    };
+  }, [reset]);
+
   const update = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const base = baseRef.current;
@@ -6585,7 +6666,11 @@ function VirtualStick({ onMove }: { onMove: (x: number, y: number) => void }) {
         y = (y / length) * radius * 0.66;
       }
       setPosition({ x, y });
-      onMove(x / (radius * 0.66), y / (radius * 0.66));
+      const normalized = normalizeStickInput(
+        x / (radius * 0.66),
+        y / (radius * 0.66),
+      );
+      onMove(normalized.x, normalized.y);
     },
     [onMove],
   );
@@ -6604,16 +6689,10 @@ function VirtualStick({ onMove }: { onMove: (x: number, y: number) => void }) {
         if (pointerRef.current === event.pointerId) update(event);
       }}
       onPointerUp={(event) => {
-        if (pointerRef.current !== event.pointerId) return;
-        pointerRef.current = null;
-        setPosition({ x: 0, y: 0 });
-        onMove(0, 0);
+        if (pointerRef.current === event.pointerId) reset();
       }}
-      onPointerCancel={() => {
-        pointerRef.current = null;
-        setPosition({ x: 0, y: 0 });
-        onMove(0, 0);
-      }}
+      onPointerCancel={reset}
+      onLostPointerCapture={reset}
     >
       <span
         className="virtual-stick__knob"
