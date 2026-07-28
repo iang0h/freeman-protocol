@@ -545,6 +545,35 @@ canvas:focus-visible {
   cursor: not-allowed;
 }
 
+.audio-settings {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(158, 216, 221, 0.18);
+}
+
+.audio-settings label {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 10px;
+  color: var(--ivory);
+  font: 700 9px/1 var(--mono);
+  letter-spacing: 0.09em;
+}
+
+.audio-settings input {
+  width: 100%;
+  accent-color: #dc7540;
+}
+
+.audio-settings small {
+  color: var(--steel);
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
 .base-builder span {
   display: flex;
   flex-direction: column;

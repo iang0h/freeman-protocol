@@ -6,6 +6,10 @@ const game = await readFile(
   new URL("../app/FreemanProtocol.tsx", import.meta.url),
   "utf8",
 );
+const audioManager = await readFile(
+  new URL("../app/game/AudioManager.ts", import.meta.url),
+  "utf8",
+).catch(() => "");
 const webglGame = game.slice(
   game.indexOf("class FreemanEngine"),
   game.indexOf("type FlatEnemy"),
@@ -74,4 +78,16 @@ test("player upgrades are capped and recruited agents can evolve", () => {
   ]) {
     assert.match(game, new RegExp(id));
   }
+});
+
+test("streams a shuffled soundtrack through a crossfading audio manager", () => {
+  assert.match(game, /new AudioManager/);
+  assert.doesNotMatch(game, /new SynthAudio/);
+  assert.match(audioManager, /takeNextTrack/);
+  assert.match(audioManager, /new Audio\(/);
+  assert.match(audioManager, /CROSSFADE_SECONDS = 4/);
+  assert.match(audioManager, /freeman-audio-muted/);
+  assert.match(audioManager, /freeman-music-volume/);
+  assert.match(audioManager, /freeman-sfx-volume/);
+  assert.match(audioManager, /\.play\(\)\.catch/);
 });

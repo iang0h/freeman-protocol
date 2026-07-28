@@ -24,6 +24,7 @@ import {
 } from "./game/progression.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
 import { BoundedPool, disposeObject3D } from "./game/three-resources";
+import { AudioManager } from "./game/AudioManager";
 
 type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
@@ -85,6 +86,8 @@ type GameCallbacks = {
 interface GameController {
   start(): void;
   setMuted(muted: boolean): void;
+  setMusicVolume(value: number): void;
+  setSfxVolume(value: number): void;
   togglePause(): void;
   recruit(id: AgentId): void;
   buildDefense(): void;
@@ -555,7 +558,7 @@ class FreemanEngine {
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  private readonly audio = new SynthAudio();
+  private readonly audio = new AudioManager();
   private readonly keys = new Set<string>();
   private readonly enemies: EnemyRuntime[] = [];
   private readonly agents: AgentRuntime[] = [];
@@ -828,14 +831,24 @@ class FreemanEngine {
     this.audio.setMuted(muted);
   }
 
+  setMusicVolume(value: number) {
+    this.audio.setMusicVolume(value);
+  }
+
+  setSfxVolume(value: number) {
+    this.audio.setSfxVolume(value);
+  }
+
   togglePause() {
     if (this.mode === "playing") {
       this.mode = "paused";
+      this.audio.setPaused(true);
       this.callbacks.onMode("paused");
       return;
     }
     if (this.mode === "paused") {
       this.mode = "playing";
+      this.audio.setPaused(false);
       this.callbacks.onMode("playing");
     }
   }
@@ -3969,7 +3982,7 @@ class FreemanCanvasEngine implements GameController {
   private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
   private readonly callbacks: GameCallbacks;
-  private readonly audio = new SynthAudio();
+  private readonly audio = new AudioManager();
   private readonly keys = new Set<string>();
   private readonly enemies: FlatEnemy[] = [];
   private readonly agents: FlatAgent[] = [];
@@ -4196,12 +4209,22 @@ class FreemanCanvasEngine implements GameController {
     this.audio.setMuted(muted);
   }
 
+  setMusicVolume(value: number) {
+    this.audio.setMusicVolume(value);
+  }
+
+  setSfxVolume(value: number) {
+    this.audio.setSfxVolume(value);
+  }
+
   togglePause() {
     if (this.mode === "playing") {
       this.mode = "paused";
+      this.audio.setPaused(true);
       this.callbacks.onMode("paused");
     } else if (this.mode === "paused") {
       this.mode = "playing";
+      this.audio.setPaused(false);
       this.callbacks.onMode("playing");
     }
   }
@@ -6605,6 +6628,8 @@ export default function FreemanProtocol() {
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [muted, setMuted] = useState(false);
+  const [musicVolume, setMusicVolume] = useState(0.42);
+  const [sfxVolume, setSfxVolume] = useState(0.72);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
 
@@ -7314,6 +7339,39 @@ export default function FreemanProtocol() {
               <kbd>Z / C / F</kbd>
               <b>Rotate / reset view</b>
             </span>
+          </div>
+          <div className="audio-settings" aria-label="Audio mix">
+            <label>
+              <span>MUSIC</span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={musicVolume}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setMusicVolume(value);
+                  engineRef.current?.setMusicVolume(value);
+                }}
+              />
+            </label>
+            <label>
+              <span>EFFECTS</span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={sfxVolume}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setSfxVolume(value);
+                  engineRef.current?.setSfxVolume(value);
+                }}
+              />
+            </label>
+            <small>Soundtrack shuffles all three Freeman themes.</small>
           </div>
           <p>
             On touch devices, move with the left stick and use the action
