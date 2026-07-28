@@ -7522,7 +7522,10 @@ export default function FreemanProtocol() {
           )}
 
           {tutorial && (
-            <aside className="tutorial-card" role="status">
+            <aside
+              className={`tutorial-card ${mobileSquadOpen ? "tutorial-card--above-squad" : ""}`}
+              role="status"
+            >
               <small>TRAINING OBJECTIVE</small>
               <strong>{tutorial.title}</strong>
               <span>{tutorial.detail}</span>

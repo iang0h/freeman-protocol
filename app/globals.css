@@ -1959,6 +1959,10 @@ canvas:focus-visible {
     padding: 8px 10px;
   }
 
+  .tutorial-card--above-squad {
+    bottom: calc(env(safe-area-inset-bottom) + 278px);
+  }
+
   .agent-dock.is-mobile-open {
     right: 10px;
     left: 10px;
@@ -2339,6 +2343,10 @@ canvas:focus-visible {
 
   .tutorial-card {
     bottom: calc(env(safe-area-inset-bottom) + 90px);
+  }
+
+  .tutorial-card--above-squad {
+    bottom: calc(env(safe-area-inset-bottom) + 230px);
   }
 }
 
