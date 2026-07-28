@@ -14,6 +14,10 @@ const webglGame = game.slice(
   game.indexOf("class FreemanEngine"),
   game.indexOf("type FlatEnemy"),
 );
+const canvasGame = game.slice(
+  game.indexOf("class FreemanCanvasEngine"),
+  game.indexOf("function VirtualStick"),
+);
 
 test("enemy rendering does not allocate a point light per enemy", () => {
   const createEnemy = game.slice(
@@ -108,6 +112,19 @@ test("WebGL engine runs the shared tutorial and checkpoints wave one", () => {
   assert.match(webglGame, /private firstWaveCheckpoint/);
   assert.match(webglGame, /retryWave\(\)/);
   assert.match(webglGame, /onTutorialComplete/);
+});
+
+test("Canvas fallback matches tutorial and retry behavior", () => {
+  for (const pattern of [
+    /advanceTutorial/,
+    /FIRST_WAVE\.initial/,
+    /isTutorialProtected/,
+    /private firstWaveCheckpoint/,
+    /retryWave\(\)/,
+    /onTutorialComplete/,
+  ]) {
+    assert.match(canvasGame, pattern);
+  }
 });
 
 test("WebGL tutorial queues early recruit and command events and resolves once", () => {
