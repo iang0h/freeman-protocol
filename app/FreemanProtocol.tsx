@@ -670,6 +670,8 @@ class FreemanEngine {
   private tutorialStep: TutorialStep | null = null;
   private tutorialMoveDistance = 0;
   private tutorialKills = 0;
+  private tutorialEvents = new Set<TutorialEvent>();
+  private tutorialResolved = false;
   private firstWaveCheckpoint: FirstWaveCheckpoint | null = null;
   private tutorialMarker: THREE.Group | null = null;
 
@@ -737,7 +739,7 @@ class FreemanEngine {
   }
 
   skipTutorial() {
-    if (!this.tutorialStep || this.tutorialStep === "complete") return;
+    if (!this.tutorialStep || this.tutorialResolved) return;
     this.resolveTutorial("skipped");
   }
 
@@ -758,6 +760,8 @@ class FreemanEngine {
     this.tutorialStep = null;
     this.tutorialMoveDistance = 0;
     this.tutorialKills = 0;
+    this.tutorialEvents.clear();
+    this.tutorialResolved = false;
     this.cancelDefensePlacement(false);
     this.hitStop = 0;
     this.reinforcementClock = 0;
@@ -779,10 +783,26 @@ class FreemanEngine {
   }
 
   private emitTutorialEvent(event: TutorialEvent) {
-    if (!this.tutorialStep) return;
-    const next = advanceTutorial(this.tutorialStep, event) as TutorialStep;
-    if (next === this.tutorialStep) return;
-    this.tutorialStep = next;
+    if (!this.tutorialStep || this.tutorialResolved) return;
+    this.tutorialEvents.add(event);
+    while (this.advanceQueuedTutorialEvent()) {}
+    this.emitHud(true);
+  }
+
+  private advanceQueuedTutorialEvent(): boolean {
+    if (!this.tutorialStep || this.tutorialResolved) return false;
+    for (const event of this.tutorialEvents) {
+      const next = advanceTutorial(this.tutorialStep, event) as TutorialStep;
+      if (next === this.tutorialStep) continue;
+      this.tutorialEvents.delete(event);
+      this.tutorialStep = next;
+      this.applyTutorialTransition(next);
+      return true;
+    }
+    return false;
+  }
+
+  private applyTutorialTransition(next: TutorialStep) {
     if (next === "shoot") {
       this.clearTutorialMarker();
       this.spawnTutorialTraining();
@@ -791,12 +811,12 @@ class FreemanEngine {
     if (next === "observe") this.spawnTutorialBreach();
     if (next === "complete") {
       this.resolveTutorial("complete");
-      return;
     }
-    this.emitHud(true);
   }
 
   private resolveTutorial(result: "complete" | "skipped") {
+    if (this.tutorialResolved) return;
+    this.tutorialResolved = true;
     this.clearTutorialMarker();
     this.clearTutorialThreats();
     this.tutorialStep = result;

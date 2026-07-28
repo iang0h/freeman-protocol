@@ -109,3 +109,13 @@ test("WebGL engine runs the shared tutorial and checkpoints wave one", () => {
   assert.match(webglGame, /retryWave\(\)/);
   assert.match(webglGame, /onTutorialComplete/);
 });
+
+test("WebGL tutorial queues early recruit and command events and resolves once", () => {
+  assert.match(webglGame, /private tutorialEvents = new Set<TutorialEvent>\(\)/);
+  assert.match(webglGame, /this\.tutorialEvents\.add\(event\)/);
+  assert.match(webglGame, /this\.tutorialEvents\.delete\(event\)/);
+  assert.match(webglGame, /while \(this\.advanceQueuedTutorialEvent\(\)\)/);
+  assert.match(webglGame, /private tutorialResolved = false/);
+  assert.match(webglGame, /if \(this\.tutorialResolved\) return;/);
+  assert.match(webglGame, /this\.tutorialResolved = true;/);
+});
