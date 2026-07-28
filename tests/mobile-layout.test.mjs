@@ -45,6 +45,10 @@ test("keeps the guided tutorial clear of mobile combat controls", () => {
 
 test("reflows the tutorial above an expanded mobile AI squad", () => {
   assert.match(game, /tutorial-card--above-squad/);
+  assert.match(
+    game,
+    /tutorial\.target === "agents" \|\| mobileSquadOpen/,
+  );
   assert.match(styles, /\.tutorial-card--above-squad/);
   assert.match(
     styles,

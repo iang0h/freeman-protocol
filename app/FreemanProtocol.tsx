@@ -7523,7 +7523,7 @@ export default function FreemanProtocol() {
 
           {tutorial && (
             <aside
-              className={`tutorial-card ${mobileSquadOpen ? "tutorial-card--above-squad" : ""}`}
+              className={`tutorial-card ${tutorial.target === "agents" || mobileSquadOpen ? "tutorial-card--above-squad" : ""}`}
               role="status"
             >
               <small>TRAINING OBJECTIVE</small>
