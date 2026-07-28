@@ -10,6 +10,10 @@ const audioManager = await readFile(
   new URL("../app/game/AudioManager.ts", import.meta.url),
   "utf8",
 ).catch(() => "");
+const storage = await readFile(
+  new URL("../app/game/storage.mjs", import.meta.url),
+  "utf8",
+).catch(() => "");
 const webglGame = game.slice(
   game.indexOf("class FreemanEngine"),
   game.indexOf("type FlatEnemy"),
@@ -127,14 +131,52 @@ test("Canvas fallback matches tutorial and retry behavior", () => {
   }
 });
 
-test("WebGL tutorial queues early recruit and command events and resolves once", () => {
-  assert.match(webglGame, /private tutorialEvents = new Set<TutorialEvent>\(\)/);
-  assert.match(webglGame, /this\.tutorialEvents\.add\(event\)/);
-  assert.match(webglGame, /this\.tutorialEvents\.delete\(event\)/);
-  assert.match(webglGame, /while \(this\.advanceQueuedTutorialEvent\(\)\)/);
+test("tutorial events are phase-gated instead of queued", () => {
+  assert.doesNotMatch(webglGame, /tutorialEvents/);
+  assert.doesNotMatch(canvasGame, /tutorialEvents/);
+  assert.match(webglGame, /const next = advanceTutorial\(this\.tutorialStep, event\)/);
+  assert.match(canvasGame, /const next = advanceTutorial\(this\.tutorialStep, event\)/);
   assert.match(webglGame, /private tutorialResolved = false/);
   assert.match(webglGame, /if \(this\.tutorialResolved\) return;/);
   assert.match(webglGame, /this\.tutorialResolved = true;/);
+});
+
+test("both engines reject early tutorial recruit and guard actions before mutating state", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /recruit\(id: AgentId\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, "recruit-kairos"\) && id === "kairos"\) return;[\s\S]*?this\.addAgent/,
+    );
+    assert.match(
+      engine,
+      /setSquadCommand\(command: SquadCommand\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, "guard-core"\) && command === "defend"\) return;/,
+    );
+  }
+});
+
+test("both engines consume the shared observe breach and clear replay placement", () => {
+  assert.match(webglGame, /for \(const threat of OBSERVE_BREACH\)/);
+  assert.match(canvasGame, /for \(const threat of OBSERVE_BREACH\)/);
+  assert.match(
+    webglGame,
+    /retryWave\(\) \{[\s\S]*?this\.resetInput\(\);[\s\S]*?this\.cancelDefensePlacement\(false\);/,
+  );
+});
+
+test("game persistence always goes through safe in-memory-backed helpers", () => {
+  assert.match(storage, /const memoryStorage = new Map\(\)/);
+  assert.match(storage, /export function readStoredNumber/);
+  assert.match(storage, /export function writeStoredValue/);
+  assert.doesNotMatch(game, /window\.localStorage/);
+  assert.doesNotMatch(audioManager, /window\.localStorage/);
+});
+
+test("play transitions reset keyboard state before crossing overlays", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private startNextWave\(\) \{\s*this\.resetInput\(\);/);
+    assert.match(engine, /private completeWave\(\) \{\s*this\.resetInput\(\);/);
+    assert.match(engine, /private defeat\(\) \{[\s\S]*?this\.resetInput\(\);/);
+  }
 });
 
 test("persists completion and offers a first-wave retry", () => {

@@ -20,8 +20,10 @@ import {
 import { takeNextTrack } from "../app/game/playlist.mjs";
 import {
   FIRST_WAVE,
+  OBSERVE_BREACH,
   TUTORIAL_STEPS,
   advanceTutorial,
+  canPerformTutorialAction,
   canRetryFirstWave,
   isTutorialProtected,
 } from "../app/game/tutorial-rules.mjs";
@@ -189,6 +191,38 @@ test("tutorial advances only from the expected event", () => {
   assert.equal(advanceTutorial("command", "guard-selected"), "observe");
   assert.equal(advanceTutorial("observe", "breach-cleared"), "complete");
   assert.equal(advanceTutorial("complete", "movement-complete"), "complete");
+});
+
+test("tutorial milestones are phase-gated and never replayed later", () => {
+  let step = "move";
+  step = advanceTutorial(step, "kairos-recruited");
+  step = advanceTutorial(step, "guard-selected");
+  assert.equal(step, "move");
+
+  step = advanceTutorial(step, "movement-complete");
+  step = advanceTutorial(step, "training-cleared");
+  assert.equal(step, "recruit");
+  assert.equal(advanceTutorial(step, "guard-selected"), "recruit");
+  assert.equal(advanceTutorial(step, "kairos-recruited"), "command");
+  assert.equal(advanceTutorial("command", "guard-selected"), "observe");
+});
+
+test("early tutorial recruit and guard actions do not spend or poison later objectives", () => {
+  assert.equal(canPerformTutorialAction("move", "recruit-kairos"), false);
+  assert.equal(canPerformTutorialAction("shoot", "guard-core"), false);
+  assert.equal(canPerformTutorialAction("recruit", "recruit-kairos"), true);
+  assert.equal(canPerformTutorialAction("command", "guard-core"), true);
+  assert.equal(canPerformTutorialAction(null, "recruit-kairos"), true);
+});
+
+test("observe breach uses one shared five-virus roster", () => {
+  assert.deepEqual(OBSERVE_BREACH, [
+    { type: "virus", x: -3, z: -3.2, speed: 0.85, damage: 3, reward: 8 },
+    { type: "virus", x: 0, z: -4.2, speed: 0.85, damage: 3, reward: 8 },
+    { type: "virus", x: 3, z: -3.2, speed: 0.85, damage: 3, reward: 8 },
+    { type: "virus", x: -1.4, z: -5.1, speed: 0.85, damage: 3, reward: 8 },
+    { type: "virus", x: 1.4, z: -5.1, speed: 0.85, damage: 3, reward: 8 },
+  ]);
 });
 
 test("tutorial protection and first-wave retry are explicit", () => {
