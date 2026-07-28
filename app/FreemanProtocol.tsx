@@ -310,9 +310,11 @@ const ENCOUNTERS: EnemyType[][] = [
 ];
 
 const getUpgradeChoices = (wave: number, stacks: UpgradeStacks) => {
-  return getUpgradeDraft(wave, stacks).map(({ id }: { id: UpgradeId }) =>
-    UPGRADES.find((upgrade) => upgrade.id === id),
-  ).filter(Boolean) as typeof UPGRADES;
+  return getUpgradeDraft(wave, stacks)
+    .map(({ id }: { id: string }) =>
+      UPGRADES.find((upgrade) => upgrade.id === (id as UpgradeId)),
+    )
+    .filter(Boolean) as typeof UPGRADES;
 };
 
 const EVOLUTION_COPY: Record<EvolutionId, string> = {
