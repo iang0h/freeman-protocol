@@ -526,6 +526,25 @@ canvas:focus-visible {
   opacity: 0.58;
 }
 
+.agent-card__copy em {
+  color: #efad86;
+  font-family: var(--mono);
+  font-size: 7px;
+  font-style: normal;
+  letter-spacing: 0.07em;
+}
+
+.evolution-screen {
+  overflow-y: auto;
+  padding-block: max(24px, env(safe-area-inset-top))
+    max(24px, env(safe-area-inset-bottom));
+}
+
+.evolution-grid button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
 .base-builder span {
   display: flex;
   flex-direction: column;

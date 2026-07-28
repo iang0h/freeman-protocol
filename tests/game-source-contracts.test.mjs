@@ -55,3 +55,23 @@ test("sentries support automatic deployment and optional manual placement", () =
   assert.ok((game.match(/private placeDefenseAt\(/g) ?? []).length >= 2);
   assert.ok((game.match(/this\.placeDefenseAt\(/g) ?? []).length >= 4);
 });
+
+test("player upgrades are capped and recruited agents can evolve", () => {
+  assert.match(game, /upgradeStacks: UpgradeStacks/);
+  assert.match(game, /evolutions: Evolutions/);
+  assert.ok((game.match(/applyUpgradeStack\(/g) ?? []).length >= 2);
+  assert.ok((game.match(/purchaseEvolution\(/g) ?? []).length >= 2);
+  assert.match(game, /CONTINUE WITHOUT EVOLVING/);
+  for (const id of [
+    "cryo-mesh",
+    "stasis-lock",
+    "execution-protocol",
+    "rail-pierce",
+    "cluster-burst",
+    "suppression-loop",
+    "aegis-relay",
+    "nanite-repair",
+  ]) {
+    assert.match(game, new RegExp(id));
+  }
+});

@@ -16,11 +16,17 @@ import {
   remainingThreats,
 } from "./game/combat-rules.mjs";
 import { selectAutoSentryPosition } from "./game/sentry-placement.mjs";
+import {
+  EVOLUTIONS,
+  applyUpgradeStack,
+  getUpgradeDraft,
+  purchaseEvolution,
+} from "./game/progression.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
 import { BoundedPool, disposeObject3D } from "./game/three-resources";
 
 type GameMode =
-  "intro" | "playing" | "upgrade" | "paused" | "defeat" | "victory";
+  "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
 
 type AgentId = "kairos" | "kira" | "forge" | "covenant";
 type SquadCommand = "follow" | "defend" | "focus";
@@ -28,6 +34,13 @@ type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type UpgradeId =
   "overclock" | "bastion" | "bandwidth" | "voltage" | "repair" | "command";
 type EnemyType = "virus" | "phisher" | "trojan" | "rootkit";
+type EvolutionId =
+  | "cryo-mesh" | "stasis-lock"
+  | "execution-protocol" | "rail-pierce"
+  | "cluster-burst" | "suppression-loop"
+  | "aegis-relay" | "nanite-repair";
+type UpgradeStacks = Record<UpgradeId, number>;
+type Evolutions = Record<AgentId, EvolutionId | null>;
 
 const TOTAL_WAVES = 8;
 const ARENA_RADIUS = 17.5;
@@ -52,6 +65,8 @@ type HudState = {
   threat: string;
   command: SquadCommand;
   agents: Record<AgentId, boolean>;
+  upgradeStacks: UpgradeStacks;
+  evolutions: Evolutions;
 };
 
 type ToastState = {
@@ -80,6 +95,8 @@ interface GameController {
   dash(): void;
   ultimate(): void;
   applyUpgrade(id: UpgradeId): void;
+  evolveAgent(agentId: AgentId, evolutionId: EvolutionId): void;
+  continueWithoutEvolution(): void;
   rotateCamera(direction: -1 | 1): void;
   zoomCamera(direction: -1 | 1): void;
   resetCamera(): void;
@@ -289,12 +306,29 @@ const ENCOUNTERS: EnemyType[][] = [
   makeEncounter(22, 6, 4, 1),
 ];
 
-const getUpgradeChoices = (wave: number) => {
-  const offset = ((wave - 1) * 2) % UPGRADES.length;
-  return Array.from(
-    { length: 3 },
-    (_, index) => UPGRADES[(offset + index) % UPGRADES.length],
-  );
+const getUpgradeChoices = (wave: number, stacks: UpgradeStacks) => {
+  return getUpgradeDraft(wave, stacks).map(({ id }: { id: UpgradeId }) =>
+    UPGRADES.find((upgrade) => upgrade.id === id),
+  ).filter(Boolean) as typeof UPGRADES;
+};
+
+const EVOLUTION_COPY: Record<EvolutionId, string> = {
+  "cryo-mesh": "Slow the target and chain frost to two nearby threats.",
+  "stasis-lock": "Repeated hits lock targets in stasis.",
+  "execution-protocol": "Deal 35% more damage to weakened targets.",
+  "rail-pierce": "Heavy rounds pierce through additional targets.",
+  "cluster-burst": "Shots burst for 45% damage around the impact.",
+  "suppression-loop": "Repeated fire accelerates and disrupts attackers.",
+  "aegis-relay": "Periodically reinforce both operator and Core.",
+  "nanite-repair": "Stronger repairs also clear agent disable time.",
+};
+
+const EMPTY_UPGRADE_STACKS: UpgradeStacks = {
+  overclock: 0, bastion: 0, bandwidth: 0,
+  voltage: 0, repair: 0, command: 0,
+};
+const EMPTY_EVOLUTIONS: Evolutions = {
+  kairos: null, kira: null, forge: null, covenant: null,
 };
 
 const INITIAL_HUD: HudState = {
@@ -321,6 +355,8 @@ const INITIAL_HUD: HudState = {
     forge: false,
     covenant: false,
   },
+  upgradeStacks: { ...EMPTY_UPGRADE_STACKS },
+  evolutions: { ...EMPTY_EVOLUTIONS },
 };
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
@@ -576,6 +612,8 @@ class FreemanEngine {
   private agentRateMultiplier = 1;
   private agentDamageMultiplier = 1;
   private empMultiplier = 1;
+  private upgradeStacks: UpgradeStacks = { ...EMPTY_UPGRADE_STACKS };
+  private evolutions: Evolutions = { ...EMPTY_EVOLUTIONS };
   private shake = 0;
   private elapsed = 0;
   private hudClock = 0;
@@ -649,6 +687,8 @@ class FreemanEngine {
     this.agentRateMultiplier = 1;
     this.agentDamageMultiplier = 1;
     this.empMultiplier = 1;
+    this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
+    this.evolutions = { ...EMPTY_EVOLUTIONS };
     this.squadCommand = "follow";
     this.cancelDefensePlacement(false);
     this.hitStop = 0;
@@ -978,6 +1018,12 @@ class FreemanEngine {
 
   applyUpgrade(id: UpgradeId) {
     if (this.mode !== "upgrade") return;
+    try {
+      const next = applyUpgradeStack({ stacks: this.upgradeStacks }, id);
+      this.upgradeStacks = next.stacks;
+    } catch {
+      return;
+    }
     if (id === "overclock") {
       this.attackMultiplier *= 1.35;
     }
@@ -989,20 +1035,63 @@ class FreemanEngine {
     }
     if (id === "bandwidth") {
       this.data += 70;
-      this.agentRateMultiplier *= 0.82;
+      this.agentRateMultiplier *= 0.85;
     }
-    if (id === "voltage") this.empMultiplier *= 1.6;
+    if (id === "voltage") this.empMultiplier *= 1.5;
     if (id === "repair") {
       this.player.hp = Math.min(this.player.maxHp, this.player.hp + 25);
       this.core.hp = Math.min(this.core.maxHp, this.core.hp + 45);
     }
-    if (id === "command") this.agentDamageMultiplier *= 1.3;
+    if (id === "command") this.agentDamageMultiplier *= 1.25;
     const selected = UPGRADES.find((upgrade) => upgrade.id === id);
     this.callbacks.onToast({
       eyebrow: "UPGRADE APPLIED",
       title: selected?.name ?? "TEAM UPGRADED",
       detail: selected?.outcome ?? "Your team is stronger.",
     });
+    this.mode = "evolution";
+    this.callbacks.onMode("evolution");
+    this.emitHud(true);
+  }
+
+  evolveAgent(agentId: AgentId, evolutionId: EvolutionId) {
+    if (this.mode !== "evolution") return;
+    try {
+      const next = purchaseEvolution({
+        compute: this.data,
+        recruited: Object.fromEntries(
+          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+            id,
+            this.agents.some((agent) => agent.id === id),
+          ]),
+        ),
+        evolutions: this.evolutions,
+      }, agentId, evolutionId);
+      this.data = next.compute;
+      this.evolutions = next.evolutions;
+      const evolution = EVOLUTIONS[agentId].find(
+        (item: { id: string }) => item.id === evolutionId,
+      );
+      this.callbacks.onToast({
+        eyebrow: `${agentId.toUpperCase()} EVOLVED`,
+        title: evolution?.name ?? "NEW PROTOCOL ONLINE",
+        detail: "This agent now has a permanent specialist ability.",
+      });
+      this.startNextWave();
+    } catch (error) {
+      this.callbacks.onToast({
+        eyebrow: "EVOLUTION UNAVAILABLE",
+        title: error instanceof Error ? error.message.toUpperCase() : "TRY AGAIN",
+        detail: "Earn more Compute or choose another recruited agent.",
+      });
+    }
+  }
+
+  continueWithoutEvolution() {
+    if (this.mode === "evolution") this.startNextWave();
+  }
+
+  private startNextWave() {
     this.wave += 1;
     this.mode = "playing";
     this.callbacks.onMode("playing");
@@ -2564,9 +2653,22 @@ class FreemanEngine {
       agent.supportClock -= delta;
 
       if (agent.id === "covenant" && agent.supportClock <= 0) {
-        agent.supportClock = 6.5;
-        this.player.hp = Math.min(this.player.maxHp, this.player.hp + 12);
-        this.core.hp = Math.min(this.core.maxHp, this.core.hp + 10);
+        const nanites = this.evolutions.covenant === "nanite-repair";
+        const aegis = this.evolutions.covenant === "aegis-relay";
+        agent.supportClock = aegis ? 8 : 6.5;
+        this.player.hp = Math.min(
+          this.player.maxHp,
+          this.player.hp + (nanites ? 18 : aegis ? 20 : 12),
+        );
+        this.core.hp = Math.min(
+          this.core.maxHp,
+          this.core.hp + (nanites ? 16 : aegis ? 30 : 10),
+        );
+        if (nanites) {
+          for (const ally of this.agents) {
+            ally.disabledLeft = Math.max(0, ally.disabledLeft - 1.5);
+          }
+        }
         this.addRing(this.player.group.position, agent.color, 0.4, 3.2, 0.72);
       }
 
@@ -2602,11 +2704,20 @@ class FreemanEngine {
         .sub(origin)
         .normalize();
       this.faceDirection(agent.group, direction);
-      agent.cooldownLeft = agent.cooldown * this.agentRateMultiplier;
+      agent.cooldownLeft =
+        agent.cooldown *
+        this.agentRateMultiplier *
+        (agent.id === "forge" &&
+        this.evolutions.forge === "suppression-loop"
+          ? 0.68
+          : 1);
       this.triggerRig(agent.rig, "attack", 0.3);
       this.addBurst(origin, agent.color, agent.id === "forge" ? 3 : 5);
       if (agent.id === "kairos") {
-        target.slow = Math.max(target.slow, 1.6);
+        target.slow = Math.max(
+          target.slow,
+          this.evolutions.kairos === "stasis-lock" ? 2.8 : 1.6,
+        );
         this.damageEnemy(
           target,
           agent.damage * this.agentDamageMultiplier,
@@ -2621,13 +2732,37 @@ class FreemanEngine {
           0.22,
         );
         this.addRing(target.group.position, agent.color, 0.1, 1.35, 0.38);
+        if (this.evolutions.kairos === "cryo-mesh") {
+          for (const chained of this.enemyGrid
+            .query(target.group.position, 2.5)
+            .filter((enemy) => enemy !== target)
+            .slice(0, 2)) {
+            chained.slow = Math.max(chained.slow, 1.12);
+            this.damageEnemy(
+              chained,
+              agent.damage * this.agentDamageMultiplier * 0.7,
+              target.group.position,
+            );
+          }
+        }
         return;
       }
+      const evolutionDamage =
+        agent.id === "kira" &&
+        this.evolutions.kira === "execution-protocol" &&
+        target.hp / target.maxHp < 0.4
+          ? 1.35
+          : agent.id === "forge" &&
+              this.evolutions.forge === "cluster-burst"
+            ? 1.45
+            : agent.id === "kira" && this.evolutions.kira === "rail-pierce"
+              ? 1.22
+              : 1;
       this.fireProjectile(
         origin,
         direction,
         agent.color,
-        agent.damage * this.agentDamageMultiplier,
+        agent.damage * this.agentDamageMultiplier * evolutionDamage,
         agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10,
         "agent",
         agent.id === "covenant" ? 0.25 : 0,
@@ -3750,6 +3885,8 @@ class FreemanEngine {
         forge: recruited("forge"),
         covenant: recruited("covenant"),
       },
+      upgradeStacks: { ...this.upgradeStacks },
+      evolutions: { ...this.evolutions },
     });
   }
 }
@@ -3892,6 +4029,8 @@ class FreemanCanvasEngine implements GameController {
   private agentRateMultiplier = 1;
   private agentDamageMultiplier = 1;
   private empMultiplier = 1;
+  private upgradeStacks: UpgradeStacks = { ...EMPTY_UPGRADE_STACKS };
+  private evolutions: Evolutions = { ...EMPTY_EVOLUTIONS };
   private dragPointer: number | null = null;
   private dragX = 0;
   private reducedMotion = false;
@@ -3935,6 +4074,8 @@ class FreemanCanvasEngine implements GameController {
     this.agentRateMultiplier = 1;
     this.agentDamageMultiplier = 1;
     this.empMultiplier = 1;
+    this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
+    this.evolutions = { ...EMPTY_EVOLUTIONS };
     this.squadCommand = "follow";
     this.placementActive = false;
     this.reinforcementClock = 0;
@@ -4249,6 +4390,12 @@ class FreemanCanvasEngine implements GameController {
 
   applyUpgrade(id: UpgradeId) {
     if (this.mode !== "upgrade") return;
+    try {
+      const next = applyUpgradeStack({ stacks: this.upgradeStacks }, id);
+      this.upgradeStacks = next.stacks;
+    } catch {
+      return;
+    }
     if (id === "overclock") this.attackMultiplier *= 1.35;
     if (id === "bastion") {
       this.player.maxHp += 25;
@@ -4258,20 +4405,63 @@ class FreemanCanvasEngine implements GameController {
     }
     if (id === "bandwidth") {
       this.data += 70;
-      this.agentRateMultiplier *= 0.82;
+      this.agentRateMultiplier *= 0.85;
     }
-    if (id === "voltage") this.empMultiplier *= 1.6;
+    if (id === "voltage") this.empMultiplier *= 1.5;
     if (id === "repair") {
       this.player.hp = Math.min(this.player.maxHp, this.player.hp + 25);
       this.core.hp = Math.min(this.core.maxHp, this.core.hp + 45);
     }
-    if (id === "command") this.agentDamageMultiplier *= 1.3;
+    if (id === "command") this.agentDamageMultiplier *= 1.25;
     const selected = UPGRADES.find((upgrade) => upgrade.id === id);
     this.callbacks.onToast({
       eyebrow: "UPGRADE APPLIED",
       title: selected?.name ?? "TEAM UPGRADED",
       detail: selected?.outcome ?? "Your team is stronger.",
     });
+    this.mode = "evolution";
+    this.callbacks.onMode("evolution");
+    this.emitHud(true);
+  }
+
+  evolveAgent(agentId: AgentId, evolutionId: EvolutionId) {
+    if (this.mode !== "evolution") return;
+    try {
+      const next = purchaseEvolution({
+        compute: this.data,
+        recruited: Object.fromEntries(
+          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+            id,
+            this.agents.some((agent) => agent.id === id),
+          ]),
+        ),
+        evolutions: this.evolutions,
+      }, agentId, evolutionId);
+      this.data = next.compute;
+      this.evolutions = next.evolutions;
+      const evolution = EVOLUTIONS[agentId].find(
+        (item: { id: string }) => item.id === evolutionId,
+      );
+      this.callbacks.onToast({
+        eyebrow: `${agentId.toUpperCase()} EVOLVED`,
+        title: evolution?.name ?? "NEW PROTOCOL ONLINE",
+        detail: "This agent now has a permanent specialist ability.",
+      });
+      this.startNextWave();
+    } catch (error) {
+      this.callbacks.onToast({
+        eyebrow: "EVOLUTION UNAVAILABLE",
+        title: error instanceof Error ? error.message.toUpperCase() : "TRY AGAIN",
+        detail: "Earn more Compute or choose another recruited agent.",
+      });
+    }
+  }
+
+  continueWithoutEvolution() {
+    if (this.mode === "evolution") this.startNextWave();
+  }
+
+  private startNextWave() {
     this.wave += 1;
     this.mode = "playing";
     this.callbacks.onMode("playing");
@@ -4625,9 +4815,22 @@ class FreemanCanvasEngine implements GameController {
       if (agent.disabledLeft > 0) return;
       agent.supportClock -= delta;
       if (agent.id === "covenant" && agent.supportClock <= 0) {
-        agent.supportClock = 6.5;
-        this.player.hp = Math.min(this.player.maxHp, this.player.hp + 12);
-        this.core.hp = Math.min(this.core.maxHp, this.core.hp + 10);
+        const nanites = this.evolutions.covenant === "nanite-repair";
+        const aegis = this.evolutions.covenant === "aegis-relay";
+        agent.supportClock = aegis ? 8 : 6.5;
+        this.player.hp = Math.min(
+          this.player.maxHp,
+          this.player.hp + (nanites ? 18 : aegis ? 20 : 12),
+        );
+        this.core.hp = Math.min(
+          this.core.maxHp,
+          this.core.hp + (nanites ? 16 : aegis ? 30 : 10),
+        );
+        if (nanites) {
+          for (const ally of this.agents) {
+            ally.disabledLeft = Math.max(0, ally.disabledLeft - 1.5);
+          }
+        }
         this.addRing(this.player.x, this.player.z, agent.color, 0.4, 3.2, 0.72);
       }
       let target: FlatEnemy | null = null;
@@ -4657,21 +4860,56 @@ class FreemanCanvasEngine implements GameController {
       const length = Math.hypot(dx, dz) || 1;
       dx /= length;
       dz /= length;
-      agent.cooldownLeft = agent.cooldown * this.agentRateMultiplier;
+      agent.cooldownLeft =
+        agent.cooldown *
+        this.agentRateMultiplier *
+        (agent.id === "forge" &&
+        this.evolutions.forge === "suppression-loop"
+          ? 0.68
+          : 1);
       if (agent.id === "kairos") {
-        target.slow = Math.max(target.slow, 1.6);
+        target.slow = Math.max(
+          target.slow,
+          this.evolutions.kairos === "stasis-lock" ? 2.8 : 1.6,
+        );
         this.damageEnemy(target, agent.damage * this.agentDamageMultiplier);
         this.addBeam(agent.x, agent.z, target.x, target.z, agent.color, 0.22);
         this.addRing(target.x, target.z, agent.color, 0.1, 1.35, 0.38);
+        if (this.evolutions.kairos === "cryo-mesh") {
+          for (const chained of this.enemies
+            .filter(
+              (enemy) =>
+                enemy !== target &&
+                this.distance(enemy.x, enemy.z, target.x, target.z) <= 2.5,
+            )
+            .slice(0, 2)) {
+            chained.slow = Math.max(chained.slow, 1.12);
+            this.damageEnemy(
+              chained,
+              agent.damage * this.agentDamageMultiplier * 0.7,
+            );
+          }
+        }
         return;
       }
+      const evolutionDamage =
+        agent.id === "kira" &&
+        this.evolutions.kira === "execution-protocol" &&
+        target.hp / target.maxHp < 0.4
+          ? 1.35
+          : agent.id === "forge" &&
+              this.evolutions.forge === "cluster-burst"
+            ? 1.45
+            : agent.id === "kira" && this.evolutions.kira === "rail-pierce"
+              ? 1.22
+              : 1;
       this.projectiles.push({
         x: agent.x,
         z: agent.z,
         vx: dx * (agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10),
         vz: dz * (agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10),
         life: 2.2,
-        damage: agent.damage * this.agentDamageMultiplier,
+        damage: agent.damage * this.agentDamageMultiplier * evolutionDamage,
         radius: agent.id === "forge" ? 0.14 : 0.18,
         color: toCssColor(agent.color),
         faction: "agent",
@@ -6295,6 +6533,8 @@ class FreemanCanvasEngine implements GameController {
         forge: recruited("forge"),
         covenant: recruited("covenant"),
       },
+      upgradeStacks: { ...this.upgradeStacks },
+      evolutions: { ...this.evolutions },
     });
   }
 }
@@ -6719,6 +6959,19 @@ export default function FreemanProtocol() {
                     <span className="agent-card__copy">
                       <small>{agent.role}</small>
                       <strong>{agent.name}</strong>
+                      <small>
+                        DMG {agent.damage} · {agent.cooldown.toFixed(1)}S · RNG{" "}
+                        {agent.range}
+                      </small>
+                      {hud.evolutions[agent.id] && (
+                        <em>
+                          RANK II ·{" "}
+                          {EVOLUTIONS[agent.id].find(
+                            (item: { id: string }) =>
+                              item.id === hud.evolutions[agent.id],
+                          )?.name}
+                        </em>
+                      )}
                     </span>
                     <span
                       className={`agent-card__cost ${!affordable && !recruited ? "is-low" : ""}`}
@@ -6854,7 +7107,7 @@ export default function FreemanProtocol() {
             <p>The next wave is stronger. Pick what your team needs most.</p>
           </div>
           <div className="protocol-grid">
-            {getUpgradeChoices(hud.wave).map((upgrade) => (
+            {getUpgradeChoices(hud.wave, hud.upgradeStacks).map((upgrade) => (
               <button
                 type="button"
                 key={upgrade.id}
@@ -6866,10 +7119,68 @@ export default function FreemanProtocol() {
                   <strong>{upgrade.name}</strong>
                   <p>{upgrade.detail}</p>
                 </span>
-                <b>{upgrade.outcome}</b>
+                <b>
+                  {upgrade.outcome} · STACK{" "}
+                  {hud.upgradeStacks[upgrade.id] + 1}/
+                  {upgrade.id === "repair" ? "∞" : "2"}
+                </b>
               </button>
             ))}
           </div>
+        </section>
+      )}
+
+      {mode === "evolution" && (
+        <section className="overlay-screen protocol-screen evolution-screen">
+          <div className="overlay-copy">
+            <span className="eyebrow">OPTIONAL TEAM EVOLUTION</span>
+            <h2>Specialize an AI agent.</h2>
+            <p>
+              Spend Compute on one permanent protocol, or save it for the next
+              wave.
+            </p>
+          </div>
+          <div className="protocol-grid evolution-grid">
+            {AGENTS.filter(
+              (agent) => hud.agents[agent.id] && !hud.evolutions[agent.id],
+            ).flatMap((agent) =>
+              EVOLUTIONS[agent.id].map(
+                (evolution: {
+                  id: EvolutionId;
+                  name: string;
+                  price: number;
+                }) => (
+                  <button
+                    type="button"
+                    key={evolution.id}
+                    disabled={hud.data < evolution.price}
+                    onClick={() =>
+                      engineRef.current?.evolveAgent(
+                        agent.id,
+                        evolution.id,
+                      )
+                    }
+                  >
+                    <small>{agent.name} · RANK II</small>
+                    <span>
+                      <em>EVOLUTION PROTOCOL</em>
+                      <strong>{evolution.name}</strong>
+                      <p>{EVOLUTION_COPY[evolution.id]}</p>
+                    </span>
+                    <b>{evolution.price} COMPUTE</b>
+                  </button>
+                ),
+              ),
+            )}
+          </div>
+          <button
+            type="button"
+            className="enter-button enter-button--compact"
+            onClick={() => engineRef.current?.continueWithoutEvolution()}
+          >
+            <span>CONTINUE WITHOUT EVOLVING</span>
+            <i>→</i>
+          </button>
         </section>
       )}
 
