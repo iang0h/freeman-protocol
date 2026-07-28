@@ -9,6 +9,8 @@ import {
 } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { SpatialGrid } from "./game/spatial-grid";
+import { BoundedPool, disposeObject3D } from "./game/three-resources";
 
 type GameMode =
   "intro" | "playing" | "upgrade" | "paused" | "defeat" | "victory";
@@ -516,6 +518,9 @@ class FreemanEngine {
   private readonly defenses: DefenseRuntime[] = [];
   private readonly projectiles: ProjectileRuntime[] = [];
   private readonly effects: EffectRuntime[] = [];
+  private readonly enemyGrid = new SpatialGrid<EnemyRuntime>(3);
+  private readonly disposedResources = new WeakSet<object>();
+  private readonly projectilePool = new BoundedPool<THREE.Mesh>(128);
   private readonly aimPoint = new THREE.Vector3(0, 0, -4);
   private readonly lastMove = new THREE.Vector3(0, 0, -1);
   private readonly touchMove = new THREE.Vector2();
@@ -834,7 +839,7 @@ class FreemanEngine {
     this.triggerRig(this.player.rig, "attack", 0.42);
 
     let hits = 0;
-    for (const enemy of [...this.enemies]) {
+    for (const enemy of this.enemyGrid.query(origin, 4.2)) {
       const offset = enemy.group.position.clone().sub(origin).setY(0);
       const distance = offset.length();
       if (distance > 2.65 + enemy.radius) continue;
@@ -899,7 +904,7 @@ class FreemanEngine {
     this.player.ultimate = 0;
     const origin = this.player.group.position.clone();
     const damage = (44 + this.agents.length * 8) * this.empMultiplier;
-    for (const enemy of [...this.enemies]) {
+    for (const enemy of this.enemyGrid.query(origin, 10.5)) {
       const distance = enemy.group.position.distanceTo(origin);
       if (distance <= 10.5) {
         enemy.slow = Math.max(enemy.slow, 2.8);
@@ -986,6 +991,8 @@ class FreemanEngine {
     this.resizeObserver.disconnect();
     this.unbindEvents();
     this.audio.dispose();
+    this.clearDynamic();
+    this.projectilePool.clear((mesh) => this.disposeDynamicObject(mesh));
     this.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh || object instanceof THREE.Line))
         return;
@@ -1897,7 +1904,7 @@ class FreemanEngine {
     const body = new THREE.Mesh(geometry, material);
     body.position.y = definition.radius;
     body.scale.setScalar(definition.scale);
-    body.castShadow = true;
+    body.castShadow = type === "rootkit";
     group.add(body);
 
     const enemyCore = new THREE.Mesh(
@@ -1906,15 +1913,6 @@ class FreemanEngine {
     );
     enemyCore.position.set(0, definition.radius, -definition.radius * 0.62);
     group.add(enemyCore);
-
-    const enemyLight = new THREE.PointLight(
-      definition.color,
-      type === "rootkit" ? 26 : 11,
-      type === "rootkit" ? 6 : 3.6,
-      2,
-    );
-    enemyLight.position.set(0, definition.radius + 0.2, 0);
-    group.add(enemyLight);
 
     const threatRing = new THREE.Mesh(
       new THREE.RingGeometry(
@@ -2301,9 +2299,11 @@ class FreemanEngine {
   private updateGame(delta: number) {
     this.updatePlayer(delta);
     this.updateRig(this.player.rig, delta, this.playerMoving ? "run" : "idle");
+    this.enemyGrid.rebuild(this.enemies);
     this.updateAgents(delta);
     this.updateDefenses(delta);
     this.updateEnemies(delta);
+    this.enemyGrid.rebuild(this.enemies);
     this.updateProjectiles(delta);
     this.player.attackCooldown = Math.max(
       0,
@@ -2773,11 +2773,10 @@ class FreemanEngine {
   }
 
   private updateProjectiles(delta: number) {
-    for (const projectile of [...this.projectiles]) {
+    for (let index = this.projectiles.length - 1; index >= 0; index -= 1) {
+      const projectile = this.projectiles[index];
       projectile.life -= delta;
-      projectile.mesh.position.add(
-        projectile.velocity.clone().multiplyScalar(delta),
-      );
+      projectile.mesh.position.addScaledVector(projectile.velocity, delta);
       projectile.mesh.rotation.x += delta * 5;
       projectile.mesh.rotation.y += delta * 7;
       if (projectile.life <= 0) {
@@ -2804,7 +2803,11 @@ class FreemanEngine {
         }
         continue;
       }
-      for (const enemy of [...this.enemies]) {
+      const candidates = this.enemyGrid.query(
+        projectile.mesh.position,
+        projectile.radius + 1.6,
+      );
+      for (const enemy of candidates) {
         const distance = projectile.mesh.position.distanceTo(
           enemy.group.position
             .clone()
@@ -2822,7 +2825,8 @@ class FreemanEngine {
   }
 
   private updateEffects(delta: number) {
-    for (const effect of [...this.effects]) {
+    for (let index = this.effects.length - 1; index >= 0; index -= 1) {
+      const effect = this.effects[index];
       effect.life -= delta;
       const progress = 1 - effect.life / effect.maxLife;
       if (effect.kind === "ring" || effect.kind === "portal") {
@@ -2859,13 +2863,8 @@ class FreemanEngine {
         effect.object.scale.multiplyScalar(1 + delta * 0.18);
       }
       if (effect.life <= 0) {
-        this.scene.remove(effect.object);
-        if (effect.object instanceof THREE.Sprite) {
-          const material = effect.object.material as THREE.SpriteMaterial;
-          material.map?.dispose();
-          material.dispose();
-        }
-        this.effects.splice(this.effects.indexOf(effect), 1);
+        this.disposeDynamicObject(effect.object);
+        this.effects.splice(index, 1);
       }
     }
   }
@@ -3038,14 +3037,15 @@ class FreemanEngine {
     );
     this.audio.play("hit");
     if (enemy.hp > 0) return;
-    this.scene.remove(enemy.group);
+    const deathPosition = enemy.group.position.clone();
+    this.disposeDynamicObject(enemy.group);
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
-    this.addRing(enemy.group.position, 0xd9793f, 0.2, enemy.radius * 2.4, 0.42);
+    this.addRing(deathPosition, 0xd9793f, 0.2, enemy.radius * 2.4, 0.42);
     this.addBurst(
-      enemy.group.position.clone().add(new THREE.Vector3(0, enemy.radius, 0)),
+      deathPosition.clone().add(new THREE.Vector3(0, enemy.radius, 0)),
       0xd9793f,
       enemy.type === "rootkit" ? 22 : 11,
     );
@@ -3063,14 +3063,22 @@ class FreemanEngine {
     slow: number,
     radius: number,
   ) {
-    const mesh = new THREE.Mesh(
-      new THREE.OctahedronGeometry(radius, 0),
-      new THREE.MeshBasicMaterial({
-        color,
-        transparent: true,
-        opacity: 0.95,
-      }),
+    const mesh = this.projectilePool.acquire(
+      () =>
+        new THREE.Mesh(
+          new THREE.OctahedronGeometry(1, 0),
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.95,
+          }),
+        ),
     );
+    const material = mesh.material as THREE.MeshBasicMaterial;
+    material.color.setHex(color);
+    material.opacity = 0.95;
+    mesh.scale.setScalar(radius);
+    mesh.rotation.set(0, 0, 0);
     mesh.position.copy(position);
     this.scene.add(mesh);
     this.projectiles.push({
@@ -3085,9 +3093,18 @@ class FreemanEngine {
   }
 
   private removeProjectile(projectile: ProjectileRuntime) {
-    this.scene.remove(projectile.mesh);
     const index = this.projectiles.indexOf(projectile);
     if (index >= 0) this.projectiles.splice(index, 1);
+    this.projectilePool.release(
+      projectile.mesh,
+      (mesh) => {
+        mesh.removeFromParent();
+        mesh.position.set(0, 0, 0);
+        mesh.rotation.set(0, 0, 0);
+        mesh.scale.setScalar(1);
+      },
+      (mesh) => this.disposeDynamicObject(mesh),
+    );
   }
 
   private addRing(
@@ -3514,7 +3531,10 @@ class FreemanEngine {
   private getNearestEnemy(position: THREE.Vector3, maxDistance = Infinity) {
     let nearest: EnemyRuntime | null = null;
     let nearestDistance = maxDistance;
-    for (const enemy of this.enemies) {
+    const candidates = Number.isFinite(maxDistance)
+      ? this.enemyGrid.query(position, maxDistance)
+      : this.enemies;
+    for (const enemy of candidates) {
       const distance = enemy.group.position.distanceTo(position);
       if (distance < nearestDistance) {
         nearest = enemy;
@@ -3558,14 +3578,20 @@ class FreemanEngine {
     position.y = 0;
   }
 
+  private disposeDynamicObject(object: THREE.Object3D) {
+    disposeObject3D(object, { disposed: this.disposedResources });
+  }
+
   private clearDynamic() {
-    for (const enemy of [...this.enemies]) this.scene.remove(enemy.group);
-    for (const agent of [...this.agents]) this.scene.remove(agent.group);
-    for (const defense of [...this.defenses]) this.scene.remove(defense.group);
-    for (const projectile of [...this.projectiles]) {
-      this.scene.remove(projectile.mesh);
+    for (const enemy of this.enemies) this.disposeDynamicObject(enemy.group);
+    for (const agent of this.agents) this.disposeDynamicObject(agent.group);
+    for (const defense of this.defenses) this.disposeDynamicObject(defense.group);
+    while (this.projectiles.length > 0) {
+      this.removeProjectile(this.projectiles[this.projectiles.length - 1]);
     }
-    for (const effect of [...this.effects]) this.scene.remove(effect.object);
+    for (const effect of this.effects) {
+      this.disposeDynamicObject(effect.object);
+    }
     this.enemies.length = 0;
     this.agents.length = 0;
     this.defenses.length = 0;
