@@ -910,6 +910,23 @@ canvas:focus-visible {
   transform: scale(1.035);
 }
 
+.ability--melee {
+  border-color: rgba(158, 191, 192, 0.62);
+  background:
+    radial-gradient(circle, rgba(158, 191, 192, 0.2), transparent 68%),
+    rgba(7, 10, 10, 0.9);
+  box-shadow: 0 0 24px rgba(158, 191, 192, 0.08);
+}
+
+.ability--melee::before {
+  border-color: rgba(158, 191, 192, 0.28);
+}
+
+.ability--melee:hover:not(:disabled) {
+  box-shadow: 0 0 30px rgba(158, 191, 192, 0.2);
+  transform: scale(1.035);
+}
+
 .ability--ultimate.is-ready {
   border-color: var(--ice);
   box-shadow: 0 0 28px rgba(158, 191, 192, 0.2);

@@ -21,6 +21,8 @@ type UpgradeId =
 type EnemyType = "virus" | "phisher" | "trojan" | "rootkit";
 
 const TOTAL_WAVES = 8;
+const ARENA_RADIUS = 17.5;
+const SPAWN_RADIUS = 15.2;
 
 type HudState = {
   hp: number;
@@ -64,6 +66,7 @@ interface GameController {
   buildDefense(): void;
   setSquadCommand(command: SquadCommand): void;
   attack(): void;
+  melee(): void;
   dash(): void;
   ultimate(): void;
   applyUpgrade(id: UpgradeId): void;
@@ -253,86 +256,27 @@ const UPGRADES: Array<{
   },
 ];
 
+const makeEncounter = (
+  viruses: number,
+  phishers: number,
+  trojans: number,
+  rootkits = 0,
+): EnemyType[] => [
+  ...Array.from({ length: rootkits }, (): EnemyType => "rootkit"),
+  ...Array.from({ length: viruses }, (): EnemyType => "virus"),
+  ...Array.from({ length: phishers }, (): EnemyType => "phisher"),
+  ...Array.from({ length: trojans }, (): EnemyType => "trojan"),
+];
+
 const ENCOUNTERS: EnemyType[][] = [
-  ["virus", "virus", "virus", "virus", "virus", "phisher"],
-  ["virus", "virus", "virus", "virus", "phisher", "phisher", "trojan"],
-  [
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "phisher",
-    "phisher",
-    "trojan",
-    "trojan",
-  ],
-  [
-    "virus",
-    "virus",
-    "virus",
-    "phisher",
-    "phisher",
-    "phisher",
-    "trojan",
-    "trojan",
-    "trojan",
-  ],
-  [
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "phisher",
-    "phisher",
-    "phisher",
-    "trojan",
-    "trojan",
-  ],
-  [
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "phisher",
-    "phisher",
-    "phisher",
-    "phisher",
-    "trojan",
-    "trojan",
-    "trojan",
-  ],
-  [
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "phisher",
-    "phisher",
-    "phisher",
-    "phisher",
-    "trojan",
-    "trojan",
-    "trojan",
-    "trojan",
-  ],
-  [
-    "rootkit",
-    "virus",
-    "virus",
-    "virus",
-    "virus",
-    "phisher",
-    "phisher",
-    "phisher",
-    "trojan",
-    "trojan",
-  ],
+  makeEncounter(12, 2, 0),
+  makeEncounter(16, 3, 1),
+  makeEncounter(20, 4, 2),
+  makeEncounter(22, 5, 3),
+  makeEncounter(26, 6, 4),
+  makeEncounter(28, 7, 5),
+  makeEncounter(32, 8, 6),
+  makeEncounter(22, 6, 4, 1),
 ];
 
 const getUpgradeChoices = (wave: number) => {
@@ -586,6 +530,7 @@ class FreemanEngine {
     maxHp: number;
     damage: number;
     attackCooldown: number;
+    meleeCooldown: number;
     dashCooldown: number;
     ultimate: number;
     invulnerable: number;
@@ -695,6 +640,7 @@ class FreemanEngine {
     this.player.hp = this.player.maxHp = 100;
     this.player.damage = 25;
     this.player.attackCooldown = 0;
+    this.player.meleeCooldown = 0;
     this.player.dashCooldown = 0;
     this.player.ultimate = 0;
     this.player.group.position.set(0, 0, 2.7);
@@ -708,7 +654,7 @@ class FreemanEngine {
       eyebrow: "WAVE 1 STARTED",
       title: "DEFEND THE CORE",
       detail:
-        "Move with WASD. Aim with the mouse. Click or press Space to shoot.",
+        "Move with WASD. Left-click to shoot. Right-click to slash nearby viruses.",
     });
     this.audio.play("wave");
     this.emitHud(true);
@@ -877,6 +823,54 @@ class FreemanEngine {
     this.audio.play("attack");
   }
 
+  melee() {
+    if (this.mode !== "playing" || this.player.meleeCooldown > 0) return;
+    const origin = this.player.group.position.clone();
+    const direction = this.resolveAim().sub(origin).setY(0);
+    if (direction.lengthSq() < 0.001) direction.copy(this.lastMove);
+    direction.normalize();
+    this.faceDirection(this.player.group, direction);
+    this.player.meleeCooldown = 0.62;
+    this.triggerRig(this.player.rig, "attack", 0.42);
+
+    let hits = 0;
+    for (const enemy of [...this.enemies]) {
+      const offset = enemy.group.position.clone().sub(origin).setY(0);
+      const distance = offset.length();
+      if (distance > 2.65 + enemy.radius) continue;
+      const facing = distance < 0.2 ? 1 : offset.normalize().dot(direction);
+      if (facing < -0.12) continue;
+      hits += 1;
+      const hitPosition = enemy.group.position
+        .clone()
+        .add(new THREE.Vector3(0, enemy.radius, 0));
+      this.damageEnemy(
+        enemy,
+        46 * this.attackMultiplier,
+        hitPosition,
+      );
+      enemy.group.position.add(direction.clone().multiplyScalar(0.42));
+      this.addBeam(
+        origin.clone().add(new THREE.Vector3(0, 0.9, 0)),
+        hitPosition,
+        0xffb277,
+        0.16,
+      );
+    }
+
+    const slashCenter = origin
+      .clone()
+      .add(direction.clone().multiplyScalar(1.15));
+    this.addRing(slashCenter, 0xffb277, 0.3, 2.5, 0.3, "portal");
+    this.addBurst(
+      slashCenter.clone().add(new THREE.Vector3(0, 0.45, 0)),
+      hits > 0 ? 0xffd2ad : 0xd9793f,
+      hits > 0 ? 13 : 7,
+    );
+    this.shake = Math.max(this.shake, hits > 0 ? 0.2 : 0.08);
+    this.audio.play("attack");
+  }
+
   dash() {
     if (this.mode !== "playing" || this.player.dashCooldown > 0) return;
     const direction =
@@ -885,7 +879,7 @@ class FreemanEngine {
         : this.resolveAim().sub(this.player.group.position).setY(0).normalize();
     const start = this.player.group.position.clone();
     this.player.group.position.add(direction.multiplyScalar(3.6));
-    this.clampToArena(this.player.group.position, 11.8);
+    this.clampToArena(this.player.group.position, ARENA_RADIUS);
     this.player.dashCooldown = 3;
     this.player.invulnerable = 0.34;
     this.addBeam(
@@ -1027,7 +1021,7 @@ class FreemanEngine {
     this.scene.add(rimLight);
 
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(46, 46),
+      new THREE.PlaneGeometry(64, 64),
       new THREE.MeshStandardMaterial({
         color: 0x101a20,
         roughness: 0.74,
@@ -1041,7 +1035,7 @@ class FreemanEngine {
     floor.receiveShadow = true;
     this.scene.add(floor);
 
-    const grid = new THREE.GridHelper(44, 44, 0xb0633d, 0x294b54);
+    const grid = new THREE.GridHelper(60, 60, 0xb0633d, 0x294b54);
     grid.position.y = -0.08;
     const gridMaterial = grid.material as THREE.LineBasicMaterial;
     gridMaterial.transparent = true;
@@ -1088,11 +1082,11 @@ class FreemanEngine {
       opacity: 0.82,
     });
     const positions: Array<[number, number]> = [];
-    for (let x = -16; x <= 16; x += 4) {
-      positions.push([x, -16], [x, 16]);
+    for (let x = -20; x <= 20; x += 4) {
+      positions.push([x, -22], [x, 22]);
     }
-    for (let z = -12; z <= 12; z += 4) {
-      positions.push([-16, z], [16, z]);
+    for (let z = -18; z <= 18; z += 4) {
+      positions.push([-22, z], [22, z]);
     }
     positions.forEach(([x, z], index) => {
       const height = 2.2 + ((index * 17) % 6) * 0.62;
@@ -1134,9 +1128,9 @@ class FreemanEngine {
     const particleCount = 280;
     const particlePositions = new Float32Array(particleCount * 3);
     for (let index = 0; index < particleCount; index += 1) {
-      particlePositions[index * 3] = ((index * 71) % 400) / 10 - 20;
+      particlePositions[index * 3] = ((index * 71) % 600) / 10 - 30;
       particlePositions[index * 3 + 1] = 0.2 + ((index * 47) % 90) / 10;
-      particlePositions[index * 3 + 2] = ((index * 97) % 400) / 10 - 20;
+      particlePositions[index * 3 + 2] = ((index * 97) % 600) / 10 - 30;
     }
     const particleGeometry = new THREE.BufferGeometry();
     particleGeometry.setAttribute(
@@ -1488,6 +1482,7 @@ class FreemanEngine {
       maxHp: 100,
       damage: 25,
       attackCooldown: 0,
+      meleeCooldown: 0,
       dashCooldown: 0,
       ultimate: 0,
       invulnerable: 0,
@@ -1579,186 +1574,221 @@ class FreemanEngine {
     const root = new THREE.Group();
     root.name = "agent-body-root";
     group.add(root);
-    const coreMaterial = new THREE.MeshStandardMaterial({
+    const accent = new THREE.MeshStandardMaterial({
       color: definition.color,
       emissive: definition.color,
-      emissiveIntensity: 2.1,
-      roughness: 0.18,
-      metalness: 0.72,
+      emissiveIntensity: 1.35,
+      roughness: 0.24,
+      metalness: 0.78,
     });
-    const darkMaterial = new THREE.MeshStandardMaterial({
-      color: 0x171f24,
-      roughness: 0.32,
+    const armour = new THREE.MeshStandardMaterial({
+      color:
+        definition.id === "forge"
+          ? 0x3b3329
+          : definition.id === "covenant"
+            ? 0x343a3a
+            : 0x20292e,
+      roughness: 0.36,
       metalness: 0.88,
       emissive: definition.color,
-      emissiveIntensity: 0.1,
+      emissiveIntensity: 0.07,
     });
+    const undersuit = new THREE.MeshStandardMaterial({
+      color: 0x0c1216,
+      roughness: 0.72,
+      metalness: 0.24,
+    });
+    const weaponMaterial = new THREE.MeshStandardMaterial({
+      color: 0x090d10,
+      roughness: 0.28,
+      metalness: 0.94,
+    });
+
+    const pelvis = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.28, 0.33, 0.34, 8),
+      armour,
+    );
+    pelvis.position.y = 0.94;
+    root.add(pelvis);
+
+    const torso = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.39, 0.29, 0.72, 8),
+      undersuit,
+    );
+    torso.position.y = 1.38;
+    root.add(torso);
+
+    const chest = new THREE.Mesh(
+      new THREE.BoxGeometry(
+        definition.id === "forge" ? 0.88 : 0.72,
+        0.54,
+        0.28,
+      ),
+      armour,
+    );
+    chest.position.set(0, 1.44, -0.2);
+    root.add(chest);
+
+    const chestCore = new THREE.Mesh(
+      definition.id === "kairos"
+        ? new THREE.OctahedronGeometry(0.13, 0)
+        : new THREE.BoxGeometry(0.22, 0.1, 0.055),
+      accent,
+    );
+    chestCore.position.set(0, 1.48, -0.36);
+    root.add(chestCore);
+
+    const helmet = new THREE.Mesh(
+      new THREE.SphereGeometry(0.27, 12, 8),
+      armour,
+    );
+    helmet.scale.set(0.92, 1.05, 1);
+    helmet.position.y = 1.95;
+    root.add(helmet);
+
+    const visor = new THREE.Mesh(
+      new THREE.BoxGeometry(0.39, 0.075, 0.055),
+      accent,
+    );
+    visor.name = "agent-eye";
+    visor.position.set(0, 1.99, -0.245);
+    root.add(visor);
+
+    for (const side of [-1, 1] as const) {
+      const leg = new THREE.Group();
+      leg.name = side < 0 ? "agent-leg-left" : "agent-leg-right";
+      leg.position.set(side * 0.17, 0.88, 0);
+      const thigh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.14, 0.48, 7),
+        undersuit,
+      );
+      thigh.position.y = -0.25;
+      leg.add(thigh);
+      const knee = new THREE.Mesh(
+        new THREE.BoxGeometry(0.22, 0.18, 0.2),
+        accent,
+      );
+      knee.position.set(0, -0.52, -0.05);
+      leg.add(knee);
+      const shin = new THREE.Mesh(
+        new THREE.BoxGeometry(0.22, 0.46, 0.22),
+        armour,
+      );
+      shin.position.y = -0.76;
+      leg.add(shin);
+      const boot = new THREE.Mesh(
+        new THREE.BoxGeometry(0.22, 0.16, 0.34),
+        weaponMaterial,
+      );
+      boot.position.set(0, -1.02, -0.06);
+      leg.add(boot);
+      root.add(leg);
+
+      const arm = new THREE.Group();
+      arm.name = side < 0 ? "agent-arm-left" : "agent-arm-right";
+      arm.position.set(side * (definition.id === "forge" ? 0.51 : 0.43), 1.64, 0);
+      const shoulder = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, 0.25, 0.34),
+        side < 0 ? armour : accent,
+      );
+      shoulder.position.y = -0.04;
+      arm.add(shoulder);
+      const upper = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.1, 0.115, 0.42, 7),
+        undersuit,
+      );
+      upper.position.y = -0.3;
+      arm.add(upper);
+      const forearm = new THREE.Mesh(
+        new THREE.BoxGeometry(0.19, 0.38, 0.2),
+        armour,
+      );
+      forearm.position.set(0, -0.61, -0.03);
+      arm.add(forearm);
+      root.add(arm);
+    }
+
+    const backpack = new THREE.Mesh(
+      new THREE.BoxGeometry(
+        definition.id === "forge" ? 0.72 : 0.42,
+        definition.id === "forge" ? 0.66 : 0.52,
+        0.24,
+      ),
+      weaponMaterial,
+    );
+    backpack.position.set(0, 1.42, 0.25);
+    root.add(backpack);
+
     const weapon = new THREE.Group();
     weapon.name = "agent-weapon";
-    root.add(weapon);
-
+    weapon.position.set(0.28, 1.25, -0.48);
     if (definition.id === "kairos") {
-      const shell = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(0.38, 1),
-        darkMaterial,
+      const blade = new THREE.Mesh(
+        new THREE.BoxGeometry(0.13, 0.12, 1.25),
+        weaponMaterial,
       );
-      root.add(shell);
-      const core = new THREE.Mesh(
-        new THREE.SphereGeometry(0.18, 16, 10),
-        coreMaterial,
+      weapon.add(blade);
+      const timeEdge = new THREE.Mesh(
+        new THREE.BoxGeometry(0.035, 0.055, 1.05),
+        accent,
       );
-      core.position.z = -0.29;
-      root.add(core);
-      [
-        [0, 0, 0.58],
-        [Math.PI / 2, 0.35, 0.72],
-        [0.45, Math.PI / 2, 0.88],
-      ].forEach(([x, y, radius], index) => {
-        const orbit = new THREE.Mesh(
-          new THREE.TorusGeometry(radius, 0.035, 8, 42),
-          index === 0 ? coreMaterial : darkMaterial,
-        );
-        orbit.name = index === 0 ? "agent-ring" : "agent-rotor";
-        orbit.rotation.set(x, y, index * 0.5);
-        root.add(orbit);
-      });
-      for (let index = 0; index < 4; index += 1) {
-        const blade = new THREE.Mesh(
-          new THREE.ConeGeometry(0.17, 0.5, 4),
-          darkMaterial,
-        );
-        const angle = (index / 4) * Math.PI * 2;
-        blade.position.set(Math.cos(angle) * 0.62, 0, Math.sin(angle) * 0.62);
-        blade.rotation.z = Math.PI / 2;
-        blade.rotation.y = -angle;
-        root.add(blade);
-      }
+      timeEdge.position.y = 0.09;
+      weapon.add(timeEdge);
+      const clockRing = new THREE.Mesh(
+        new THREE.TorusGeometry(0.32, 0.025, 6, 24),
+        accent,
+      );
+      clockRing.name = "agent-ring";
+      clockRing.position.set(-0.58, 0.28, 0.1);
+      root.add(clockRing);
     } else if (definition.id === "kira") {
-      const chassis = new THREE.Mesh(
-        new THREE.ConeGeometry(0.44, 0.82, 5),
-        darkMaterial,
-      );
-      chassis.rotation.x = -Math.PI / 2;
-      chassis.position.z = 0.08;
-      root.add(chassis);
-      const eye = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, 0.07, 0.05),
-        coreMaterial,
-      );
-      eye.name = "agent-eye";
-      eye.position.set(0, 0.1, -0.42);
-      root.add(eye);
-      weapon.position.set(0, -0.18, -0.72);
       const rail = new THREE.Mesh(
-        new THREE.BoxGeometry(0.16, 0.18, 1.48),
-        darkMaterial,
+        new THREE.BoxGeometry(0.14, 0.16, 1.62),
+        weaponMaterial,
       );
       weapon.add(rail);
       const railCore = new THREE.Mesh(
-        new THREE.BoxGeometry(0.055, 0.07, 1.18),
-        coreMaterial,
+        new THREE.BoxGeometry(0.045, 0.055, 1.32),
+        accent,
       );
       railCore.position.y = 0.11;
       weapon.add(railCore);
-      for (const side of [-1, 1] as const) {
-        const wing = new THREE.Mesh(
-          new THREE.BoxGeometry(0.72, 0.08, 0.4),
-          darkMaterial,
-        );
-        wing.name =
-          side < 0 ? "agent-wing-left" : "agent-wing-right";
-        wing.position.set(side * 0.46, 0, 0.12);
-        wing.rotation.y = side * 0.18;
-        root.add(wing);
-      }
+      weapon.position.z = -0.62;
     } else if (definition.id === "forge") {
-      const chassis = new THREE.Mesh(
-        new THREE.BoxGeometry(0.9, 0.52, 0.78),
-        darkMaterial,
-      );
-      chassis.rotation.x = 0.06;
-      root.add(chassis);
-      const core = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.22, 0),
-        coreMaterial,
-      );
-      core.position.set(0, 0.02, -0.46);
-      root.add(core);
       for (const side of [-1, 1] as const) {
-        const pod = new THREE.Group();
-        pod.name = side < 0 ? "agent-wing-left" : "agent-wing-right";
-        pod.position.set(side * 0.57, 0.04, -0.1);
-        const housing = new THREE.Mesh(
-          new THREE.BoxGeometry(0.28, 0.34, 0.62),
-          darkMaterial,
+        const cannon = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.055, 0.07, 1.05, 8),
+          side < 0 ? weaponMaterial : accent,
         );
-        pod.add(housing);
-        for (const barrelX of [-0.07, 0.07]) {
-          const cannon = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.035, 0.045, 0.72, 8),
-            coreMaterial,
-          );
-          cannon.rotation.x = Math.PI / 2;
-          cannon.position.set(barrelX, 0, -0.62);
-          pod.add(cannon);
-        }
-        root.add(pod);
+        cannon.rotation.x = Math.PI / 2;
+        cannon.position.set(side * 0.18, 0, -0.15);
+        weapon.add(cannon);
       }
-      const rotor = new THREE.Mesh(
-        new THREE.TorusGeometry(0.47, 0.04, 8, 32),
-        coreMaterial,
-      );
-      rotor.name = "agent-rotor";
-      rotor.rotation.x = Math.PI / 2;
-      rotor.position.y = 0.34;
-      root.add(rotor);
+      weapon.position.set(0, 1.38, -0.55);
     } else {
-      const core = new THREE.Mesh(
-        new THREE.SphereGeometry(0.34, 16, 10),
-        coreMaterial,
+      const shield = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.42, 0.48, 0.12, 8),
+        accent,
       );
-      root.add(core);
-      const halo = new THREE.Mesh(
-        new THREE.TorusGeometry(0.65, 0.045, 8, 40),
-        coreMaterial,
+      shield.rotation.x = Math.PI / 2;
+      shield.position.set(-0.5, 0.08, 0);
+      weapon.add(shield);
+      const emitter = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.16, 0.8),
+        weaponMaterial,
       );
-      halo.name = "agent-ring";
-      halo.rotation.y = Math.PI / 2;
-      root.add(halo);
-      for (let index = 0; index < 4; index += 1) {
-        const plate = new THREE.Mesh(
-          new THREE.BoxGeometry(0.5, 0.52, 0.09),
-          darkMaterial,
-        );
-        const angle = (index / 4) * Math.PI * 2;
-        plate.position.set(Math.cos(angle) * 0.58, 0, Math.sin(angle) * 0.58);
-        plate.rotation.y = -angle;
-        plate.rotation.z = Math.PI / 4;
-        plate.name =
-          index === 0
-            ? "agent-wing-left"
-            : index === 2
-              ? "agent-wing-right"
-              : "";
-        root.add(plate);
-      }
-      const eye = new THREE.Mesh(
-        new THREE.BoxGeometry(0.34, 0.08, 0.05),
-        coreMaterial,
-      );
-      eye.name = "agent-eye";
-      eye.position.z = -0.34;
-      root.add(eye);
+      weapon.add(emitter);
     }
+    root.add(weapon);
 
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(0.78, 0.028, 8, 40),
-      coreMaterial,
+      accent,
     );
     ring.rotation.x = Math.PI / 2;
-    ring.position.y = -0.54;
+    ring.position.y = 0.035;
     ring.name = "agent-pad-ring";
-    root.add(ring);
+    group.add(ring);
 
     const agentPad = new THREE.Mesh(
       new THREE.RingGeometry(0.52, 0.68, 32),
@@ -1781,7 +1811,7 @@ class FreemanEngine {
       object.castShadow = true;
       object.receiveShadow = true;
     });
-    group.scale.setScalar(definition.id === "forge" ? 1.08 : 1.15);
+    group.scale.setScalar(definition.id === "forge" ? 0.92 : 0.88);
     return group;
   }
 
@@ -1801,40 +1831,40 @@ class FreemanEngine {
       }
     > = {
       virus: {
-        hp: 54,
-        speed: 2.1,
-        damage: 10,
+        hp: 24,
+        speed: 2.35,
+        damage: 7,
         range: 1.05,
         cooldown: 1.45,
-        reward: 14,
+        reward: 8,
         radius: 0.46,
         color: 0xa73d2d,
         scale: 1.02,
       },
       phisher: {
-        hp: 72,
-        speed: 1.35,
-        damage: 13,
+        hp: 52,
+        speed: 1.5,
+        damage: 10,
         range: 6,
         cooldown: 2.1,
-        reward: 20,
+        reward: 15,
         radius: 0.55,
         color: 0xb35d32,
         scale: 1.08,
       },
       trojan: {
-        hp: 138,
-        speed: 0.9,
-        damage: 22,
+        hp: 100,
+        speed: 1.05,
+        damage: 18,
         range: 1.45,
         cooldown: 2.4,
-        reward: 30,
+        reward: 24,
         radius: 0.82,
         color: 0x7b2923,
         scale: 1.26,
       },
       rootkit: {
-        hp: 560,
+        hp: 520,
         speed: 0.75,
         damage: 26,
         range: 2.1,
@@ -2030,9 +2060,8 @@ class FreemanEngine {
   private spawnWave(wave: number) {
     this.waveActive = true;
     this.waveEndClock = 0;
-    this.reinforcementsRemaining =
-      wave < 3 ? 0 : Math.min(3, Math.floor((wave - 1) / 2));
-    this.reinforcementClock = Math.max(7, 12 - wave * 0.45);
+    this.reinforcementsRemaining = Math.min(4, 1 + Math.floor(wave / 2));
+    this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
     this.spawnFormation(
       ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1],
     );
@@ -2058,7 +2087,8 @@ class FreemanEngine {
         (index / types.length) * Math.PI * 2 +
         this.wave * 0.38 +
         (index % 2) * 0.12;
-      const radius = type === "rootkit" ? 11 : 9.6 + (index % 3) * 1.25;
+      const radius =
+        type === "rootkit" ? SPAWN_RADIUS : SPAWN_RADIUS + (index % 4) * 1.1;
       this.createEnemy(
         type,
         new THREE.Vector3(
@@ -2104,6 +2134,7 @@ class FreemanEngine {
     this.keys.add(event.code);
     if (event.repeat) return;
     if (event.code === "Space") this.attack();
+    if (event.code === "KeyX") this.melee();
     if (event.code === "KeyQ" || event.code === "ShiftLeft") this.dash();
     if (event.code === "KeyR") this.ultimate();
     if (event.code === "KeyZ") this.rotateCamera(-1);
@@ -2133,10 +2164,15 @@ class FreemanEngine {
 
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
-    if (event.button === 2) {
+    if (event.button === 1) {
       this.dragPointer = event.pointerId;
       this.dragX = event.clientX;
       this.canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (event.button === 2) {
+      this.updateAim(event);
+      if (!this.placementActive) this.melee();
       return;
     }
     if (event.button === 0) {
@@ -2273,15 +2309,19 @@ class FreemanEngine {
       0,
       this.player.attackCooldown - delta,
     );
+    this.player.meleeCooldown = Math.max(
+      0,
+      this.player.meleeCooldown - delta,
+    );
     this.player.dashCooldown = Math.max(0, this.player.dashCooldown - delta);
     this.player.invulnerable = Math.max(0, this.player.invulnerable - delta);
 
     if (this.reinforcementsRemaining > 0) {
       this.reinforcementClock -= delta;
       if (this.reinforcementClock <= 0) {
-        this.reinforcementClock = Math.max(6.2, 10.5 - this.wave * 0.45);
+        this.reinforcementClock = Math.max(4, 6.6 - this.wave * 0.24);
         this.reinforcementsRemaining -= 1;
-        const count = Math.min(5, 1 + Math.floor(this.wave / 2));
+        const count = Math.min(10, 4 + this.wave);
         const types = Array.from({ length: count }, (_, index): EnemyType =>
           this.wave >= 6 && index === 0
             ? "trojan"
@@ -2302,6 +2342,7 @@ class FreemanEngine {
     if (
       this.waveActive &&
       this.enemies.length === 0 &&
+      this.reinforcementsRemaining === 0 &&
       this.waveEndClock === 0
     ) {
       this.waveActive = false;
@@ -2349,7 +2390,7 @@ class FreemanEngine {
         .normalize();
       this.lastMove.copy(movement);
       this.player.group.position.add(movement.multiplyScalar(delta * 4.8));
-      this.clampToArena(this.player.group.position, 11.8);
+      this.clampToArena(this.player.group.position, ARENA_RADIUS);
       this.faceDirection(this.player.group, this.lastMove);
     }
   }
@@ -2378,15 +2419,16 @@ class FreemanEngine {
         .add(
           new THREE.Vector3(
             Math.cos(angle) * radius,
-            agent.rig
-              ? 0.02
-              : 1.05 + Math.sin(this.elapsed * 2.3 + index) * 0.14,
+            0.02 +
+              (agent.rig
+                ? 0
+                : Math.abs(Math.sin(this.elapsed * 8 + index)) * 0.025),
             Math.sin(angle) * radius,
           ),
         );
       const flatTarget = new THREE.Vector2(targetPosition.x, targetPosition.z);
-      if (flatTarget.length() > 11.5) {
-        flatTarget.setLength(11.5);
+      if (flatTarget.length() > ARENA_RADIUS - 0.4) {
+        flatTarget.setLength(ARENA_RADIUS - 0.4);
         targetPosition.x = flatTarget.x;
         targetPosition.z = flatTarget.y;
       }
@@ -2415,9 +2457,24 @@ class FreemanEngine {
       if (eye) {
         eye.scale.x = 0.8 + Math.sin(this.elapsed * 5 + index) * 0.18;
       }
+      const stride = agent.moving
+        ? Math.sin(this.elapsed * 9.5 + index * 0.7)
+        : 0;
+      const leftLeg = agent.group.getObjectByName("agent-leg-left");
+      const rightLeg = agent.group.getObjectByName("agent-leg-right");
+      const leftArm = agent.group.getObjectByName("agent-arm-left");
+      const rightArm = agent.group.getObjectByName("agent-arm-right");
+      if (leftLeg) leftLeg.rotation.x = stride * 0.5;
+      if (rightLeg) rightLeg.rotation.x = -stride * 0.5;
+      if (leftArm) leftArm.rotation.x = -stride * 0.3 - 0.12;
+      if (rightArm) rightArm.rotation.x = stride * 0.22 - 0.2;
       agent.cooldownLeft = Math.max(0, agent.cooldownLeft - delta);
       agent.disabledLeft = Math.max(0, agent.disabledLeft - delta);
-      const activeScale = agent.rig ? 0.92 : 1.2;
+      const activeScale = agent.rig
+        ? 0.84
+        : agent.id === "forge"
+          ? 0.92
+          : 0.88;
       agent.group.scale.setScalar(
         agent.disabledLeft > 0 ? activeScale * 0.76 : activeScale,
       );
@@ -2457,7 +2514,7 @@ class FreemanEngine {
       if (!target || agent.cooldownLeft > 0) return;
       const origin = agent.group.position
         .clone()
-        .add(new THREE.Vector3(0, agent.rig ? 1.05 : 0, 0));
+        .add(new THREE.Vector3(0, agent.rig ? 1.05 : 1.25, 0));
       const direction = target.group.position
         .clone()
         .add(new THREE.Vector3(0, target.radius, 0))
@@ -2822,10 +2879,10 @@ class FreemanEngine {
       this.desiredCameraTarget,
       1 - Math.exp(-delta * 4.2),
     );
-    const distance = 19;
+    const distance = 23;
     const cameraOffset = new THREE.Vector3(
       Math.sin(this.yaw) * distance,
-      12.5,
+      15.5,
       Math.cos(this.yaw) * distance,
     );
     const shakeAmount =
@@ -3524,7 +3581,7 @@ class FreemanEngine {
     const width = Math.max(1, parent.clientWidth);
     const height = Math.max(1, parent.clientHeight);
     const aspect = width / height;
-    const viewHeight = 12.8 * this.zoom;
+    const viewHeight = 15.8 * this.zoom;
     this.camera.left = (-viewHeight * aspect) / 2;
     this.camera.right = (viewHeight * aspect) / 2;
     this.camera.top = viewHeight / 2;
@@ -3669,6 +3726,7 @@ class FreemanCanvasEngine implements GameController {
     maxHp: 100,
     damage: 25,
     attackCooldown: 0,
+    meleeCooldown: 0,
     dashCooldown: 0,
     ultimate: 0,
     invulnerable: 0,
@@ -3759,6 +3817,7 @@ class FreemanCanvasEngine implements GameController {
     this.player.hp = this.player.maxHp = 100;
     this.player.damage = 25;
     this.player.attackCooldown = 0;
+    this.player.meleeCooldown = 0;
     this.player.dashCooldown = 0;
     this.player.ultimate = 0;
     this.player.invulnerable = 0;
@@ -3771,7 +3830,7 @@ class FreemanCanvasEngine implements GameController {
       eyebrow: "WAVE 1 STARTED",
       title: "DEFEND THE CORE",
       detail:
-        "Move with WASD. Aim with the mouse. Click or press Space to shoot.",
+        "Move with WASD. Left-click to shoot. Right-click to slash nearby viruses.",
     });
     this.emitHud(true);
   }
@@ -3921,6 +3980,57 @@ class FreemanCanvasEngine implements GameController {
     this.audio.play("attack");
   }
 
+  melee() {
+    if (this.mode !== "playing" || this.player.meleeCooldown > 0) return;
+    const target = this.resolveAim();
+    let dx = target.x - this.player.x;
+    let dz = target.z - this.player.z;
+    const aimLength = Math.hypot(dx, dz);
+    if (aimLength < 0.01) {
+      dx = this.lastMove.x;
+      dz = this.lastMove.z;
+    } else {
+      dx /= aimLength;
+      dz /= aimLength;
+    }
+    this.player.meleeCooldown = 0.62;
+    let hits = 0;
+    for (const enemy of [...this.enemies]) {
+      const offsetX = enemy.x - this.player.x;
+      const offsetZ = enemy.z - this.player.z;
+      const distance = Math.hypot(offsetX, offsetZ);
+      if (distance > 2.65 + enemy.radius) continue;
+      const facing =
+        distance < 0.2
+          ? 1
+          : (offsetX / distance) * dx + (offsetZ / distance) * dz;
+      if (facing < -0.12) continue;
+      hits += 1;
+      this.damageEnemy(enemy, 46 * this.attackMultiplier);
+      enemy.x += dx * 0.42;
+      enemy.z += dz * 0.42;
+      this.addBeam(
+        this.player.x,
+        this.player.z,
+        enemy.x,
+        enemy.z,
+        0xffb277,
+        0.16,
+      );
+    }
+    const slashX = this.player.x + dx * 1.15;
+    const slashZ = this.player.z + dz * 1.15;
+    this.addRing(slashX, slashZ, 0xffb277, 0.3, 2.5, 0.3);
+    this.addBurst(
+      slashX,
+      slashZ,
+      hits > 0 ? 0xffd2ad : 0xd9793f,
+      hits > 0 ? 13 : 7,
+    );
+    this.shake = Math.max(this.shake, hits > 0 ? 0.22 : 0.08);
+    this.audio.play("attack");
+  }
+
   dash() {
     if (this.mode !== "playing" || this.player.dashCooldown > 0) return;
     let dx = this.lastMove.x;
@@ -3936,7 +4046,7 @@ class FreemanCanvasEngine implements GameController {
     const startZ = this.player.z;
     this.player.x += dx * 3.6;
     this.player.z += dz * 3.6;
-    this.clampToArena(this.player, 11.8);
+    this.clampToArena(this.player, ARENA_RADIUS);
     this.player.dashCooldown = 3;
     this.player.invulnerable = 0.34;
     this.addBeam(startX, startZ, this.player.x, this.player.z, 0xd9793f, 0.28);
@@ -4041,34 +4151,34 @@ class FreemanCanvasEngine implements GameController {
 
   private createBuildings() {
     const result: FreemanCanvasEngine["buildings"] = [];
-    for (let x = -16; x <= 16; x += 4) {
-      const index = (x + 16) / 4;
+    for (let x = -20; x <= 20; x += 4) {
+      const index = (x + 20) / 4;
       result.push({
         x,
-        z: -16,
+        z: -22,
         width: 2.1 + (index % 3) * 0.35,
         depth: 2.1 + (index % 2) * 0.4,
         height: 2.4 + ((index * 17) % 6) * 0.6,
       });
       result.push({
         x,
-        z: 16,
+        z: 22,
         width: 2.2 + ((index + 1) % 3) * 0.3,
         depth: 2.2,
         height: 2.8 + ((index * 11) % 5) * 0.68,
       });
     }
-    for (let z = -12; z <= 12; z += 4) {
-      const index = (z + 12) / 4;
+    for (let z = -18; z <= 18; z += 4) {
+      const index = (z + 18) / 4;
       result.push({
-        x: -16,
+        x: -22,
         z,
         width: 2.35,
         depth: 2.1 + (index % 3) * 0.28,
         height: 2.2 + ((index * 13) % 6) * 0.55,
       });
       result.push({
-        x: 16,
+        x: 22,
         z,
         width: 2.2,
         depth: 2.2 + (index % 2) * 0.35,
@@ -4111,6 +4221,7 @@ class FreemanCanvasEngine implements GameController {
     this.keys.add(event.code);
     if (event.repeat) return;
     if (event.code === "Space") this.attack();
+    if (event.code === "KeyX") this.melee();
     if (event.code === "KeyQ" || event.code === "ShiftLeft") this.dash();
     if (event.code === "KeyR") this.ultimate();
     if (event.code === "KeyZ") this.rotateCamera(-1);
@@ -4144,10 +4255,15 @@ class FreemanCanvasEngine implements GameController {
 
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
-    if (event.button === 2) {
+    if (event.button === 1) {
       this.dragPointer = event.pointerId;
       this.dragX = event.clientX;
       this.canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (event.button === 2) {
+      this.updateAim(event);
+      if (!this.placementActive) this.melee();
       return;
     }
     if (event.button === 0) {
@@ -4221,15 +4337,19 @@ class FreemanCanvasEngine implements GameController {
       0,
       this.player.attackCooldown - delta,
     );
+    this.player.meleeCooldown = Math.max(
+      0,
+      this.player.meleeCooldown - delta,
+    );
     this.player.dashCooldown = Math.max(0, this.player.dashCooldown - delta);
     this.player.invulnerable = Math.max(0, this.player.invulnerable - delta);
 
     if (this.reinforcementsRemaining > 0) {
       this.reinforcementClock -= delta;
       if (this.reinforcementClock <= 0) {
-        this.reinforcementClock = Math.max(6.2, 10.5 - this.wave * 0.45);
+        this.reinforcementClock = Math.max(4, 6.6 - this.wave * 0.24);
         this.reinforcementsRemaining -= 1;
-        const count = Math.min(5, 1 + Math.floor(this.wave / 2));
+        const count = Math.min(10, 4 + this.wave);
         for (let index = 0; index < count; index += 1) {
           const angle =
             (index / count) * Math.PI * 2 + this.elapsed * 0.17 + this.wave;
@@ -4239,7 +4359,11 @@ class FreemanCanvasEngine implements GameController {
               : index % 3 === 0
                 ? "phisher"
                 : "virus";
-          this.createEnemy(type, Math.cos(angle) * 11, Math.sin(angle) * 11);
+          this.createEnemy(
+            type,
+            Math.cos(angle) * SPAWN_RADIUS,
+            Math.sin(angle) * SPAWN_RADIUS,
+          );
         }
         this.callbacks.onToast({
           eyebrow: "HORDE REINFORCEMENT",
@@ -4253,6 +4377,7 @@ class FreemanCanvasEngine implements GameController {
     if (
       this.waveActive &&
       this.enemies.length === 0 &&
+      this.reinforcementsRemaining === 0 &&
       this.waveEndClock === 0
     ) {
       this.waveActive = false;
@@ -4297,7 +4422,7 @@ class FreemanCanvasEngine implements GameController {
     this.lastMove.z = dz;
     this.player.x += dx * delta * 4.8;
     this.player.z += dz * delta * 4.8;
-    this.clampToArena(this.player, 11.8);
+    this.clampToArena(this.player, ARENA_RADIUS);
   }
 
   private updateAgents(delta: number) {
@@ -4328,9 +4453,9 @@ class FreemanCanvasEngine implements GameController {
       let targetX = anchorX + Math.cos(angle) * radius;
       let targetZ = anchorZ + Math.sin(angle) * radius;
       const targetLength = Math.hypot(targetX, targetZ);
-      if (targetLength > 11.5) {
-        targetX = (targetX / targetLength) * 11.5;
-        targetZ = (targetZ / targetLength) * 11.5;
+      if (targetLength > ARENA_RADIUS - 0.4) {
+        targetX = (targetX / targetLength) * (ARENA_RADIUS - 0.4);
+        targetZ = (targetZ / targetLength) * (ARENA_RADIUS - 0.4);
       }
       const ease = 1 - Math.exp(-delta * (agent.id === "forge" ? 5 : 4));
       agent.x += (targetX - agent.x) * ease;
@@ -4646,14 +4771,14 @@ class FreemanCanvasEngine implements GameController {
   private spawnWave(wave: number) {
     this.waveActive = true;
     this.waveEndClock = 0;
-    this.reinforcementsRemaining =
-      wave < 3 ? 0 : Math.min(3, Math.floor((wave - 1) / 2));
-    this.reinforcementClock = Math.max(7, 12 - wave * 0.45);
+    this.reinforcementsRemaining = Math.min(4, 1 + Math.floor(wave / 2));
+    this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
     const types = ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1];
     types.forEach((type, index) => {
       const angle =
         (index / types.length) * Math.PI * 2 + wave * 0.38 + (index % 2) * 0.12;
-      const radius = type === "rootkit" ? 11 : 9.6 + (index % 3) * 1.25;
+      const radius =
+        type === "rootkit" ? SPAWN_RADIUS : SPAWN_RADIUS + (index % 4) * 1.1;
       this.createEnemy(
         type,
         Math.cos(angle) * radius,
@@ -4694,37 +4819,37 @@ class FreemanCanvasEngine implements GameController {
       >
     > = {
       virus: {
-        hp: 54,
-        speed: 2.1,
-        damage: 10,
+        hp: 24,
+        speed: 2.35,
+        damage: 7,
         range: 1.05,
         attackCooldown: 1.45,
         telegraphTotal: 0.6,
-        reward: 14,
+        reward: 8,
         radius: 0.46,
       },
       phisher: {
-        hp: 72,
-        speed: 1.35,
-        damage: 13,
+        hp: 52,
+        speed: 1.5,
+        damage: 10,
         range: 6,
         attackCooldown: 2.1,
         telegraphTotal: 0.82,
-        reward: 20,
+        reward: 15,
         radius: 0.55,
       },
       trojan: {
-        hp: 138,
-        speed: 0.9,
-        damage: 22,
+        hp: 100,
+        speed: 1.05,
+        damage: 18,
         range: 1.45,
         attackCooldown: 2.4,
         telegraphTotal: 0.72,
-        reward: 30,
+        reward: 24,
         radius: 0.82,
       },
       rootkit: {
-        hp: 560,
+        hp: 520,
         speed: 0.75,
         damage: 26,
         range: 2.1,
@@ -5071,7 +5196,7 @@ class FreemanCanvasEngine implements GameController {
     const sine = Math.sin(this.yaw);
     const cameraSpaceX = cosine * dx - sine * dz;
     const cameraSpaceZ = sine * dx + cosine * dz;
-    const scale = Math.min(this.width, this.height) / (20 * this.zoom);
+    const scale = Math.min(this.width, this.height) / (25 * this.zoom);
     return {
       x: this.width / 2 + cameraSpaceX * scale + shakeX,
       y: this.height * 0.49 + cameraSpaceZ * scale * 0.55 - y * scale + shakeY,
@@ -5081,7 +5206,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private unproject(screenX: number, screenY: number) {
-    const scale = Math.min(this.width, this.height) / (20 * this.zoom);
+    const scale = Math.min(this.width, this.height) / (25 * this.zoom);
     const cameraSpaceX = (screenX - this.width / 2) / scale;
     const cameraSpaceZ = (screenY - this.height * 0.49) / (scale * 0.55);
     const cosine = Math.cos(this.yaw);
@@ -5160,9 +5285,9 @@ class FreemanCanvasEngine implements GameController {
     const context = this.context;
     context.save();
     context.lineWidth = 1;
-    for (let value = -20; value <= 20; value += 2) {
-      const horizontalStart = this.project(-20, value);
-      const horizontalEnd = this.project(20, value);
+    for (let value = -28; value <= 28; value += 2) {
+      const horizontalStart = this.project(-28, value);
+      const horizontalEnd = this.project(28, value);
       context.beginPath();
       context.moveTo(horizontalStart.x, horizontalStart.y);
       context.lineTo(horizontalEnd.x, horizontalEnd.y);
@@ -5170,8 +5295,8 @@ class FreemanCanvasEngine implements GameController {
         value === 0 ? "rgba(240,138,75,.42)" : "rgba(120,190,202,.16)";
       context.stroke();
 
-      const verticalStart = this.project(value, -20);
-      const verticalEnd = this.project(value, 20);
+      const verticalStart = this.project(value, -28);
+      const verticalEnd = this.project(value, 28);
       context.beginPath();
       context.moveTo(verticalStart.x, verticalStart.y);
       context.lineTo(verticalEnd.x, verticalEnd.y);
@@ -5555,122 +5680,108 @@ class FreemanCanvasEngine implements GameController {
 
   private drawAgent(agent: FlatAgent) {
     const context = this.context;
-    const point = this.project(
-      agent.x,
-      agent.z,
-      1.05 + Math.sin(this.elapsed * 2.3 + Number(agent.code)) * 0.14,
-    );
-    const size = point.scale * (agent.id === "forge" ? 0.42 : 0.36);
+    const floor = this.project(agent.x, agent.z, 0);
+    const hips = this.project(agent.x, agent.z, 0.82);
+    const chest = this.project(agent.x, agent.z, 1.38);
+    const head = this.project(agent.x, agent.z, 1.92);
+    const size = floor.scale * (agent.id === "forge" ? 0.44 : 0.38);
+    const stride = Math.sin(this.elapsed * 9 + Number(agent.code)) * size * 0.16;
+    const target = this.getNearestEnemy(agent.x, agent.z, agent.range + 4);
+    const aim = target
+      ? this.project(target.x, target.z, 0.8)
+      : this.project(this.player.x, this.player.z, 0.8);
+    let dx = aim.x - chest.x;
+    let dy = aim.y - chest.y;
+    const aimLength = Math.hypot(dx, dy) || 1;
+    dx /= aimLength;
+    dy /= aimLength;
+    const px = -dy;
+    const py = dx;
+
     context.save();
     context.shadowColor = toCssColor(agent.color);
-    context.shadowBlur = 24;
-    context.strokeStyle = toCssColor(agent.color);
-    context.lineWidth = 2;
+    context.shadowBlur = 16;
+    context.strokeStyle = "#29363c";
+    context.lineCap = "round";
+    context.lineWidth = Math.max(3, size * 0.22);
 
-    if (agent.id === "kairos") {
-      context.fillStyle = "#172126";
-      context.beginPath();
-      context.arc(point.x, point.y, size * 0.62, 0, Math.PI * 2);
-      context.fill();
-      context.stroke();
-      context.fillStyle = toCssColor(agent.color);
-      context.beginPath();
-      context.arc(point.x, point.y, size * 0.24, 0, Math.PI * 2);
-      context.fill();
-      for (const [rx, ry, rotation] of [
-        [1.3, 0.42, 0],
-        [1.05, 0.34, Math.PI / 3],
-        [0.95, 0.3, -Math.PI / 3],
-      ] as const) {
-        context.beginPath();
-        context.ellipse(
-          point.x,
-          point.y,
-          size * rx,
-          size * ry,
-          rotation + this.elapsed * 0.25,
-          0,
-          Math.PI * 2,
-        );
-        context.stroke();
-      }
-    } else if (agent.id === "kira") {
-      context.fillStyle = "#182329";
-      context.beginPath();
-      context.moveTo(point.x, point.y - size * 0.9);
-      context.lineTo(point.x + size * 0.85, point.y + size * 0.62);
-      context.lineTo(point.x, point.y + size * 0.35);
-      context.lineTo(point.x - size * 0.85, point.y + size * 0.62);
-      context.closePath();
-      context.fill();
-      context.stroke();
-      context.fillStyle = "#0b1115";
-      context.fillRect(
-        point.x - size * 0.13,
-        point.y + size * 0.2,
-        size * 0.26,
-        size * 1.65,
-      );
-      context.fillStyle = toCssColor(agent.color);
-      context.fillRect(
-        point.x - size * 0.38,
-        point.y - size * 0.18,
-        size * 0.76,
-        Math.max(2, size * 0.13),
-      );
-    } else if (agent.id === "forge") {
-      context.fillStyle = "#1a252b";
-      context.beginPath();
-      context.roundRect(
-        point.x - size,
-        point.y - size * 0.62,
-        size * 2,
-        size * 1.24,
-        size * 0.18,
-      );
-      context.fill();
-      context.stroke();
-      context.fillStyle = toCssColor(agent.color);
-      context.beginPath();
-      context.arc(point.x, point.y, size * 0.27, 0, Math.PI * 2);
-      context.fill();
-      context.lineWidth = Math.max(3, size * 0.18);
-      for (const side of [-1, 1] as const) {
-        context.beginPath();
-        context.moveTo(point.x + side * size * 0.58, point.y);
-        context.lineTo(point.x + side * size * 0.58, point.y + size * 1.35);
-        context.stroke();
-      }
-    } else {
-      context.fillStyle = "#172126";
-      context.beginPath();
-      context.arc(point.x, point.y, size * 0.48, 0, Math.PI * 2);
-      context.fill();
-      context.stroke();
-      context.fillStyle = toCssColor(agent.color);
-      context.beginPath();
-      context.arc(point.x, point.y, size * 0.2, 0, Math.PI * 2);
-      context.fill();
-      for (let index = 0; index < 4; index += 1) {
-        const angle = (index / 4) * Math.PI * 2 + this.elapsed * 0.4;
-        const x = point.x + Math.cos(angle) * size * 0.9;
-        const y = point.y + Math.sin(angle) * size * 0.55;
-        context.save();
-        context.translate(x, y);
-        context.rotate(angle + Math.PI / 4);
-        context.fillStyle = "#26373e";
-        context.fillRect(-size * 0.25, -size * 0.25, size * 0.5, size * 0.5);
-        context.restore();
-      }
-    }
+    context.beginPath();
+    context.moveTo(hips.x - size * 0.18, hips.y);
+    context.lineTo(floor.x - size * 0.2 + stride, floor.y);
+    context.moveTo(hips.x + size * 0.18, hips.y);
+    context.lineTo(floor.x + size * 0.2 - stride, floor.y);
+    context.stroke();
+
+    context.fillStyle = agent.id === "forge" ? "#30343a" : "#202a2f";
+    context.strokeStyle = toCssColor(agent.color);
+    context.lineWidth = Math.max(1.5, size * 0.06);
+    context.beginPath();
+    context.moveTo(chest.x - size * 0.62, chest.y - size * 0.42);
+    context.lineTo(chest.x + size * 0.62, chest.y - size * 0.42);
+    context.lineTo(hips.x + size * 0.38, hips.y + size * 0.15);
+    context.lineTo(hips.x - size * 0.38, hips.y + size * 0.15);
+    context.closePath();
+    context.fill();
+    context.stroke();
+
+    context.fillStyle = toCssColor(agent.color);
+    context.fillRect(
+      chest.x - size * 0.16,
+      chest.y - size * 0.24,
+      size * 0.32,
+      size * 0.15,
+    );
+
+    context.fillStyle = "#1a2429";
+    context.beginPath();
+    context.arc(head.x, head.y, size * 0.34, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.shadowBlur = 12;
+    context.strokeStyle = toCssColor(agent.color);
+    context.lineWidth = Math.max(2, size * 0.08);
+    context.beginPath();
+    context.moveTo(head.x - size * 0.24, head.y);
+    context.lineTo(head.x + size * 0.24, head.y);
+    context.stroke();
 
     context.shadowBlur = 0;
+    context.strokeStyle = "#27343a";
+    context.lineWidth = Math.max(3, size * 0.18);
+    context.beginPath();
+    context.moveTo(chest.x - px * size * 0.42, chest.y - py * size * 0.42);
+    context.lineTo(chest.x + dx * size * 0.52, chest.y + dy * size * 0.52);
+    context.moveTo(chest.x + px * size * 0.42, chest.y + py * size * 0.42);
+    context.lineTo(chest.x + dx * size * 0.34, chest.y + dy * size * 0.34);
+    context.stroke();
+
+    const weaponLength =
+      agent.id === "kira" ? 1.8 : agent.id === "forge" ? 1.45 : 1.25;
+    context.strokeStyle = "#0a1013";
+    context.lineWidth =
+      agent.id === "forge"
+        ? Math.max(5, size * 0.24)
+        : Math.max(3, size * 0.13);
+    context.beginPath();
+    context.moveTo(
+      chest.x + dx * size * 0.2,
+      chest.y + dy * size * 0.2,
+    );
+    context.lineTo(
+      chest.x + dx * size * weaponLength,
+      chest.y + dy * size * weaponLength,
+    );
+    context.stroke();
+    context.strokeStyle = toCssColor(agent.color);
+    context.lineWidth = Math.max(1.5, size * 0.045);
+    context.stroke();
+
     context.strokeStyle = toCssColor(agent.color);
     context.lineWidth = 1.5;
     context.beginPath();
     context.ellipse(
-      point.x,
-      point.y + size * 1.05,
+      floor.x,
+      floor.y + size * 0.1,
       size * 1.18,
       size * 0.36,
       0,
@@ -6407,6 +6518,16 @@ export default function FreemanProtocol() {
             </button>
             <button
               type="button"
+              className="ability ability--melee"
+              onClick={() => engineRef.current?.melee()}
+              disabled={mode !== "playing"}
+              aria-label="Slash nearby enemies"
+            >
+              <small>RMB / X</small>
+              <strong>SLASH</strong>
+            </button>
+            <button
+              type="button"
               className={`ability ability--ultimate ${hud.ultimate >= 1 ? "is-ready" : ""}`}
               onClick={() => engineRef.current?.ultimate()}
               disabled={mode !== "playing" || hud.ultimate < 1}
@@ -6472,7 +6593,7 @@ export default function FreemanProtocol() {
             </p>
             <p>
               <small>CONTROLS</small>
-              <strong>WASD TO MOVE · CLICK TO SHOOT</strong>
+              <strong>WASD MOVE · LEFT CLICK SHOOTS · RIGHT CLICK SLASHES</strong>
             </p>
             <p>
               <small>YOUR TEAM</small>
@@ -6482,7 +6603,7 @@ export default function FreemanProtocol() {
 
           <footer className="intro-footer">
             <span>NO DOWNLOAD · DESKTOP + TOUCH</span>
-            <span>MOVE · SHOOT · RECRUIT · SURVIVE</span>
+            <span>MOVE · SHOOT · SLASH · RECRUIT · SURVIVE</span>
           </footer>
         </section>
       )}
@@ -6605,8 +6726,12 @@ export default function FreemanProtocol() {
               <b>Move</b>
             </span>
             <span>
-              <kbd>CLICK / SPACE</kbd>
+              <kbd>LEFT CLICK / SPACE</kbd>
               <b>Shoot</b>
+            </span>
+            <span>
+              <kbd>RIGHT CLICK / X</kbd>
+              <b>Slash nearby enemies</b>
             </span>
             <span>
               <kbd>Q / SHIFT</kbd>
@@ -6629,7 +6754,7 @@ export default function FreemanProtocol() {
               <b>Change agent behaviour</b>
             </span>
             <span>
-              <kbd>RIGHT DRAG</kbd>
+              <kbd>MIDDLE DRAG</kbd>
               <b>Rotate camera</b>
             </span>
             <span>
