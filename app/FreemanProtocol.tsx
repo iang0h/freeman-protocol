@@ -3581,7 +3581,9 @@ class FreemanEngine {
     const width = Math.max(1, parent.clientWidth);
     const height = Math.max(1, parent.clientHeight);
     const aspect = width / height;
-    const viewHeight = 15.8 * this.zoom;
+    const portraitPullback =
+      aspect < 0.58 ? 1.5 : aspect < 0.78 ? 1.28 : aspect < 1 ? 1.12 : 1;
+    const viewHeight = 15.8 * this.zoom * portraitPullback;
     this.camera.left = (-viewHeight * aspect) / 2;
     this.camera.right = (viewHeight * aspect) / 2;
     this.camera.top = viewHeight / 2;
@@ -6161,6 +6163,7 @@ export default function FreemanProtocol() {
   const [toast, setToast] = useState<ToastState | null>(null);
   const [muted, setMuted] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -6246,6 +6249,10 @@ export default function FreemanProtocol() {
           aria-label={`Encounter ${hud.wave} of ${TOTAL_WAVES}`}
         >
           <span>WAVE</span>
+          <b className="mobile-only">
+            {String(hud.wave).padStart(2, "0")}/
+            {String(TOTAL_WAVES).padStart(2, "0")}
+          </b>
           {Array.from({ length: TOTAL_WAVES }, (_, index) => index + 1).map(
             (wave) => (
               <i
@@ -6413,7 +6420,22 @@ export default function FreemanProtocol() {
             </button>
           </aside>
 
-          <section className="agent-dock" aria-label="AI agent recruitment">
+          <section
+            className={`agent-dock ${mobileSquadOpen ? "is-mobile-open" : ""}`}
+            aria-label="AI agent recruitment"
+          >
+            <button
+              type="button"
+              className="mobile-squad-toggle"
+              onClick={() => setMobileSquadOpen((open) => !open)}
+              aria-expanded={mobileSquadOpen}
+              aria-controls="mobile-squad-panel"
+            >
+              <span>
+                AI TEAM <b>{recruitedCount}/4</b>
+              </span>
+              <strong>{mobileSquadOpen ? "CLOSE" : "MANAGE"}</strong>
+            </button>
             <div className="agent-dock__heading">
               <span>
                 <small>YOUR AI TEAM</small>
@@ -6423,7 +6445,11 @@ export default function FreemanProtocol() {
               </span>
               <span className="desktop-only">CLICK A CARD OR PRESS 1–4</span>
             </div>
-            <div className="squad-commands" aria-label="AI squad orders">
+            <div
+              id="mobile-squad-panel"
+              className="squad-commands"
+              aria-label="AI squad orders"
+            >
               <span>
                 <small>SQUAD ORDERS</small>
                 <strong>CHOOSE HOW YOUR AGENTS FIGHT</strong>
