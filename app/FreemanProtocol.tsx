@@ -985,7 +985,7 @@ class FreemanEngine {
   }
 
   recruit(id: AgentId) {
-    if (!canPerformTutorialAction(this.tutorialStep, "recruit-kairos") && id === "kairos") return;
+    if (!canPerformTutorialAction(this.tutorialStep, `recruit-${id}`)) return;
     if (this.mode !== "playing") return;
     if (this.addAgent(id, { charge: true, notify: true }) && id === "kairos") {
       this.emitTutorialEvent("kairos-recruited");
@@ -4661,7 +4661,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   recruit(id: AgentId) {
-    if (!canPerformTutorialAction(this.tutorialStep, "recruit-kairos") && id === "kairos") return;
+    if (!canPerformTutorialAction(this.tutorialStep, `recruit-${id}`)) return;
     if (this.mode !== "playing") return;
     if (this.addAgent(id, { charge: true, notify: true }) && id === "kairos") {
       this.emitTutorialEvent("kairos-recruited");

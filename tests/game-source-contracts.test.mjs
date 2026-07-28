@@ -141,11 +141,11 @@ test("tutorial events are phase-gated instead of queued", () => {
   assert.match(webglGame, /this\.tutorialResolved = true;/);
 });
 
-test("both engines reject early tutorial recruit and guard actions before mutating state", () => {
+test("both engines keep 79 Compute unchanged when KIRA is attempted during the KAIROS step", () => {
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
       engine,
-      /recruit\(id: AgentId\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, "recruit-kairos"\) && id === "kairos"\) return;[\s\S]*?this\.addAgent/,
+      /recruit\(id: AgentId\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, `recruit-\$\{id\}`\)\) return;\s*if \(this\.mode !== "playing"\) return;[\s\S]*?this\.addAgent/,
     );
     assert.match(
       engine,

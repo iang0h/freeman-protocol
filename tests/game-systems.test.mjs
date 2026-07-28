@@ -207,11 +207,14 @@ test("tutorial milestones are phase-gated and never replayed later", () => {
   assert.equal(advanceTutorial("command", "guard-selected"), "observe");
 });
 
-test("early tutorial recruit and guard actions do not spend or poison later objectives", () => {
+test("tutorial action gates only allow the required recruitment and let GUARD CORE be restored during observe", () => {
   assert.equal(canPerformTutorialAction("move", "recruit-kairos"), false);
-  assert.equal(canPerformTutorialAction("shoot", "guard-core"), false);
   assert.equal(canPerformTutorialAction("recruit", "recruit-kairos"), true);
+  assert.equal(canPerformTutorialAction("recruit", "recruit-other"), false);
+  assert.equal(canPerformTutorialAction("observe", "recruit-kairos"), false);
+  assert.equal(canPerformTutorialAction("shoot", "guard-core"), false);
   assert.equal(canPerformTutorialAction("command", "guard-core"), true);
+  assert.equal(canPerformTutorialAction("observe", "guard-core"), true);
   assert.equal(canPerformTutorialAction(null, "recruit-kairos"), true);
 });
 

@@ -31,3 +31,26 @@ test("safe storage retains an in-memory value when browser storage throws", () =
     else Reflect.deleteProperty(globalThis, "localStorage");
   }
 });
+
+test("safe storage reads this session's fallback after a failed browser write", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const key = `storage-stale-browser-${Date.now()}`;
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem() {
+        return "stale-browser-value";
+      },
+      setItem() {
+        throw new Error("quota exceeded");
+      },
+    },
+  });
+  try {
+    writeStoredValue(key, "session-fallback");
+    assert.equal(readStoredValue(key, "missing"), "session-fallback");
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "localStorage", descriptor);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});

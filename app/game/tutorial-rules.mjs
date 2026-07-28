@@ -19,8 +19,7 @@ const TRANSITIONS = Object.freeze({
 });
 
 const TUTORIAL_ACTION_STEPS = Object.freeze({
-  "recruit-kairos": "recruit",
-  "guard-core": "command",
+  "guard-core": Object.freeze(["command", "observe"]),
 });
 
 export const FIRST_WAVE = Object.freeze({
@@ -48,7 +47,10 @@ export function advanceTutorial(step, event) {
 
 export function canPerformTutorialAction(step, action) {
   if (!isTutorialProtected(step)) return true;
-  return TUTORIAL_ACTION_STEPS[action] === step;
+  if (action.startsWith("recruit-")) {
+    return step === "recruit" && action === "recruit-kairos";
+  }
+  return TUTORIAL_ACTION_STEPS[action]?.includes(step) ?? false;
 }
 
 export function isTutorialProtected(step) {

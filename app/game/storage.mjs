@@ -9,6 +9,7 @@ const browserStorage = () => {
 };
 
 export function readStoredValue(key, fallback = null) {
+  if (memoryStorage.has(key)) return memoryStorage.get(key);
   try {
     const value = browserStorage()?.getItem(key);
     if (value !== null && value !== undefined) return value;
