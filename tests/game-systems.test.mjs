@@ -34,6 +34,14 @@ import {
   canCollectLoot,
   rollLootDrop,
 } from "../app/game/loot-rules.mjs";
+import {
+  AGENT_ROLES,
+  clearSubAgents,
+  decideAgentIntent,
+  shouldImprovise,
+  spawnTemporarySubAgent,
+  tickSubAgents,
+} from "../app/game/autonomy-rules.mjs";
 
 test("paces queued enemies without changing the remaining threat total", () => {
   assert.equal(getActiveEnemyLimit("webgl"), 36);
@@ -334,6 +342,98 @@ test("invalid loot is rejected", () => {
     () => applyLootPickup({}, { type: "malware", value: 1 }),
     /Unknown loot type/,
   );
+});
+
+test("autonomous agents use their role priorities when not improvising", () => {
+  assert.equal(AGENT_ROLES.assault.priority, "assault");
+  assert.equal(AGENT_ROLES.support.priority, "support");
+  assert.equal(AGENT_ROLES.defend.priority, "defend");
+  assert.equal(decideAgentIntent({ role: "assault" }, {}), "assault");
+  assert.equal(decideAgentIntent({ role: "support" }, {}), "support");
+  assert.equal(decideAgentIntent({ role: "defend" }, {}), "defend");
+});
+
+test("each role has a deterministic improvisation threshold", () => {
+  assert.equal(
+    shouldImprovise({ role: "assault" }, { enemyDensity: 6 }),
+    true,
+  );
+  assert.equal(
+    shouldImprovise({ role: "assault" }, { enemyDensity: 5 }),
+    false,
+  );
+  assert.equal(
+    shouldImprovise({ role: "support" }, { playerHealthRatio: 0.45 }),
+    true,
+  );
+  assert.equal(
+    shouldImprovise({ role: "support" }, { playerHealthRatio: 0.46 }),
+    false,
+  );
+  assert.equal(
+    shouldImprovise({ role: "defend" }, { wavePressure: 0.75 }),
+    true,
+  );
+  assert.equal(
+    shouldImprovise({ role: "defend" }, { wavePressure: 0.74 }),
+    false,
+  );
+  assert.equal(
+    decideAgentIntent({ role: "defend" }, { wavePressure: 0.75 }),
+    "improvise",
+  );
+});
+
+test("temporary sub-agents are capped and cannot spawn recursively", () => {
+  const agent = { id: "kairos", role: "assault" };
+  const context = {
+    enemyDensity: 6,
+    activeSubAgents: 2,
+    maxSubAgents: 3,
+    subAgentLifetimeMs: 5_000,
+  };
+  assert.deepEqual(spawnTemporarySubAgent(agent, context), {
+    id: "subagent-kairos-3",
+    parentId: "kairos",
+    role: "assault",
+    remainingMs: 5_000,
+    canSpawn: false,
+  });
+  assert.equal(
+    spawnTemporarySubAgent(agent, { ...context, activeSubAgents: 3 }),
+    null,
+  );
+  assert.equal(
+    spawnTemporarySubAgent({ ...agent, canSpawn: false }, context),
+    null,
+  );
+});
+
+test("temporary sub-agents expire and are cleared between waves", () => {
+  const subAgents = [
+    {
+      parentId: "kairos",
+      role: "assault",
+      remainingMs: 1_000,
+      canSpawn: false,
+    },
+    {
+      parentId: "kira",
+      role: "support",
+      remainingMs: 250,
+      canSpawn: false,
+    },
+  ];
+  assert.deepEqual(tickSubAgents(subAgents, 250), [
+    {
+      parentId: "kairos",
+      role: "assault",
+      remainingMs: 750,
+      canSpawn: false,
+    },
+  ]);
+  assert.deepEqual(clearSubAgents(subAgents), []);
+  assert.equal(subAgents.length, 2);
 });
 
 function sequence(values) {
