@@ -40,6 +40,17 @@ import {
   repairTurret,
   tickRepairBay,
 } from "./game/repair-rules.mjs";
+import {
+  AGENT_SKILLS,
+  canUseSkill,
+  getSlowMovementMultiplier,
+  useSkill as activateAgentSkill,
+} from "./game/skill-rules.mjs";
+import {
+  getBossArmorMultiplier,
+  getBossEncounter,
+  tickBoss,
+} from "./game/boss-rules.mjs";
 import { normalizeStickInput, tapToFire } from "./game/input-rules.mjs";
 import {
   applyLootPickup,
@@ -93,6 +104,11 @@ type AgentId =
   | "kairos" | "kira" | "forge" | "covenant"
   | "relay" | "scout" | "warden" | "nova";
 type EvolutionAgentId = "kairos" | "kira" | "forge" | "covenant";
+type AgentSkillId =
+  | "time-fracture"
+  | "mark-execution"
+  | "armor-break-burst"
+  | "repair-barrier";
 type SquadCommand = "auto" | "follow" | "defend" | "focus";
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type UpgradeId =
@@ -134,6 +150,61 @@ type LootRecord = {
   radius?: number;
 };
 type LootCounters = { repairs: number; components: number; shards: number };
+type BossState = {
+  id: string;
+  kind: string;
+  label: string;
+  wave: number;
+  scheduled: boolean;
+  count: number;
+  maxActive: number;
+  hp: number;
+  maxHp: number;
+  armored: boolean;
+  armorReduction: number;
+  movementSpeed: number;
+  attackIntervalMs: number;
+  attacksPerSecond: number;
+  attackCooldownLeftMs: number;
+  telegraphMs: number;
+  telegraphLeftMs: number;
+  attackDamage: number;
+  attackRadius: number;
+  pendingTargetId: string | number | null;
+  pendingTargetKind: "agent" | "turret" | null;
+  attackCount: number;
+  reinforcementCap: number;
+  reinforcementsSpawned: number;
+  reinforcementTriggered: boolean;
+  rewards: { compute: number; components: number; shards: number };
+  rewardQuantity: number;
+  rewardClaimed: boolean;
+};
+type AgentSkillEffect = {
+  type:
+    | "time-fracture"
+    | "mark"
+    | "damage"
+    | "armor-break"
+    | "suppressive-burst"
+    | "repair"
+    | "barrier";
+  targetId: string | number;
+  radius: number;
+  durationMs: number;
+  damageMultiplier: number;
+  amount: number;
+  executes: boolean;
+  slowMs: number;
+  slowMultiplier: number;
+  damage: number;
+};
+type AgentSkillHud = {
+  id: AgentSkillId;
+  label: string;
+  cooldownMs: number;
+  cooldownLeftMs: number;
+};
 
 type FirstWaveCheckpoint = {
   data: number;
@@ -194,6 +265,13 @@ type HudState = {
   tutorialStep: TutorialStep | null;
   canRetryWave: boolean;
   loot: LootCounters;
+  skills: Record<EvolutionAgentId, AgentSkillHud>;
+  boss: {
+    label: string;
+    hp: number;
+    maxHp: number;
+    telegraphLeftMs: number;
+  } | null;
 };
 
 type ToastState = {
@@ -219,6 +297,7 @@ interface GameController {
   setSfxVolume(value: number): void;
   togglePause(): void;
   recruit(id: AgentId): void;
+  useAgentSkill(id: EvolutionAgentId): void;
   buildDefense(): void;
   beginManualDefensePlacement(): void;
   setSquadCommand(command: SquadCommand): void;
@@ -265,6 +344,9 @@ type AgentRuntime = AgentDefinition & {
   moving: boolean;
   gatheringCooldownMs: number;
   gatheringTargetId: string | null;
+  skillCooldownLeftMs: number;
+  barrier: number;
+  barrierLeft: number;
 };
 
 type TemporarySubAgent = {
@@ -302,6 +384,8 @@ type DefenseRuntime = {
   maxHp: number;
   cooldownLeft: number;
   index: number;
+  barrier: number;
+  barrierLeft: number;
 };
 
 type EnemyRuntime = {
@@ -323,12 +407,18 @@ type EnemyRuntime = {
   reward: number;
   radius: number;
   slow: number;
+  slowMultiplier: number;
   bossPhase: number;
   hitFlash: number;
   tutorial: boolean;
   resistanceFlags: ResistanceFlag[];
   decoyOwnerId: number | null;
   decoyLeft: number;
+  markedLeft: number;
+  markMultiplier: number;
+  armorBrokenLeft: number;
+  bossState: BossState | null;
+  bossVisual: THREE.Group | null;
 };
 
 type ProjectileRuntime = {
@@ -561,6 +651,12 @@ const EMPTY_EVOLUTIONS: Evolutions = {
   kairos: null, kira: null, forge: null, covenant: null,
 };
 const EMPTY_COMPONENT_UPGRADE_RANKS: ComponentUpgradeRanks = {};
+const createInitialSkillHud = (): Record<EvolutionAgentId, AgentSkillHud> => ({
+  kairos: { ...AGENT_SKILLS.kairos, cooldownLeftMs: 0 },
+  kira: { ...AGENT_SKILLS.kira, cooldownLeftMs: 0 },
+  forge: { ...AGENT_SKILLS.forge, cooldownLeftMs: 0 },
+  covenant: { ...AGENT_SKILLS.covenant, cooldownLeftMs: 0 },
+});
 const getArmorBonuses = (armorId: PlayerArmorId | null): ArmorBonuses =>
   armorId ? PLAYER_ARMORS[armorId].bonuses : {};
 const getComponentRank = (
@@ -627,6 +723,8 @@ const INITIAL_HUD: HudState = {
   tutorialStep: null,
   canRetryWave: false,
   loot: { repairs: 0, components: 0, shards: 0 },
+  skills: createInitialSkillHud(),
+  boss: null,
 };
 
 const TUTORIAL_COPY: Record<
@@ -656,6 +754,47 @@ const TUTORIAL_COPY: Record<
 };
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+function createBossTelegraphVisual() {
+  const group = new THREE.Group();
+  group.name = "pooled-boss-telegraph";
+  const fill = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 48),
+    new THREE.MeshBasicMaterial({
+      color: 0xd94b35,
+      transparent: true,
+      opacity: 0.12,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  );
+  fill.name = "boss-telegraph-fill";
+  fill.rotation.x = -Math.PI / 2;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.92, 1, 48),
+    new THREE.MeshBasicMaterial({
+      color: 0xff8a68,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  );
+  ring.name = "boss-telegraph-ring";
+  ring.rotation.x = -Math.PI / 2;
+  group.add(fill, ring);
+  resetBossTelegraphVisual(group);
+  return group;
+}
+
+function resetBossTelegraphVisual(group: THREE.Group) {
+  group.visible = false;
+  group.position.set(0, 0.04, 0);
+  group.rotation.set(0, 0, 0);
+  group.scale.setScalar(1);
+  group.userData.targetId = null;
+  group.removeFromParent();
+}
 
 // Kept as a compact fallback reference while the streamed manager rolls out.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -867,6 +1006,7 @@ class FreemanEngine {
   private readonly projectilePool = new BoundedPool<THREE.Mesh>(128);
   private readonly lootPool = new BoundedPool<THREE.Group>(48);
   private readonly temporarySubAgentPool = new BoundedPool<THREE.Group>(32);
+  private readonly bossTelegraphPool = new BoundedPool<THREE.Group>(2);
   private readonly pickups: LootRuntime[] = [];
   private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly aimPoint = new THREE.Vector3(0, 0, -4);
@@ -1286,6 +1426,163 @@ class FreemanEngine {
     }
   }
 
+  useAgentSkill(id: EvolutionAgentId) {
+    if (this.mode !== "playing") return;
+    const agent = this.agents.find((candidate) => candidate.id === id);
+    const skill = AGENT_SKILLS[id];
+    if (!agent || !skill) return;
+    const enemyTarget = id === "covenant" ? null : this.getPriorityEnemy();
+    const supportTarget = id === "covenant"
+      ? [
+          ...this.agents.map((candidate) => ({
+            id: candidate.id,
+            kind: "agent" as const,
+            hp: candidate.hp,
+            maxHp: candidate.maxHp,
+          })),
+          ...this.defenses.map((candidate) => ({
+            id: String(candidate.index),
+            kind: "turret" as const,
+            hp: candidate.hp,
+            maxHp: candidate.maxHp,
+          })),
+        ].filter((candidate) => candidate.hp > 0)
+          .sort(
+            (left, right) =>
+              left.hp / left.maxHp - right.hp / right.maxHp ||
+              String(left.id).localeCompare(String(right.id)),
+          )[0] ?? null
+      : null;
+    const target = enemyTarget
+      ? {
+          id: enemyTarget.id,
+          kind: "enemy",
+          hp: enemyTarget.hp,
+          maxHp: enemyTarget.maxHp,
+          armored: enemyTarget.resistanceFlags.includes("armor"),
+        }
+      : supportTarget;
+    const source = {
+      id: agent.id,
+      hp: agent.hp,
+      maxHp: agent.maxHp,
+      disabledLeftMs: agent.disabledLeft * 1_000,
+      skillCooldowns: { [skill.id]: agent.skillCooldownLeftMs },
+    };
+    if (!canUseSkill(source, skill.id, { target })) return;
+    const result = activateAgentSkill(source, skill.id, { target });
+    agent.skillCooldownLeftMs = result.agent.skillCooldowns[skill.id];
+
+    for (const effect of result.effects as AgentSkillEffect[]) {
+      if (effect.type === "time-fracture" && enemyTarget) {
+        for (const threat of this.enemyGrid.query(
+          enemyTarget.group.position,
+          effect.radius,
+        )) {
+          threat.slow = Math.max(threat.slow, effect.durationMs / 1_000);
+          threat.slowMultiplier = Math.min(
+            threat.slowMultiplier,
+            effect.slowMultiplier,
+          );
+        }
+        this.addRing(
+          enemyTarget.group.position,
+          agent.color,
+          0.2,
+          effect.radius,
+          0.72,
+          "portal",
+        );
+      }
+      if (effect.type === "mark" && enemyTarget) {
+        enemyTarget.markedLeft = effect.durationMs / 1_000;
+        enemyTarget.markMultiplier = effect.damageMultiplier;
+      }
+      if (effect.type === "damage" && enemyTarget) {
+        this.damageEnemy(
+          enemyTarget,
+          effect.amount,
+          enemyTarget.group.position,
+          effect.executes,
+        );
+      }
+      if (effect.type === "armor-break" && enemyTarget) {
+        enemyTarget.armorBrokenLeft = effect.durationMs / 1_000;
+      }
+      if (effect.type === "suppressive-burst" && enemyTarget) {
+        for (const threat of this.enemyGrid.query(
+          enemyTarget.group.position,
+          effect.radius,
+        )) {
+          threat.slow = Math.max(threat.slow, effect.slowMs / 1_000);
+          threat.slowMultiplier = Math.min(
+            threat.slowMultiplier,
+            effect.slowMultiplier,
+          );
+          this.damageEnemy(
+            threat,
+            effect.damage,
+            enemyTarget.group.position,
+            true,
+          );
+        }
+        this.addRing(
+          enemyTarget.group.position,
+          agent.color,
+          0.2,
+          effect.radius,
+          0.58,
+          "portal",
+        );
+      }
+      if ((effect.type === "repair" || effect.type === "barrier") && target) {
+        const targetAgent = target.kind === "agent"
+          ? this.agents.find((candidate) => candidate.id === target.id)
+          : null;
+        const targetDefense = target.kind === "turret"
+          ? this.defenses.find(
+              (candidate) => String(candidate.index) === target.id,
+            )
+          : null;
+        if (effect.type === "repair") {
+          if (targetAgent) {
+            targetAgent.hp = Math.min(
+              targetAgent.maxHp,
+              targetAgent.hp + effect.amount,
+            );
+          }
+          if (targetDefense) {
+            targetDefense.hp = Math.min(
+              targetDefense.maxHp,
+              targetDefense.hp + effect.amount,
+            );
+          }
+        } else {
+          if (targetAgent) {
+            targetAgent.barrier = effect.amount;
+            targetAgent.barrierLeft = effect.durationMs / 1_000;
+          }
+          if (targetDefense) {
+            targetDefense.barrier = effect.amount;
+            targetDefense.barrierLeft = effect.durationMs / 1_000;
+          }
+        }
+        const position = targetAgent?.group.position ?? targetDefense?.group.position;
+        if (position) {
+          this.addRing(position, agent.color, 0.15, 1.8, 0.55, "portal");
+          this.addBeam(agent.group.position, position, agent.color, 0.42);
+        }
+      }
+    }
+    this.audio.play("ultimate");
+    this.callbacks.onToast({
+      eyebrow: `${agent.name} SKILL DEPLOYED`,
+      title: skill.label,
+      detail: `${Math.round(skill.cooldownMs / 1_000)} second cooldown started.`,
+    });
+    this.emitHud(true);
+  }
+
   private addAgent(
     id: AgentId,
     options: { charge: boolean; notify: boolean },
@@ -1339,6 +1636,9 @@ class FreemanEngine {
       moving: false,
       gatheringCooldownMs: 0,
       gatheringTargetId: null,
+      skillCooldownLeftMs: 0,
+      barrier: 0,
+      barrierLeft: 0,
     };
     this.agents.push(runtime);
     if (options.notify) {
@@ -1686,6 +1986,9 @@ class FreemanEngine {
     this.projectilePool.clear((mesh) => this.disposeDynamicObject(mesh));
     this.lootPool.clear((mesh) => this.disposeDynamicObject(mesh));
     this.temporarySubAgentPool.clear((marker) =>
+      this.disposeDynamicObject(marker),
+    );
+    this.bossTelegraphPool.clear((marker) =>
       this.disposeDynamicObject(marker),
     );
     this.scene.traverse((object) => {
@@ -2562,6 +2865,7 @@ class FreemanEngine {
       damage?: number;
       reward?: number;
       decoyOwnerId?: number;
+      bossState?: BossState;
     } = {},
   ) {
     const definitions: Record<
@@ -2624,13 +2928,23 @@ class FreemanEngine {
       },
     };
     const definition = definitions[type];
+    const bossState = options.bossState
+      ? { ...options.bossState, rewards: { ...options.bossState.rewards } }
+      : null;
     const resistanceFlags: ResistanceFlag[] =
       options.tutorial || options.decoyOwnerId
       ? []
       : [...this.encounterModifiers.flagsByType[type]] as ResistanceFlag[];
+    if (bossState && !resistanceFlags.includes("armor")) {
+      resistanceFlags.push("armor");
+    }
     const group = new THREE.Group();
     group.position.copy(position);
-    group.name = options.decoyOwnerId ? "enemy-decoy-target" : "enemy-threat";
+    group.name = bossState
+      ? "pooled-warboss"
+      : options.decoyOwnerId
+        ? "enemy-decoy-target"
+        : "enemy-threat";
 
     const material = new THREE.MeshStandardMaterial({
       color: definition.color,
@@ -2784,6 +3098,10 @@ class FreemanEngine {
     );
     healthFill.position.z = 0.01;
     healthBar.add(healthBack, healthFill);
+    if (bossState) {
+      healthBar.scale.x = 2.35;
+      healthBar.position.y = definition.radius * 2.25 + 0.82;
+    }
     group.add(healthBar);
 
     resistanceFlags.forEach((flag, index) => {
@@ -2807,14 +3125,23 @@ class FreemanEngine {
     });
 
     this.scene.add(group);
+    const bossVisual = bossState
+      ? this.bossTelegraphPool.acquire(createBossTelegraphVisual)
+      : null;
+    if (bossVisual) {
+      resetBossTelegraphVisual(bossVisual);
+      this.scene.add(bossVisual);
+    }
     const healthScale =
       1 + (this.wave - 1) * (type === "rootkit" ? 0.12 : 0.09);
     const damageScale = 1 + (this.wave - 1) * 0.055;
     const speedScale = 1 + Math.min(0.28, (this.wave - 1) * 0.035);
     const attackRateScale = Math.max(0.72, 1 - (this.wave - 1) * 0.035);
-    const scaledHp = options.decoyOwnerId
-      ? 1
-      : Math.round(definition.hp * healthScale);
+    const scaledHp = bossState
+      ? bossState.maxHp
+      : options.decoyOwnerId
+        ? 1
+        : Math.round(definition.hp * healthScale);
     const enemy: EnemyRuntime = {
       id: ++this.enemySequence,
       type,
@@ -2826,29 +3153,47 @@ class FreemanEngine {
       maxHp: scaledHp,
       speed: options.decoyOwnerId
         ? 0
-        : options.speed ?? definition.speed * speedScale,
+        : options.speed ?? bossState?.movementSpeed ?? definition.speed * speedScale,
       damage:
         options.damage ??
+        bossState?.attackDamage ??
         Math.round(
           definition.damage *
             damageScale *
             (this.wave === 1 ? FIRST_WAVE.damageMultiplier : 1),
         ),
-      range: definition.range,
-      attackCooldown: definition.cooldown * attackRateScale,
-      cooldownLeft: options.decoyOwnerId ? 0 : 0.4 + Math.random() * 0.8,
+      range: bossState?.attackRadius ?? definition.range,
+      attackCooldown:
+        bossState ? bossState.attackIntervalMs / 1_000 : definition.cooldown * attackRateScale,
+      cooldownLeft: bossState
+        ? bossState.attackCooldownLeftMs / 1_000
+        : options.decoyOwnerId
+          ? 0
+          : 0.4 + Math.random() * 0.8,
       telegraphLeft: 0,
       telegraphTotal:
-        type === "phisher" ? 0.82 : type === "rootkit" ? 1.05 : 0.6,
-      reward: options.reward ?? definition.reward,
+        bossState
+          ? bossState.telegraphMs / 1_000
+          : type === "phisher"
+            ? 0.82
+            : type === "rootkit"
+              ? 1.05
+              : 0.6,
+      reward: options.reward ?? bossState?.rewards.compute ?? definition.reward,
       radius: definition.radius,
       slow: 0,
-      bossPhase: type === "rootkit" ? 1 : 0,
+      slowMultiplier: 0.48,
+      bossPhase: bossState ? 0 : type === "rootkit" ? 1 : 0,
       hitFlash: 0,
       tutorial: options.tutorial ?? false,
       resistanceFlags,
       decoyOwnerId: options.decoyOwnerId ?? null,
       decoyLeft: options.decoyOwnerId ? 4.2 : 0,
+      markedLeft: 0,
+      markMultiplier: 1,
+      armorBrokenLeft: 0,
+      bossState,
+      bossVisual,
     };
     this.enemies.push(enemy);
     this.addRing(
@@ -2987,8 +3332,22 @@ class FreemanEngine {
       this.scheduledReinforcementThreats =
         this.reinforcementsRemaining * Math.min(10, 4 + wave);
       this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
+      const boss = getBossEncounter(wave, `mission-wave-${wave}`);
+      if (boss.scheduled) {
+        const angle = wave * 0.71 + this.terrain.spawnAngleOffset;
+        this.createEnemy(
+          "rootkit",
+          new THREE.Vector3(
+            Math.cos(angle) * SPAWN_RADIUS,
+            0,
+            Math.sin(angle) * SPAWN_RADIUS,
+          ),
+          { bossState: boss },
+        );
+      }
       this.spawnFormation(
-        ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1],
+        (ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1])
+          .filter((type) => type !== "rootkit"),
       );
     }
     if (wave === 4 || wave === 7) {
@@ -3002,7 +3361,7 @@ class FreemanEngine {
       this.callbacks.onToast({
         eyebrow: "FINAL BREACH",
         title: "ROOTKIT PRIME HAS ENTERED",
-        detail: "Survive all three boss phases and protect the Core.",
+        detail: "Break its armor, evade telegraphed strikes, and protect the Core.",
       });
     }
   }
@@ -3728,6 +4087,12 @@ class FreemanEngine {
       if (leftArm) leftArm.rotation.x = -stride * 0.3 - 0.12;
       if (rightArm) rightArm.rotation.x = stride * 0.22 - 0.2;
       agent.cooldownLeft = Math.max(0, agent.cooldownLeft - delta);
+      agent.skillCooldownLeftMs = Math.max(
+        0,
+        agent.skillCooldownLeftMs - delta * 1_000,
+      );
+      agent.barrierLeft = Math.max(0, agent.barrierLeft - delta);
+      if (agent.barrierLeft === 0) agent.barrier = 0;
       const activeScale = agent.rig
         ? 0.84
         : agent.id === "forge"
@@ -3919,6 +4284,8 @@ class FreemanEngine {
 
   private updateDefenses(delta: number) {
     for (const defense of this.defenses) {
+      defense.barrierLeft = Math.max(0, defense.barrierLeft - delta);
+      if (defense.barrierLeft === 0) defense.barrier = 0;
       defense.healthBar.quaternion.copy(this.camera.quaternion);
       const healthRatio = clamp01(defense.hp / defense.maxHp);
       defense.healthFill.scale.x = Math.max(0.001, healthRatio);
@@ -3954,10 +4321,124 @@ class FreemanEngine {
     }
   }
 
+  private updateBossEnemy(enemy: EnemyRuntime, delta: number) {
+    if (!enemy.bossState) return;
+    const result = tickBoss(
+      { ...enemy.bossState, hp: enemy.hp },
+      delta * 1_000,
+      {
+        targets: [
+          ...this.agents.map((agent) => ({
+            id: agent.id,
+            kind: "agent",
+            hp: agent.hp,
+            x: agent.group.position.x,
+            z: agent.group.position.z,
+          })),
+          ...this.defenses.map((defense) => ({
+            id: String(defense.index),
+            kind: "turret",
+            hp: defense.hp,
+            x: defense.group.position.x,
+            z: defense.group.position.z,
+          })),
+        ],
+        enemyCapacity: Math.max(
+          0,
+          this.activeEnemyLimit - this.enemies.length,
+        ),
+      },
+    );
+    enemy.bossState = result.boss;
+    enemy.telegraphLeft = result.boss.telegraphLeftMs / 1_000;
+    enemy.telegraphTotal = result.boss.telegraphMs / 1_000;
+
+    for (const event of result.events) {
+      if (event.type === "telegraph" && enemy.bossVisual) {
+        const targetAgent = event.targetKind === "agent"
+          ? this.agents.find((candidate) => candidate.id === event.targetId)
+          : null;
+        const targetDefense = event.targetKind === "turret"
+          ? this.defenses.find(
+              (candidate) => String(candidate.index) === event.targetId,
+            )
+          : null;
+        const position = targetAgent?.group.position ?? targetDefense?.group.position;
+        if (position) {
+          enemy.bossVisual.position.copy(position).setY(0.04);
+          enemy.bossVisual.userData.targetId = event.targetId;
+          enemy.bossVisual.visible = true;
+        }
+      }
+      if (event.type === "damage") {
+        if (event.targetKind === "agent") {
+          const target = this.agents.find(
+            (candidate) => candidate.id === event.targetId,
+          );
+          if (target) this.damageAgent(target, event.amount);
+        }
+        if (event.targetKind === "turret") {
+          const target = this.defenses.find(
+            (candidate) => String(candidate.index) === event.targetId,
+          );
+          if (target) this.damageDefense(target, event.amount);
+        }
+      }
+      if (event.type === "reinforcement") {
+        this.spawnFormation(
+          Array.from(
+            { length: event.count },
+            (_, index): EnemyType => index % 2 === 0 ? "virus" : "phisher",
+          ),
+        );
+      }
+    }
+
+    if (enemy.bossVisual) {
+      enemy.bossVisual.visible = result.boss.telegraphLeftMs > 0;
+      if (enemy.bossVisual.visible) {
+        const pulse = 1 + Math.sin(this.elapsed * 9) * 0.08;
+        enemy.bossVisual.scale.setScalar(result.boss.attackRadius * pulse);
+        enemy.bossVisual.rotation.y += delta * 0.9;
+      }
+    }
+
+    enemy.body.rotation.y += delta * 0.32;
+    enemy.body.position.y =
+      enemy.radius + Math.sin(this.elapsed * 1.25 + enemy.id) * 0.04;
+    enemy.healthBar.quaternion.copy(this.camera.quaternion);
+    const targetAgent = this.agents.find(
+      (candidate) => candidate.id === result.boss.pendingTargetId,
+    ) ?? this.agents.find((candidate) => candidate.hp > 0);
+    const targetDefense = this.defenses.find(
+      (candidate) => String(candidate.index) === result.boss.pendingTargetId,
+    ) ?? this.defenses.find((candidate) => candidate.hp > 0);
+    const targetPosition = targetAgent?.group.position ?? targetDefense?.group.position;
+    if (targetPosition && result.boss.telegraphLeftMs === 0) {
+      const direction = targetPosition.clone().sub(enemy.group.position).setY(0);
+      const distance = direction.length();
+      if (distance > result.boss.attackRadius * 0.86 && distance > 0.001) {
+        const slowFactor = getSlowMovementMultiplier(
+          enemy.slow * 1_000,
+          enemy.slowMultiplier,
+        );
+        enemy.group.position.add(
+          direction
+            .normalize()
+            .multiplyScalar(delta * enemy.speed * slowFactor),
+        );
+        this.faceDirection(enemy.group, direction);
+      }
+    }
+  }
+
   private updateEnemies(delta: number) {
     for (const enemy of [...this.enemies]) {
       enemy.cooldownLeft = Math.max(0, enemy.cooldownLeft - delta);
       enemy.slow = Math.max(0, enemy.slow - delta);
+      if (enemy.slow === 0) enemy.slowMultiplier = 0.48;
+      enemy.markedLeft = Math.max(0, enemy.markedLeft - delta);
+      enemy.armorBrokenLeft = Math.max(0, enemy.armorBrokenLeft - delta);
       enemy.hitFlash = Math.max(0, enemy.hitFlash - delta);
       if (enemy.decoyOwnerId !== null) {
         enemy.decoyLeft -= delta;
@@ -3968,6 +4449,10 @@ class FreemanEngine {
           this.disposeDynamicObject(enemy.group);
           this.enemies.splice(this.enemies.indexOf(enemy), 1);
         }
+        continue;
+      }
+      if (enemy.bossState) {
+        this.updateBossEnemy(enemy, delta);
         continue;
       }
       const enemyMaterial = enemy.body.material as THREE.MeshStandardMaterial;
@@ -4241,7 +4726,10 @@ class FreemanEngine {
       }
 
       if (distance > Math.max(0.75, enemy.range * 0.86)) {
-        const slowFactor = enemy.slow > 0 ? 0.48 : 1;
+        const slowFactor = getSlowMovementMultiplier(
+          enemy.slow * 1_000,
+          enemy.slowMultiplier,
+        );
         position.add(
           direction.multiplyScalar(delta * enemy.speed * slowFactor),
         );
@@ -4308,6 +4796,7 @@ class FreemanEngine {
         if (distance > projectile.radius + enemy.radius) continue;
         if (projectile.slow > 0) {
           enemy.slow = Math.max(enemy.slow, projectile.slow);
+          enemy.slowMultiplier = Math.min(enemy.slowMultiplier, 0.48);
         }
         this.damageEnemy(enemy, projectile.damage, projectile.mesh.position);
         this.removeProjectile(projectile);
@@ -4501,19 +4990,29 @@ class FreemanEngine {
   }
 
   private damageAgent(agent: AgentRuntime, damage: number) {
+    const absorbed = Math.min(agent.barrier, Math.max(0, damage));
+    agent.barrier -= absorbed;
+    const resolvedDamage = Math.max(0, damage - absorbed);
     const damaged = applyUnitDamage(
       { hp: agent.hp, maxHp: agent.maxHp, disabledLeftMs: agent.disabledLeft * 1_000 },
-      damage,
+      resolvedDamage,
     );
     agent.hp = damaged.hp;
     agent.disabledLeft = damaged.disabledLeftMs / 1_000;
     this.triggerRig(agent.rig, "hit", 0.28);
-    this.addDamageNumber(agent.group.position.clone().add(new THREE.Vector3(0, 2.2, 0)), `-${Math.round(damage)}`, 0xff8a68);
+    this.addDamageNumber(
+      agent.group.position.clone().add(new THREE.Vector3(0, 2.2, 0)),
+      absorbed > 0 ? `BARRIER ${Math.round(absorbed)}` : `-${Math.round(resolvedDamage)}`,
+      absorbed > 0 ? 0x9ed8dd : 0xff8a68,
+    );
     this.addBurst(agent.group.position.clone().add(new THREE.Vector3(0, 0.8, 0)), 0xb7422e, 6);
   }
 
   private damageDefense(defense: DefenseRuntime, damage: number) {
-    const damaged = applyUnitDamage(defense, damage);
+    const absorbed = Math.min(defense.barrier, Math.max(0, damage));
+    defense.barrier -= absorbed;
+    const resolvedDamage = Math.max(0, damage - absorbed);
+    const damaged = applyUnitDamage(defense, resolvedDamage);
     defense.hp = damaged.hp;
     this.addDamageNumber(defense.group.position.clone().add(new THREE.Vector3(0, 1.8, 0)), `-${Math.round(damage)}`, 0xff8a68);
     this.addBurst(defense.group.position.clone().add(new THREE.Vector3(0, 0.7, 0)), 0xb7422e, 6);
@@ -4569,12 +5068,21 @@ class FreemanEngine {
     bypassArmor = false,
   ) {
     if (!this.enemies.includes(enemy)) return;
+    const markedDamage =
+      enemy.markedLeft > 0 ? damage * enemy.markMultiplier : damage;
     const armoured =
       !bypassArmor &&
+      enemy.armorBrokenLeft <= 0 &&
       enemy.resistanceFlags.includes("armor") &&
-      enemy.hp > enemy.maxHp * 0.45;
-    const appliedDamage = armoured ? damage * 0.42 : damage;
+      (enemy.bossState !== null || enemy.hp > enemy.maxHp * 0.45);
+    const armorMultiplier = enemy.bossState
+      ? getBossArmorMultiplier(enemy.bossState, enemy.armorBrokenLeft > 0)
+      : 0.42;
+    const appliedDamage = armoured
+      ? markedDamage * armorMultiplier
+      : markedDamage;
     enemy.hp -= appliedDamage;
+    if (enemy.bossState) enemy.bossState.hp = enemy.hp;
     enemy.hitFlash = 0.11;
     this.addDamageNumber(
       enemy.group.position
@@ -4614,6 +5122,28 @@ class FreemanEngine {
     this.audio.play("hit");
     if (enemy.hp > 0) return;
     const deathPosition = enemy.group.position.clone();
+    if (enemy.bossState) {
+      const reward = tickBoss(
+        { ...enemy.bossState, hp: 0 },
+        0,
+        { targets: [] },
+      );
+      const rewardState = reward.boss as BossState;
+      enemy.bossState = rewardState;
+      this.callbacks.onToast({
+        eyebrow: "WARBOSS CONTAINED",
+        title: "RARE PROTOCOL SHARDS DROPPED",
+        detail: `${rewardState.rewards.components} Components · ${rewardState.rewards.shards} Shards are recoverable in the arena.`,
+      });
+    }
+    if (enemy.bossVisual) {
+      this.bossTelegraphPool.release(
+        enemy.bossVisual,
+        resetBossTelegraphVisual,
+        (visual) => this.disposeDynamicObject(visual),
+      );
+      enemy.bossVisual = null;
+    }
     this.disposeDynamicObject(enemy.group);
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
     if (enemy.decoyOwnerId !== null) {
@@ -4629,8 +5159,27 @@ class FreemanEngine {
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
-    const drop = rollLootDrop(enemy.type, Math.random);
-    if (drop) {
+    const drops = enemy.bossState
+      ? [
+          {
+            id: `boss-component-${enemy.id}`,
+            type: "component" as LootType,
+            x: -0.65,
+            y: 0,
+            value: enemy.bossState.rewards.components,
+          },
+          {
+            id: `boss-shard-${enemy.id}`,
+            type: "upgrade-shard" as LootType,
+            x: 0.65,
+            y: 0,
+            value: enemy.bossState.rewards.shards,
+          },
+        ]
+      : [rollLootDrop(enemy.type, Math.random)].filter(
+          (drop): drop is NonNullable<typeof drop> => Boolean(drop),
+        );
+    for (const drop of drops) {
       const mesh = this.lootPool.acquire(() => createLootPickupMesh(drop.type));
       resetLootPickupMesh(mesh, drop.type);
       const pickup: LootRuntime = {
@@ -5108,6 +5657,8 @@ class FreemanEngine {
       maxHp: 100,
       cooldownLeft: 0.35,
       index,
+      barrier: 0,
+      barrierLeft: 0,
     });
     if (options.notify) {
       this.addRing(group.position, 0x9ed8dd, 0.2, 2.4, 0.7, "portal");
@@ -5238,7 +5789,17 @@ class FreemanEngine {
   private clearDynamic() {
     this.clearTemporarySubAgents();
     this.clearTerrainOverlay();
-    for (const enemy of this.enemies) this.disposeDynamicObject(enemy.group);
+    for (const enemy of this.enemies) {
+      if (enemy.bossVisual) {
+        this.bossTelegraphPool.release(
+          enemy.bossVisual,
+          resetBossTelegraphVisual,
+          (visual) => this.disposeDynamicObject(visual),
+        );
+        enemy.bossVisual = null;
+      }
+      this.disposeDynamicObject(enemy.group);
+    }
     for (const agent of this.agents) this.disposeDynamicObject(agent.group);
     for (const defense of this.defenses) this.disposeDynamicObject(defense.group);
     while (this.projectiles.length > 0) {
@@ -5327,6 +5888,12 @@ class FreemanEngine {
     if (!force && this.hudClock > 0) return;
     const recruited = (id: AgentId) =>
       this.agents.some((agent) => agent.id === id);
+    const skills = createInitialSkillHud();
+    for (const id of Object.keys(skills) as EvolutionAgentId[]) {
+      const agent = this.agents.find((candidate) => candidate.id === id);
+      skills[id].cooldownLeftMs = agent?.skillCooldownLeftMs ?? 0;
+    }
+    const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
     this.callbacks.onHud({
       hp: Math.round(this.player.hp),
       maxHp: Math.round(this.player.maxHp),
@@ -5380,6 +5947,15 @@ class FreemanEngine {
       terrainLabel: this.terrain.label,
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
+      skills,
+      boss: boss
+        ? {
+            label: boss.label,
+            hp: Math.max(0, Math.round(boss.hp)),
+            maxHp: boss.maxHp,
+            telegraphLeftMs: boss.telegraphLeftMs,
+          }
+        : null,
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
         wave: this.wave,
@@ -5408,11 +5984,16 @@ type FlatEnemy = {
   reward: number;
   radius: number;
   slow: number;
+  slowMultiplier: number;
   bossPhase: number;
   tutorial: boolean;
   resistanceFlags: ResistanceFlag[];
   decoyOwnerId: number | null;
   decoyLeft: number;
+  markedLeft: number;
+  markMultiplier: number;
+  armorBrokenLeft: number;
+  bossState: BossState | null;
 };
 
 type FlatAgent = AgentDefinition & {
@@ -5426,6 +6007,9 @@ type FlatAgent = AgentDefinition & {
   disabledLeft: number;
   gatheringCooldownMs: number;
   gatheringTargetId: string | null;
+  skillCooldownLeftMs: number;
+  barrier: number;
+  barrierLeft: number;
 };
 
 type FlatTemporarySubAgent = TemporarySubAgent & {
@@ -5442,6 +6026,8 @@ type FlatDefense = {
   cooldownLeft: number;
   index: number;
   rotation: number;
+  barrier: number;
+  barrierLeft: number;
 };
 
 type FlatProjectile = {
@@ -5891,6 +6477,164 @@ class FreemanCanvasEngine implements GameController {
     }
   }
 
+  useAgentSkill(id: EvolutionAgentId) {
+    if (this.mode !== "playing") return;
+    const agent = this.agents.find((candidate) => candidate.id === id);
+    const skill = AGENT_SKILLS[id];
+    if (!agent || !skill) return;
+    const enemyTarget = id === "covenant" ? null : this.getFlatPriorityEnemy();
+    const supportTarget = id === "covenant"
+      ? [
+          ...this.agents.map((candidate) => ({
+            id: candidate.id,
+            kind: "agent" as const,
+            hp: candidate.hp,
+            maxHp: candidate.maxHp,
+          })),
+          ...this.defenses.map((candidate) => ({
+            id: String(candidate.index),
+            kind: "turret" as const,
+            hp: candidate.hp,
+            maxHp: candidate.maxHp,
+          })),
+        ].filter((candidate) => candidate.hp > 0)
+          .sort(
+            (left, right) =>
+              left.hp / left.maxHp - right.hp / right.maxHp ||
+              String(left.id).localeCompare(String(right.id)),
+          )[0] ?? null
+      : null;
+    const target = enemyTarget
+      ? {
+          id: enemyTarget.id,
+          kind: "enemy",
+          hp: enemyTarget.hp,
+          maxHp: enemyTarget.maxHp,
+          armored: enemyTarget.resistanceFlags.includes("armor"),
+        }
+      : supportTarget;
+    const source = {
+      id: agent.id,
+      hp: agent.hp,
+      maxHp: agent.maxHp,
+      disabledLeftMs: agent.disabledLeft * 1_000,
+      skillCooldowns: { [skill.id]: agent.skillCooldownLeftMs },
+    };
+    if (!canUseSkill(source, skill.id, { target })) return;
+    const result = activateAgentSkill(source, skill.id, { target });
+    agent.skillCooldownLeftMs = result.agent.skillCooldowns[skill.id];
+
+    for (const effect of result.effects as AgentSkillEffect[]) {
+      if (effect.type === "time-fracture" && enemyTarget) {
+        for (const threat of this.enemies.filter(
+          (candidate) =>
+            this.distance(
+              candidate.x,
+              candidate.z,
+              enemyTarget.x,
+              enemyTarget.z,
+            ) <= effect.radius,
+        )) {
+          threat.slow = Math.max(threat.slow, effect.durationMs / 1_000);
+          threat.slowMultiplier = Math.min(
+            threat.slowMultiplier,
+            effect.slowMultiplier,
+          );
+        }
+        this.addRing(
+          enemyTarget.x,
+          enemyTarget.z,
+          agent.color,
+          0.2,
+          effect.radius,
+          0.72,
+        );
+      }
+      if (effect.type === "mark" && enemyTarget) {
+        enemyTarget.markedLeft = effect.durationMs / 1_000;
+        enemyTarget.markMultiplier = effect.damageMultiplier;
+      }
+      if (effect.type === "damage" && enemyTarget) {
+        this.damageEnemy(enemyTarget, effect.amount, effect.executes);
+      }
+      if (effect.type === "armor-break" && enemyTarget) {
+        enemyTarget.armorBrokenLeft = effect.durationMs / 1_000;
+      }
+      if (effect.type === "suppressive-burst" && enemyTarget) {
+        for (const threat of [...this.enemies].filter(
+          (candidate) =>
+            this.distance(
+              candidate.x,
+              candidate.z,
+              enemyTarget.x,
+              enemyTarget.z,
+            ) <= effect.radius,
+        )) {
+          threat.slow = Math.max(threat.slow, effect.slowMs / 1_000);
+          threat.slowMultiplier = Math.min(
+            threat.slowMultiplier,
+            effect.slowMultiplier,
+          );
+          this.damageEnemy(threat, effect.damage, true);
+        }
+        this.addRing(
+          enemyTarget.x,
+          enemyTarget.z,
+          agent.color,
+          0.2,
+          effect.radius,
+          0.58,
+        );
+      }
+      if ((effect.type === "repair" || effect.type === "barrier") && target) {
+        const targetAgent = target.kind === "agent"
+          ? this.agents.find((candidate) => candidate.id === target.id)
+          : null;
+        const targetDefense = target.kind === "turret"
+          ? this.defenses.find(
+              (candidate) => String(candidate.index) === target.id,
+            )
+          : null;
+        if (effect.type === "repair") {
+          if (targetAgent) {
+            targetAgent.hp = Math.min(
+              targetAgent.maxHp,
+              targetAgent.hp + effect.amount,
+            );
+          }
+          if (targetDefense) {
+            targetDefense.hp = Math.min(
+              targetDefense.maxHp,
+              targetDefense.hp + effect.amount,
+            );
+          }
+        } else {
+          if (targetAgent) {
+            targetAgent.barrier = effect.amount;
+            targetAgent.barrierLeft = effect.durationMs / 1_000;
+          }
+          if (targetDefense) {
+            targetDefense.barrier = effect.amount;
+            targetDefense.barrierLeft = effect.durationMs / 1_000;
+          }
+        }
+        const x = targetAgent?.x ?? targetDefense?.x;
+        const z = targetAgent?.z ?? targetDefense?.z;
+        if (x !== undefined && z !== undefined) {
+          this.addRing(x, z, agent.color, 0.15, 1.8, 0.55);
+          this.addBeam(agent.x, agent.z, x, z, agent.color, 0.42);
+        }
+      }
+    }
+    this.audio.play("ultimate");
+    this.callbacks.onToast({
+      eyebrow: `${agent.name} SKILL DEPLOYED`,
+      title: skill.label,
+      detail: `${Math.round(skill.cooldownMs / 1_000)} second cooldown started.`,
+    });
+    this.emitHud(true);
+  }
+
   private addAgent(
     id: AgentId,
     options: { charge: boolean; notify: boolean },
@@ -5932,6 +6676,9 @@ class FreemanCanvasEngine implements GameController {
       disabledLeft: 0,
       gatheringCooldownMs: 0,
       gatheringTargetId: null,
+      skillCooldownLeftMs: 0,
+      barrier: 0,
+      barrierLeft: 0,
     });
     if (!options.notify) return true;
     this.addRing(
@@ -6816,6 +7563,12 @@ class FreemanCanvasEngine implements GameController {
       agent.hp = repaired.units[0].hp;
       agent.disabledLeft = repaired.units[0].disabledLeftMs / 1_000;
       agent.cooldownLeft = Math.max(0, agent.cooldownLeft - delta);
+      agent.skillCooldownLeftMs = Math.max(
+        0,
+        agent.skillCooldownLeftMs - delta * 1_000,
+      );
+      agent.barrierLeft = Math.max(0, agent.barrierLeft - delta);
+      if (agent.barrierLeft === 0) agent.barrier = 0;
       if (agent.disabledLeft > 0) return;
       if (agent.repairDecision === "repair" || agent.repairDecision === "retreat") return;
       agent.supportClock -= delta;
@@ -6984,6 +7737,8 @@ class FreemanCanvasEngine implements GameController {
 
   private updateDefenses(delta: number) {
     for (const defense of this.defenses) {
+      defense.barrierLeft = Math.max(0, defense.barrierLeft - delta);
+      if (defense.barrierLeft === 0) defense.barrier = 0;
       if (defense.hp <= 0) continue;
       defense.cooldownLeft = Math.max(0, defense.cooldownLeft - delta);
       const target = this.getNearestEnemy(defense.x, defense.z, 8.5);
@@ -7013,10 +7768,99 @@ class FreemanCanvasEngine implements GameController {
     }
   }
 
+  private updateFlatBossEnemy(enemy: FlatEnemy, delta: number) {
+    if (!enemy.bossState) return;
+    const result = tickBoss(
+      { ...enemy.bossState, hp: enemy.hp },
+      delta * 1_000,
+      {
+        targets: [
+          ...this.agents.map((agent) => ({
+            id: agent.id,
+            kind: "agent",
+            hp: agent.hp,
+            x: agent.x,
+            z: agent.z,
+          })),
+          ...this.defenses.map((defense) => ({
+            id: String(defense.index),
+            kind: "turret",
+            hp: defense.hp,
+            x: defense.x,
+            z: defense.z,
+          })),
+        ],
+        enemyCapacity: Math.max(
+          0,
+          this.activeEnemyLimit - this.enemies.length,
+        ),
+      },
+    );
+    enemy.bossState = result.boss;
+    enemy.telegraphLeft = result.boss.telegraphLeftMs / 1_000;
+    enemy.telegraphTotal = result.boss.telegraphMs / 1_000;
+    for (const event of result.events) {
+      if (event.type === "damage" && event.targetKind === "agent") {
+        const target = this.agents.find(
+          (candidate) => candidate.id === event.targetId,
+        );
+        if (target) this.damageAgent(target, event.amount);
+      }
+      if (event.type === "damage" && event.targetKind === "turret") {
+        const target = this.defenses.find(
+          (candidate) => String(candidate.index) === event.targetId,
+        );
+        if (target) this.damageDefense(target, event.amount);
+      }
+      if (event.type === "reinforcement") {
+        this.spawnFormation(
+          Array.from(
+            { length: event.count },
+            (_, index): EnemyType => index % 2 === 0 ? "virus" : "phisher",
+          ),
+        );
+      }
+    }
+    const targetAgent = this.agents.find(
+      (candidate) => candidate.id === result.boss.pendingTargetId,
+    ) ?? this.agents.find((candidate) => candidate.hp > 0);
+    const targetDefense = this.defenses.find(
+      (candidate) => String(candidate.index) === result.boss.pendingTargetId,
+    ) ?? this.defenses.find((candidate) => candidate.hp > 0);
+    const targetX = targetAgent?.x ?? targetDefense?.x;
+    const targetZ = targetAgent?.z ?? targetDefense?.z;
+    if (
+      targetX !== undefined &&
+      targetZ !== undefined &&
+      result.boss.telegraphLeftMs === 0
+    ) {
+      const distance = this.distance(enemy.x, enemy.z, targetX, targetZ);
+      if (distance > result.boss.attackRadius * 0.86 && distance > 0.001) {
+        const slowFactor = getSlowMovementMultiplier(
+          enemy.slow * 1_000,
+          enemy.slowMultiplier,
+        );
+        enemy.x +=
+          ((targetX - enemy.x) / distance) *
+          delta *
+          enemy.speed *
+          slowFactor;
+        enemy.z +=
+          ((targetZ - enemy.z) / distance) *
+          delta *
+          enemy.speed *
+          slowFactor;
+      }
+    }
+  }
+
   private updateEnemies(delta: number) {
     for (const enemy of [...this.enemies]) {
       enemy.cooldownLeft = Math.max(0, enemy.cooldownLeft - delta);
       enemy.slow = Math.max(0, enemy.slow - delta);
+      if (enemy.slow === 0) enemy.slowMultiplier = 0.48;
+      enemy.markedLeft = Math.max(0, enemy.markedLeft - delta);
+      enemy.armorBrokenLeft = Math.max(0, enemy.armorBrokenLeft - delta);
       if (enemy.decoyOwnerId !== null) {
         enemy.decoyLeft -= delta;
         const ownerActive = this.enemies.some(
@@ -7025,6 +7869,10 @@ class FreemanCanvasEngine implements GameController {
         if (enemy.decoyLeft <= 0 || !ownerActive) {
           this.enemies.splice(this.enemies.indexOf(enemy), 1);
         }
+        continue;
+      }
+      if (enemy.bossState) {
+        this.updateFlatBossEnemy(enemy, delta);
         continue;
       }
       const playerDistance = this.distance(
@@ -7247,7 +8095,10 @@ class FreemanCanvasEngine implements GameController {
       }
 
       if (distance > Math.max(0.75, enemy.range * 0.86)) {
-        const slowFactor = enemy.slow > 0 ? 0.48 : 1;
+        const slowFactor = getSlowMovementMultiplier(
+          enemy.slow * 1_000,
+          enemy.slowMultiplier,
+        );
         const length = distance || 1;
         const directX = (targetX - enemy.x) / length;
         const directZ = (targetZ - enemy.z) / length;
@@ -7316,6 +8167,7 @@ class FreemanCanvasEngine implements GameController {
         }
         if (projectile.slow > 0) {
           enemy.slow = Math.max(enemy.slow, projectile.slow);
+          enemy.slowMultiplier = Math.min(enemy.slowMultiplier, 0.48);
         }
         this.damageEnemy(enemy, projectile.damage);
         this.removeProjectile(projectile);
@@ -7365,8 +8217,19 @@ class FreemanCanvasEngine implements GameController {
       this.scheduledReinforcementThreats =
         this.reinforcementsRemaining * Math.min(10, 4 + wave);
       this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
+      const boss = getBossEncounter(wave, `mission-wave-${wave}`);
+      if (boss.scheduled) {
+        const angle = wave * 0.71 + this.terrain.spawnAngleOffset;
+        this.createEnemy(
+          "rootkit",
+          Math.cos(angle) * SPAWN_RADIUS,
+          Math.sin(angle) * SPAWN_RADIUS,
+          { bossState: boss },
+        );
+      }
       this.spawnFormation(
-        ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1],
+        (ENCOUNTERS[wave - 1] ?? ENCOUNTERS[ENCOUNTERS.length - 1])
+          .filter((type) => type !== "rootkit"),
       );
     }
     if (wave === 4 || wave === 7) {
@@ -7380,7 +8243,7 @@ class FreemanCanvasEngine implements GameController {
       this.callbacks.onToast({
         eyebrow: "FINAL BREACH",
         title: "ROOTKIT PRIME HAS ENTERED",
-        detail: "Survive all three boss phases and protect the Core.",
+        detail: "Break its armor, evade telegraphed strikes, and protect the Core.",
       });
     }
     this.emitHud(true);
@@ -7437,6 +8300,7 @@ class FreemanCanvasEngine implements GameController {
       damage?: number;
       reward?: number;
       decoyOwnerId?: number;
+      bossState?: BossState;
     } = {},
   ) {
     const definitions: Record<
@@ -7451,11 +8315,16 @@ class FreemanCanvasEngine implements GameController {
         | "cooldownLeft"
         | "telegraphLeft"
         | "slow"
+        | "slowMultiplier"
         | "bossPhase"
         | "tutorial"
         | "resistanceFlags"
         | "decoyOwnerId"
         | "decoyLeft"
+        | "markedLeft"
+        | "markMultiplier"
+        | "armorBrokenLeft"
+        | "bossState"
       >
     > = {
       virus: {
@@ -7500,18 +8369,26 @@ class FreemanCanvasEngine implements GameController {
       },
     };
     const definition = definitions[type];
+    const bossState = options.bossState
+      ? { ...options.bossState, rewards: { ...options.bossState.rewards } }
+      : null;
     const resistanceFlags: ResistanceFlag[] =
       options.tutorial || options.decoyOwnerId
       ? []
       : [...this.encounterModifiers.flagsByType[type]] as ResistanceFlag[];
+    if (bossState && !resistanceFlags.includes("armor")) {
+      resistanceFlags.push("armor");
+    }
     const healthScale =
       1 + (this.wave - 1) * (type === "rootkit" ? 0.12 : 0.09);
     const damageScale = 1 + (this.wave - 1) * 0.055;
     const speedScale = 1 + Math.min(0.28, (this.wave - 1) * 0.035);
     const attackRateScale = Math.max(0.72, 1 - (this.wave - 1) * 0.035);
-    const scaledHp = options.decoyOwnerId
-      ? 1
-      : Math.round(definition.hp * healthScale);
+    const scaledHp = bossState
+      ? bossState.maxHp
+      : options.decoyOwnerId
+        ? 1
+        : Math.round(definition.hp * healthScale);
     const enemy: FlatEnemy = {
       id: ++this.enemySequence,
       type,
@@ -7522,24 +8399,41 @@ class FreemanCanvasEngine implements GameController {
       maxHp: scaledHp,
       speed: options.decoyOwnerId
         ? 0
-        : options.speed ?? definition.speed * speedScale,
+        : options.speed ?? bossState?.movementSpeed ?? definition.speed * speedScale,
       damage:
         options.damage ??
+        bossState?.attackDamage ??
         Math.round(
           definition.damage *
             damageScale *
             (this.wave === 1 ? FIRST_WAVE.damageMultiplier : 1),
         ),
-      reward: options.reward ?? definition.reward,
-      attackCooldown: definition.attackCooldown * attackRateScale,
-      cooldownLeft: options.decoyOwnerId ? 0 : 0.4 + Math.random() * 0.8,
+      reward: options.reward ?? bossState?.rewards.compute ?? definition.reward,
+      range: bossState?.attackRadius ?? definition.range,
+      attackCooldown:
+        bossState
+          ? bossState.attackIntervalMs / 1_000
+          : definition.attackCooldown * attackRateScale,
+      cooldownLeft: bossState
+        ? bossState.attackCooldownLeftMs / 1_000
+        : options.decoyOwnerId
+          ? 0
+          : 0.4 + Math.random() * 0.8,
       telegraphLeft: 0,
+      telegraphTotal: bossState
+        ? bossState.telegraphMs / 1_000
+        : definition.telegraphTotal,
       slow: 0,
-      bossPhase: type === "rootkit" ? 1 : 0,
+      slowMultiplier: 0.48,
+      bossPhase: bossState ? 0 : type === "rootkit" ? 1 : 0,
       tutorial: options.tutorial ?? false,
       resistanceFlags,
       decoyOwnerId: options.decoyOwnerId ?? null,
       decoyLeft: options.decoyOwnerId ? 4.2 : 0,
+      markedLeft: 0,
+      markMultiplier: 1,
+      armorBrokenLeft: 0,
+      bossState,
     };
     this.enemies.push(enemy);
     this.addRing(
@@ -7698,9 +8592,11 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private damageAgent(agent: FlatAgent, damage: number) {
+    const absorbed = Math.min(agent.barrier, Math.max(0, damage));
+    agent.barrier -= absorbed;
     const damaged = applyUnitDamage(
       { hp: agent.hp, maxHp: agent.maxHp, disabledLeftMs: agent.disabledLeft * 1_000 },
-      damage,
+      Math.max(0, damage - absorbed),
     );
     agent.hp = damaged.hp;
     agent.disabledLeft = damaged.disabledLeftMs / 1_000;
@@ -7708,7 +8604,12 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private damageDefense(defense: FlatDefense, damage: number) {
-    defense.hp = applyUnitDamage(defense, damage).hp;
+    const absorbed = Math.min(defense.barrier, Math.max(0, damage));
+    defense.barrier -= absorbed;
+    defense.hp = applyUnitDamage(
+      defense,
+      Math.max(0, damage - absorbed),
+    ).hp;
     this.addBurst(defense.x, defense.z, 0xb7422e, 6);
   }
 
@@ -7748,12 +8649,21 @@ class FreemanCanvasEngine implements GameController {
     bypassArmor = false,
   ) {
     if (!this.enemies.includes(enemy)) return;
+    const markedDamage =
+      enemy.markedLeft > 0 ? damage * enemy.markMultiplier : damage;
     const armoured =
       !bypassArmor &&
+      enemy.armorBrokenLeft <= 0 &&
       enemy.resistanceFlags.includes("armor") &&
-      enemy.hp > enemy.maxHp * 0.45;
-    const appliedDamage = armoured ? damage * 0.42 : damage;
+      (enemy.bossState !== null || enemy.hp > enemy.maxHp * 0.45);
+    const armorMultiplier = enemy.bossState
+      ? getBossArmorMultiplier(enemy.bossState, enemy.armorBrokenLeft > 0)
+      : 0.42;
+    const appliedDamage = armoured
+      ? markedDamage * armorMultiplier
+      : markedDamage;
     enemy.hp -= appliedDamage;
+    if (enemy.bossState) enemy.bossState.hp = enemy.hp;
     this.player.ultimate = Math.min(
       100,
       this.player.ultimate + Math.min(8, appliedDamage * 0.12),
@@ -7761,6 +8671,20 @@ class FreemanCanvasEngine implements GameController {
     this.addBurst(enemy.x, enemy.z, 0xe77d44, 5);
     this.audio.play("hit");
     if (enemy.hp > 0) return;
+    if (enemy.bossState) {
+      const reward = tickBoss(
+        { ...enemy.bossState, hp: 0 },
+        0,
+        { targets: [] },
+      );
+      const rewardState = reward.boss as BossState;
+      enemy.bossState = rewardState;
+      this.callbacks.onToast({
+        eyebrow: "WARBOSS CONTAINED",
+        title: "RARE PROTOCOL SHARDS DROPPED",
+        detail: `${rewardState.rewards.components} Components · ${rewardState.rewards.shards} Shards are recoverable in the arena.`,
+      });
+    }
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
     if (enemy.decoyOwnerId !== null) {
       this.addBurst(enemy.x, enemy.z, 0xc6a6e8, 5);
@@ -7774,8 +8698,27 @@ class FreemanCanvasEngine implements GameController {
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
-    const drop = rollLootDrop(enemy.type, Math.random);
-    if (drop) {
+    const drops = enemy.bossState
+      ? [
+          {
+            id: `boss-component-${enemy.id}`,
+            type: "component" as LootType,
+            x: -0.65,
+            y: 0,
+            value: enemy.bossState.rewards.components,
+          },
+          {
+            id: `boss-shard-${enemy.id}`,
+            type: "upgrade-shard" as LootType,
+            x: 0.65,
+            y: 0,
+            value: enemy.bossState.rewards.shards,
+          },
+        ]
+      : [rollLootDrop(enemy.type, Math.random)].filter(
+          (drop): drop is NonNullable<typeof drop> => Boolean(drop),
+        );
+    for (const drop of drops) {
       this.pickups.push({
         ...drop,
         x: enemy.x + drop.x * 0.35,
@@ -7958,6 +8901,8 @@ class FreemanCanvasEngine implements GameController {
       cooldownLeft: 0.35,
       index,
       rotation: 0,
+      barrier: 0,
+      barrierLeft: 0,
     });
     if (options.notify) {
       this.addRing(position.x, position.z, 0x9ed8dd, 0.2, 2.4, 0.7);
@@ -8936,6 +9881,39 @@ class FreemanCanvasEngine implements GameController {
 
   private drawEnemy(enemy: FlatEnemy) {
     const context = this.context;
+    const bossState = enemy.bossState;
+    if (bossState && bossState.telegraphLeftMs > 0) {
+      const targetAgent = this.agents.find(
+        (candidate) => candidate.id === bossState.pendingTargetId,
+      );
+      const targetDefense = this.defenses.find(
+        (candidate) =>
+          String(candidate.index) === bossState.pendingTargetId,
+      );
+      const targetX = targetAgent?.x ?? targetDefense?.x;
+      const targetZ = targetAgent?.z ?? targetDefense?.z;
+      if (targetX !== undefined && targetZ !== undefined) {
+        const center = this.project(targetX, targetZ, 0.03);
+        const edge = this.project(
+          targetX + bossState.attackRadius,
+          targetZ,
+          0.03,
+        );
+        const radius = Math.hypot(edge.x - center.x, edge.y - center.y);
+        const progress =
+          bossState.telegraphLeftMs / bossState.telegraphMs;
+        context.save();
+        context.fillStyle = `rgba(217,75,53,${0.08 + (1 - progress) * 0.16})`;
+        context.strokeStyle = "#ff8a68";
+        context.lineWidth = 2 + (1 - progress) * 2;
+        context.setLineDash([7, 5]);
+        context.beginPath();
+        context.arc(center.x, center.y, radius, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+        context.restore();
+      }
+    }
     if (enemy.resistanceFlags.includes("jammer")) {
       const jammerZoneName = "enemy-jammer-zone";
       const center = this.project(enemy.x, enemy.z);
@@ -9063,7 +10041,9 @@ class FreemanCanvasEngine implements GameController {
     context.stroke();
 
     context.shadowBlur = 0;
-    const healthWidth = Math.max(28, size * 1.6);
+    const healthWidth = enemy.bossState
+      ? Math.max(140, size * 2.4)
+      : Math.max(28, size * 1.6);
     const healthRatio = clamp01(enemy.hp / enemy.maxHp);
     context.fillStyle = "rgba(15,4,3,.85)";
     context.fillRect(
@@ -9086,6 +10066,8 @@ class FreemanCanvasEngine implements GameController {
     context.fillText(
       enemy.decoyOwnerId !== null
         ? "PHISHER DECOY"
+        : enemy.bossState
+          ? `${enemy.bossState.label} · ARMORED`
         : enemy.type === "rootkit"
           ? "ROOTKIT BOSS"
           : enemy.type.toUpperCase(),
@@ -9189,6 +10171,12 @@ class FreemanCanvasEngine implements GameController {
     if (!force && this.hudClock > 0) return;
     const recruited = (id: AgentId) =>
       this.agents.some((agent) => agent.id === id);
+    const skills = createInitialSkillHud();
+    for (const id of Object.keys(skills) as EvolutionAgentId[]) {
+      const agent = this.agents.find((candidate) => candidate.id === id);
+      skills[id].cooldownLeftMs = agent?.skillCooldownLeftMs ?? 0;
+    }
+    const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
     this.callbacks.onHud({
       hp: Math.round(this.player.hp),
       maxHp: Math.round(this.player.maxHp),
@@ -9242,6 +10230,15 @@ class FreemanCanvasEngine implements GameController {
       terrainLabel: this.terrain.label,
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
+      skills,
+      boss: boss
+        ? {
+            label: boss.label,
+            hp: Math.max(0, Math.round(boss.hp)),
+            maxHp: boss.maxHp,
+            telegraphLeftMs: boss.telegraphLeftMs,
+          }
+        : null,
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
         wave: this.wave,
@@ -9519,6 +10516,30 @@ export default function FreemanProtocol() {
               {hud.wave === TOTAL_WAVES ? " · Rootkit Prime" : ""}
             </span>
           </div>
+
+          {hud.boss && (
+            <div className="boss-health-banner" role="status">
+              <span>
+                <small>ARMORED WARBOSS</small>
+                <strong>{hud.boss.label}</strong>
+              </span>
+              <i>
+                <b
+                  style={{
+                    width: `${clamp01(hud.boss.hp / hud.boss.maxHp) * 100}%`,
+                  }}
+                />
+              </i>
+              <span>
+                <strong>{hud.boss.hp}/{hud.boss.maxHp}</strong>
+                <small>
+                  {hud.boss.telegraphLeftMs > 0
+                    ? "ATTACK TELEGRAPH ACTIVE"
+                    : "SLOW · ARMORED · ONE ACTIVE"}
+                </small>
+              </span>
+            </div>
+          )}
 
           {hud.placingDefense && (
             <div className="placement-guide" role="status">
@@ -9830,6 +10851,46 @@ export default function FreemanProtocol() {
               })}
             </div>
           </section>
+
+          <div className="skill-actions" aria-label="Agent skill controls">
+            {(Object.keys(hud.skills) as EvolutionAgentId[]).map((id) => {
+              const skill = hud.skills[id];
+              const ready = clamp01(
+                1 - skill.cooldownLeftMs / skill.cooldownMs,
+              );
+              return (
+                <button
+                  type="button"
+                  key={id}
+                  className={ready >= 1 ? "is-ready" : ""}
+                  onClick={() => engineRef.current?.useAgentSkill(id)}
+                  disabled={
+                    mode !== "playing" ||
+                    !hud.agents[id] ||
+                    skill.cooldownLeftMs > 0
+                  }
+                  aria-label={`${AGENT_SKILLS[id].label} skill`}
+                  style={
+                    {
+                      "--skill-ready": ready,
+                      "--skill-color": `#${AGENTS.find((agent) => agent.id === id)?.color.toString(16).padStart(6, "0")}`,
+                    } as React.CSSProperties
+                  }
+                >
+                  <i aria-hidden="true" />
+                  <small>{id.toUpperCase()}</small>
+                  <strong>{skill.label}</strong>
+                  <span>
+                    {skill.cooldownLeftMs > 0
+                      ? `${Math.ceil(skill.cooldownLeftMs / 1_000)}S`
+                      : hud.agents[id]
+                        ? "READY"
+                        : "OFFLINE"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
           <div className="combat-actions">
             <button

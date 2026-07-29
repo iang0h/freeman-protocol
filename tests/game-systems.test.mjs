@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import * as autonomyRules from "../app/game/autonomy-rules.mjs";
 
@@ -73,6 +74,18 @@ import {
   recruitWarbandSlot,
   tickAgentGathering,
 } from "../app/game/warband-rules.mjs";
+import {
+  AGENT_SKILLS,
+  canUseSkill,
+  getSlowMovementMultiplier,
+  useSkill as activateAgentSkill,
+} from "../app/game/skill-rules.mjs";
+import {
+  BOSS_CAPS,
+  getBossArmorMultiplier,
+  getBossEncounter,
+  tickBoss,
+} from "../app/game/boss-rules.mjs";
 
 async function loadRepairRules() {
   return import("../app/game/repair-rules.mjs");
@@ -1269,6 +1282,330 @@ test("temporary sub-agent cooldowns prevent repeated role actions", () => {
 
   assert.deepEqual(result.action, { type: "idle" });
   assert.equal(result.state.cooldownLeftMs, 800);
+});
+
+test("four named agents expose distinct deterministic role skills", () => {
+  assert.deepEqual(Object.keys(AGENT_SKILLS), [
+    "kairos",
+    "kira",
+    "forge",
+    "covenant",
+  ]);
+
+  const fixtures = [
+    {
+      agent: { id: "kairos", hp: 75, maxHp: 75, skillCooldowns: {} },
+      target: { id: "warboss", kind: "enemy", hp: 800, maxHp: 800, armored: true },
+      skillId: "time-fracture",
+      effects: [
+        {
+          type: "time-fracture",
+          targetId: "warboss",
+          radius: 3.5,
+          slowMultiplier: 0.35,
+          durationMs: 4_000,
+        },
+      ],
+    },
+    {
+      agent: { id: "kira", hp: 75, maxHp: 75, skillCooldowns: {} },
+      target: { id: "warboss", kind: "enemy", hp: 160, maxHp: 800, armored: true },
+      skillId: "mark-execution",
+      effects: [
+        {
+          type: "mark",
+          targetId: "warboss",
+          durationMs: 5_000,
+          damageMultiplier: 1.5,
+        },
+        {
+          type: "damage",
+          targetId: "warboss",
+          amount: 96,
+          executes: true,
+        },
+      ],
+    },
+    {
+      agent: { id: "forge", hp: 75, maxHp: 75, skillCooldowns: {} },
+      target: { id: "warboss", kind: "enemy", hp: 800, maxHp: 800, armored: true },
+      skillId: "armor-break-burst",
+      effects: [
+        {
+          type: "armor-break",
+          targetId: "warboss",
+          armorReduction: 0.55,
+          durationMs: 6_000,
+        },
+        {
+          type: "suppressive-burst",
+          targetId: "warboss",
+          radius: 2.75,
+          damage: 24,
+          slowMs: 2_000,
+          slowMultiplier: 0.62,
+        },
+      ],
+    },
+    {
+      agent: { id: "covenant", hp: 75, maxHp: 75, skillCooldowns: {} },
+      target: { id: "sentry-1", kind: "turret", hp: 30, maxHp: 100 },
+      skillId: "repair-barrier",
+      effects: [
+        { type: "repair", targetId: "sentry-1", amount: 30 },
+        {
+          type: "barrier",
+          targetId: "sentry-1",
+          amount: 36,
+          durationMs: 5_000,
+        },
+      ],
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    const context = { target: fixture.target };
+    const snapshot = structuredClone({ agent: fixture.agent, context });
+    assert.equal(canUseSkill(fixture.agent, fixture.skillId, context), true);
+    const first = activateAgentSkill(fixture.agent, fixture.skillId, context);
+    const second = activateAgentSkill(fixture.agent, fixture.skillId, context);
+    assert.deepEqual(first.effects, fixture.effects);
+    assert.deepEqual(second, first);
+    assert.deepEqual({ agent: fixture.agent, context }, snapshot);
+    assert.equal(
+      first.agent.skillCooldowns[fixture.skillId],
+      AGENT_SKILLS[fixture.agent.id].cooldownMs,
+    );
+  }
+});
+
+test("skill slow strength stays deterministic for normal threats and warbosses", () => {
+  assert.equal(getSlowMovementMultiplier(4_000, 0.35), 0.35);
+  assert.equal(getSlowMovementMultiplier(2_000, 0.62), 0.62);
+  assert.equal(getSlowMovementMultiplier(0, 0.35), 1);
+  assert.equal(getSlowMovementMultiplier(1_000, Number.NaN), 0.48);
+});
+
+test("agent skills enforce ownership, cooldown, live-agent, and target constraints", () => {
+  const target = { id: "trojan", kind: "enemy", hp: 100, maxHp: 100 };
+  assert.equal(
+    canUseSkill(
+      { id: "kairos", hp: 75, skillCooldowns: { "time-fracture": 1 } },
+      "time-fracture",
+      { target },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "kairos", hp: 0, skillCooldowns: {} },
+      "time-fracture",
+      { target },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "kairos", hp: 75, disabledLeftMs: 1, skillCooldowns: {} },
+      "time-fracture",
+      { target },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "kira", hp: 75, skillCooldowns: {} },
+      "time-fracture",
+      { target },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "covenant", hp: 75, skillCooldowns: {} },
+      "repair-barrier",
+      { target: { id: "core", kind: "core", hp: 90, maxHp: 180 } },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "forge", hp: 75, skillCooldowns: {} },
+      "armor-break-burst",
+      { target: { ...target, hp: 0 } },
+    ),
+    false,
+  );
+
+  const agent = { id: "kairos", hp: 75, skillCooldowns: {} };
+  assert.deepEqual(activateAgentSkill(agent, "repair-barrier", { target }), {
+    agent,
+    effects: [],
+  });
+});
+
+test("waves three and later schedule exactly one bounded slow armored warboss", () => {
+  const early = getBossEncounter(2, "alpha");
+  assert.equal(early.scheduled, false);
+  assert.equal(early.count, 0);
+
+  const first = getBossEncounter(3, "alpha");
+  const repeated = getBossEncounter(3, "alpha");
+  assert.deepEqual(repeated, first);
+  assert.equal(first.scheduled, true);
+  assert.equal(first.count, 1);
+  assert.equal(first.maxActive, 1);
+  assert.equal(first.armored, true);
+  assert.ok(first.maxHp <= BOSS_CAPS.maxHealth);
+  assert.ok(first.movementSpeed <= BOSS_CAPS.maxMovementSpeed);
+  assert.ok(first.attacksPerSecond <= BOSS_CAPS.maxAttacksPerSecond);
+  assert.ok(first.rewardQuantity <= BOSS_CAPS.maxRewardQuantity);
+  assert.ok(first.reinforcementCap <= BOSS_CAPS.maxReinforcements);
+  assert.ok(first.rewards.shards >= 1);
+
+  const escalated = getBossEncounter(99, Number.MAX_SAFE_INTEGER);
+  assert.equal(escalated.count, 1);
+  assert.ok(escalated.maxHp <= BOSS_CAPS.maxHealth);
+  assert.ok(escalated.movementSpeed <= BOSS_CAPS.maxMovementSpeed);
+  assert.ok(escalated.attacksPerSecond <= BOSS_CAPS.maxAttacksPerSecond);
+  assert.ok(escalated.rewardQuantity <= BOSS_CAPS.maxRewardQuantity);
+});
+
+test("warboss armor scaling and guaranteed rewards cover warband slots five through eight", () => {
+  const waveThree = getBossEncounter(3, "armor");
+  const waveEight = getBossEncounter(8, "armor");
+  assert.equal(
+    getBossArmorMultiplier(waveThree),
+    1 - waveThree.armorReduction,
+  );
+  assert.equal(getBossArmorMultiplier(waveEight, true), 1);
+
+  const required = WARBAND_SLOTS.slice(4)
+    .map((slot) => getRecruitCost(slot))
+    .reduce(
+      (total, cost) => ({
+        components: total.components + cost.components,
+        shards: total.shards + cost.shards,
+      }),
+      { components: 0, shards: 0 },
+    );
+  const guaranteed = Array.from(
+    { length: 6 },
+    (_, index) => getBossEncounter(index + 3, `mission-wave-${index + 3}`),
+  ).reduce(
+    (total, boss) => ({
+      components: total.components + boss.rewards.components,
+      shards: total.shards + boss.rewards.shards,
+    }),
+    { components: 0, shards: 0 },
+  );
+  assert.ok(guaranteed.components >= required.components);
+  assert.ok(guaranteed.shards >= required.shards);
+});
+
+test("both renderers consume skill slow strength, boss armor, and accurate final-wave copy", () => {
+  const source = readFileSync(
+    new URL("../app/FreemanProtocol.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(source.match(/getSlowMovementMultiplier\(/g).length >= 4);
+  assert.ok(source.match(/effect\.slowMultiplier/g).length >= 4);
+  assert.equal(source.match(/getBossArmorMultiplier\(/g).length, 2);
+  assert.equal(
+    source.match(
+      /Break its armor, evade telegraphed strikes, and protect the Core\./g,
+    ).length,
+    2,
+  );
+  assert.doesNotMatch(source, /all three boss phases/);
+});
+
+test("warboss attacks telegraph before deterministically damaging agents and turrets", () => {
+  const targets = [
+    { id: "kairos", kind: "agent", hp: 75, maxHp: 75, x: 1, z: 0 },
+    { id: "sentry-1", kind: "turret", hp: 100, maxHp: 100, x: 2, z: 0 },
+  ];
+  const encounter = getBossEncounter(3, "attacks");
+  const telegraph = tickBoss(
+    { ...encounter, attackCooldownLeftMs: 0 },
+    0,
+    { targets },
+  );
+  assert.deepEqual(telegraph.events, [
+    {
+      type: "telegraph",
+      bossId: encounter.id,
+      targetId: "kairos",
+      targetKind: "agent",
+      durationMs: encounter.telegraphMs,
+      radius: encounter.attackRadius,
+    },
+  ]);
+
+  const firstAttack = tickBoss(
+    telegraph.boss,
+    encounter.telegraphMs,
+    { targets },
+  );
+  assert.deepEqual(firstAttack.events, [
+    {
+      type: "damage",
+      bossId: encounter.id,
+      targetId: "kairos",
+      targetKind: "agent",
+      amount: encounter.attackDamage,
+    },
+  ]);
+
+  const secondTelegraph = tickBoss(
+    firstAttack.boss,
+    encounter.attackIntervalMs,
+    { targets },
+  );
+  assert.equal(secondTelegraph.events[0].type, "telegraph");
+  assert.equal(secondTelegraph.events[0].targetKind, "turret");
+  const secondAttack = tickBoss(
+    secondTelegraph.boss,
+    encounter.telegraphMs,
+    { targets },
+  );
+  assert.equal(secondAttack.events[0].type, "damage");
+  assert.equal(secondAttack.events[0].targetKind, "turret");
+});
+
+test("warboss rewards include bounded rare Shards and reinforcements cannot grow unbounded", () => {
+  const encounter = getBossEncounter(8, "rewards");
+  const death = tickBoss(
+    { ...encounter, hp: 0 },
+    16,
+    { targets: [] },
+  );
+  assert.equal(death.events[0].type, "reward-drop");
+  assert.ok(death.events[0].rewards.shards >= 1);
+  assert.ok(death.events[0].quantity <= BOSS_CAPS.maxRewardQuantity);
+  assert.equal(death.boss.rewardClaimed, true);
+  assert.deepEqual(
+    tickBoss(death.boss, 16, { targets: [] }).events,
+    [],
+  );
+
+  let boss = {
+    ...getBossEncounter(8, "reinforcements"),
+    hp: getBossEncounter(8, "reinforcements").maxHp * 0.45,
+  };
+  let spawned = 0;
+  for (let tick = 0; tick < 100; tick += 1) {
+    const result = tickBoss(boss, 1_000, {
+      targets: [],
+      enemyCapacity: 100,
+    });
+    boss = result.boss;
+    spawned += result.events
+      .filter((event) => event.type === "reinforcement")
+      .reduce((total, event) => total + event.count, 0);
+  }
+  assert.ok(spawned <= encounter.reinforcementCap);
+  assert.ok(spawned <= BOSS_CAPS.maxReinforcements);
 });
 
 function sequence(values) {
