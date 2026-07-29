@@ -1,4 +1,6 @@
 const MAX_WAVE = 8;
+export const JAMMER_ZONE_RADIUS = 4.5;
+export const ROOTKIT_REBOOT_RADIUS = 4.5;
 
 const EMPTY_FLAGS = Object.freeze({
   virus: Object.freeze([]),
@@ -125,6 +127,69 @@ export function getTerrainModifier(wave) {
   return {
     ...TERRAIN_SEQUENCE[(normalizedWave - 2) % TERRAIN_SEQUENCE.length],
   };
+}
+
+export function applyTerrainRouteBias(x, z, routeBias) {
+  const biasedX = x - z * routeBias;
+  const biasedZ = z + x * routeBias;
+  const length = Math.hypot(biasedX, biasedZ);
+  if (length <= Number.EPSILON) return { x: 0, z: 0 };
+  return { x: biasedX / length, z: biasedZ / length };
+}
+
+export function getPhisherDecoyOffsets(wave, sourceId) {
+  if (normalizeWave(wave) < 3) return [];
+  const direction = Number(sourceId) % 2 === 0 ? 1 : -1;
+  return [
+    { x: direction * 1.35, z: 0.8 },
+    { x: direction * -0.9, z: -1.25 },
+  ];
+}
+
+const distanceBetween = (first, second) =>
+  Math.hypot(
+    (Number(first?.x) || 0) - (Number(second?.x) || 0),
+    (Number(first?.z) || 0) - (Number(second?.z) || 0),
+  );
+
+export function getEffectiveResistanceFlags(target, threats) {
+  const flags = new Set(
+    Array.isArray(target?.resistanceFlags) ? target.resistanceFlags : [],
+  );
+  const jammed = (Array.isArray(threats) ? threats : []).some(
+    (threat) =>
+      Array.isArray(threat?.resistanceFlags) &&
+      threat.resistanceFlags.includes("jammer") &&
+      distanceBetween(target, threat) <= JAMMER_ZONE_RADIUS,
+  );
+  if (jammed) flags.add("jammer");
+  return [...flags];
+}
+
+export function getRootkitRebootUpdates(source, threats) {
+  if (
+    !Array.isArray(source?.resistanceFlags) ||
+    !source.resistanceFlags.includes("jammer")
+  ) {
+    return [];
+  }
+  return (Array.isArray(threats) ? threats : [])
+    .filter(
+      (target) =>
+        target?.id !== source.id &&
+        !target?.decoyOwnerId &&
+        distanceBetween(source, target) <= ROOTKIT_REBOOT_RADIUS &&
+        (Number(target?.hp) < Number(target?.maxHp) ||
+          Number(target?.slow) > 0),
+    )
+    .map((target) => ({
+      id: target.id,
+      hp: Math.min(
+        Number(target.maxHp),
+        Number(target.hp) + Number(target.maxHp) * 0.18,
+      ),
+      slow: 0,
+    }));
 }
 
 export function resolveEmpDamage(baseDamage, target, modifiers) {

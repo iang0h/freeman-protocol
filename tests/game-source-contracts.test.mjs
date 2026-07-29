@@ -325,9 +325,15 @@ test("both renderers consume shared hacker and terrain encounter rules", () => {
   assert.ok((game.match(/resolveEmpDamage\(/g) ?? []).length >= 2);
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /resistanceFlags/);
+    assert.match(engine, /applyTerrainRouteBias/);
+    assert.match(engine, /getEffectiveResistanceFlags/);
+    assert.match(engine, /getPhisherDecoyOffsets/);
+    assert.match(engine, /getRootkitRebootUpdates/);
     assert.match(engine, /terrain\.spawnAngleOffset/);
     assert.match(engine, /terrain\.targetingRangeMultiplier/);
     assert.match(engine, /terrain\.routeBias/);
+    assert.match(engine, /decoyOwnerId/);
+    assert.match(engine, /enemy-jammer-zone/);
   }
 });
 

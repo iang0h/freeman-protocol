@@ -39,6 +39,11 @@ import {
   tickTemporarySubAgent,
 } from "./game/autonomy-rules.mjs";
 import {
+  JAMMER_ZONE_RADIUS,
+  applyTerrainRouteBias,
+  getEffectiveResistanceFlags,
+  getPhisherDecoyOffsets,
+  getRootkitRebootUpdates,
   getTerrainModifier,
   getWaveModifiers,
   resolveEmpDamage,
@@ -280,6 +285,8 @@ type EnemyRuntime = {
   hitFlash: number;
   tutorial: boolean;
   resistanceFlags: ResistanceFlag[];
+  decoyOwnerId: number | null;
+  decoyLeft: number;
 };
 
 type ProjectileRuntime = {
@@ -1294,13 +1301,32 @@ class FreemanEngine {
       (44 + this.agents.length * 8) *
       this.empMultiplier *
       this.terrain.empMultiplier;
+    const jammerThreats = this.enemies.map((threat) => ({
+      id: threat.id,
+      x: threat.group.position.x,
+      z: threat.group.position.z,
+      resistanceFlags: threat.resistanceFlags,
+    }));
     for (const enemy of this.enemyGrid.query(origin, 10.5)) {
       const distance = enemy.group.position.distanceTo(origin);
       if (distance <= 10.5) {
         enemy.slow = Math.max(enemy.slow, 2.8);
+        const resistanceFlags = getEffectiveResistanceFlags(
+          {
+            id: enemy.id,
+            x: enemy.group.position.x,
+            z: enemy.group.position.z,
+            resistanceFlags: enemy.resistanceFlags,
+          },
+          jammerThreats,
+        );
         this.damageEnemy(
           enemy,
-          resolveEmpDamage(damage, enemy, this.encounterModifiers),
+          resolveEmpDamage(
+            damage,
+            { resistanceFlags },
+            this.encounterModifiers,
+          ),
           enemy.group.position,
           true,
         );
@@ -2326,7 +2352,13 @@ class FreemanEngine {
   private createEnemy(
     type: EnemyType,
     position: THREE.Vector3,
-    options: { tutorial?: boolean; speed?: number; damage?: number; reward?: number } = {},
+    options: {
+      tutorial?: boolean;
+      speed?: number;
+      damage?: number;
+      reward?: number;
+      decoyOwnerId?: number;
+    } = {},
   ) {
     const definitions: Record<
       EnemyType,
@@ -2388,11 +2420,13 @@ class FreemanEngine {
       },
     };
     const definition = definitions[type];
-    const resistanceFlags: ResistanceFlag[] = options.tutorial
+    const resistanceFlags: ResistanceFlag[] =
+      options.tutorial || options.decoyOwnerId
       ? []
       : [...this.encounterModifiers.flagsByType[type]] as ResistanceFlag[];
     const group = new THREE.Group();
     group.position.copy(position);
+    group.name = options.decoyOwnerId ? "enemy-decoy-target" : "enemy-threat";
 
     const material = new THREE.MeshStandardMaterial({
       color: definition.color,
@@ -2486,6 +2520,33 @@ class FreemanEngine {
       group.add(antenna);
     }
 
+    if (resistanceFlags.includes("jammer")) {
+      const jammerZone = new THREE.Mesh(
+        new THREE.RingGeometry(
+          JAMMER_ZONE_RADIUS - 0.08,
+          JAMMER_ZONE_RADIUS,
+          48,
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0xe86b64,
+          transparent: true,
+          opacity: 0.22,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      jammerZone.name = "enemy-jammer-zone";
+      jammerZone.rotation.x = -Math.PI / 2;
+      jammerZone.position.y = 0.035;
+      group.add(jammerZone);
+    }
+
+    if (options.decoyOwnerId) {
+      group.scale.setScalar(0.72);
+      material.transparent = true;
+      material.opacity = 0.46;
+    }
+
     if (type === "trojan") {
       const hornGeometry = new THREE.ConeGeometry(0.12, 0.55, 5);
       const hornMaterial = new THREE.MeshBasicMaterial({
@@ -2547,7 +2608,9 @@ class FreemanEngine {
     const damageScale = 1 + (this.wave - 1) * 0.055;
     const speedScale = 1 + Math.min(0.28, (this.wave - 1) * 0.035);
     const attackRateScale = Math.max(0.72, 1 - (this.wave - 1) * 0.035);
-    const scaledHp = Math.round(definition.hp * healthScale);
+    const scaledHp = options.decoyOwnerId
+      ? 1
+      : Math.round(definition.hp * healthScale);
     const enemy: EnemyRuntime = {
       id: ++this.enemySequence,
       type,
@@ -2557,7 +2620,9 @@ class FreemanEngine {
       healthFill,
       hp: scaledHp,
       maxHp: scaledHp,
-      speed: options.speed ?? definition.speed * speedScale,
+      speed: options.decoyOwnerId
+        ? 0
+        : options.speed ?? definition.speed * speedScale,
       damage:
         options.damage ??
         Math.round(
@@ -2567,7 +2632,7 @@ class FreemanEngine {
         ),
       range: definition.range,
       attackCooldown: definition.cooldown * attackRateScale,
-      cooldownLeft: 0.4 + Math.random() * 0.8,
+      cooldownLeft: options.decoyOwnerId ? 0 : 0.4 + Math.random() * 0.8,
       telegraphLeft: 0,
       telegraphTotal:
         type === "phisher" ? 0.82 : type === "rootkit" ? 1.05 : 0.6,
@@ -2578,6 +2643,8 @@ class FreemanEngine {
       hitFlash: 0,
       tutorial: options.tutorial ?? false,
       resistanceFlags,
+      decoyOwnerId: options.decoyOwnerId ?? null,
+      decoyLeft: options.decoyOwnerId ? 4.2 : 0,
     };
     this.enemies.push(enemy);
     this.addRing(
@@ -3589,6 +3656,17 @@ class FreemanEngine {
       enemy.cooldownLeft = Math.max(0, enemy.cooldownLeft - delta);
       enemy.slow = Math.max(0, enemy.slow - delta);
       enemy.hitFlash = Math.max(0, enemy.hitFlash - delta);
+      if (enemy.decoyOwnerId !== null) {
+        enemy.decoyLeft -= delta;
+        const ownerActive = this.enemies.some(
+          (threat) => threat.id === enemy.decoyOwnerId,
+        );
+        if (enemy.decoyLeft <= 0 || !ownerActive) {
+          this.disposeDynamicObject(enemy.group);
+          this.enemies.splice(this.enemies.indexOf(enemy), 1);
+        }
+        continue;
+      }
       const enemyMaterial = enemy.body.material as THREE.MeshStandardMaterial;
       enemyMaterial.emissiveIntensity = THREE.MathUtils.lerp(
         enemy.type === "rootkit" ? 1.4 : 0.8,
@@ -3609,13 +3687,8 @@ class FreemanEngine {
         const directZ = direction.z;
         const routeBias =
           this.terrain.routeBias * (enemy.id % 2 === 0 ? 1 : -1);
-        direction
-          .set(
-            directX - directZ * routeBias,
-            0,
-            directZ + directX * routeBias,
-          )
-          .normalize();
+        const routed = applyTerrainRouteBias(directX, directZ, routeBias);
+        direction.set(routed.x, 0, routed.z);
       }
 
       enemy.body.rotation.y += delta * (enemy.type === "rootkit" ? 0.45 : 1.2);
@@ -3715,6 +3788,25 @@ class FreemanEngine {
                   : 1.02,
           );
           if (enemy.type === "phisher") {
+            if (enemy.resistanceFlags.includes("decoy")) {
+              const hasActiveDecoys = this.enemies.some(
+                (threat) => threat.decoyOwnerId === enemy.id,
+              );
+              if (!hasActiveDecoys) {
+                for (const offset of getPhisherDecoyOffsets(
+                  this.wave,
+                  enemy.id,
+                )) {
+                  this.createEnemy(
+                    "phisher",
+                    position
+                      .clone()
+                      .add(new THREE.Vector3(offset.x, 0, offset.z)),
+                    { decoyOwnerId: enemy.id, reward: 0 },
+                  );
+                }
+              }
+            }
             const availableAgents = this.agents.filter(
               (agent) => agent.disabledLeft <= 0,
             );
@@ -3746,6 +3838,37 @@ class FreemanEngine {
               0.2,
             );
           } else if (distance <= enemy.range + 0.9) {
+            if (enemy.type === "rootkit") {
+              const updates = getRootkitRebootUpdates(
+                {
+                  id: enemy.id,
+                  x: position.x,
+                  z: position.z,
+                  resistanceFlags: enemy.resistanceFlags,
+                },
+                this.enemies.map((threat) => ({
+                  id: threat.id,
+                  x: threat.group.position.x,
+                  z: threat.group.position.z,
+                  hp: threat.hp,
+                  maxHp: threat.maxHp,
+                  slow: threat.slow,
+                  decoyOwnerId: threat.decoyOwnerId,
+                })),
+              );
+              for (const update of updates) {
+                const rebooted = this.enemies.find(
+                  (threat) => threat.id === update.id,
+                );
+                if (!rebooted) continue;
+                rebooted.hp = update.hp;
+                rebooted.slow = update.slow;
+                const ratio = clamp01(rebooted.hp / rebooted.maxHp);
+                rebooted.healthFill.scale.x = Math.max(0.001, ratio);
+                rebooted.healthFill.position.x = -0.59 * (1 - ratio);
+                this.addBeam(position, rebooted.group.position, 0xe86b64, 0.28);
+              }
+            }
             this.damageTarget(targetPlayer ? "player" : "core", enemy.damage);
             this.addRing(
               targetPosition,
@@ -4095,6 +4218,16 @@ class FreemanEngine {
     const deathPosition = enemy.group.position.clone();
     this.disposeDynamicObject(enemy.group);
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
+    if (enemy.decoyOwnerId !== null) {
+      this.addBurst(deathPosition, 0xc6a6e8, 5);
+      return;
+    }
+    for (const decoy of this.enemies.filter(
+      (threat) => threat.decoyOwnerId === enemy.id,
+    )) {
+      this.disposeDynamicObject(decoy.group);
+      this.enemies.splice(this.enemies.indexOf(decoy), 1);
+    }
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
@@ -4862,6 +4995,8 @@ type FlatEnemy = {
   bossPhase: number;
   tutorial: boolean;
   resistanceFlags: ResistanceFlag[];
+  decoyOwnerId: number | null;
+  decoyLeft: number;
 };
 
 type FlatAgent = AgentDefinition & {
@@ -5473,14 +5608,28 @@ class FreemanCanvasEngine implements GameController {
       (44 + this.agents.length * 8) *
       this.empMultiplier *
       this.terrain.empMultiplier;
+    const jammerThreats = this.enemies.map((threat) => ({
+      id: threat.id,
+      x: threat.x,
+      z: threat.z,
+      resistanceFlags: threat.resistanceFlags,
+    }));
     for (const enemy of [...this.enemies]) {
       if (
         this.distance(enemy.x, enemy.z, this.player.x, this.player.z) <= 10.5
       ) {
         enemy.slow = Math.max(enemy.slow, 2.8);
+        const resistanceFlags = getEffectiveResistanceFlags(
+          enemy,
+          jammerThreats,
+        );
         this.damageEnemy(
           enemy,
-          resolveEmpDamage(damage, enemy, this.encounterModifiers),
+          resolveEmpDamage(
+            damage,
+            { resistanceFlags },
+            this.encounterModifiers,
+          ),
           true,
         );
       }
@@ -6329,6 +6478,16 @@ class FreemanCanvasEngine implements GameController {
     for (const enemy of [...this.enemies]) {
       enemy.cooldownLeft = Math.max(0, enemy.cooldownLeft - delta);
       enemy.slow = Math.max(0, enemy.slow - delta);
+      if (enemy.decoyOwnerId !== null) {
+        enemy.decoyLeft -= delta;
+        const ownerActive = this.enemies.some(
+          (threat) => threat.id === enemy.decoyOwnerId,
+        );
+        if (enemy.decoyLeft <= 0 || !ownerActive) {
+          this.enemies.splice(this.enemies.indexOf(enemy), 1);
+        }
+        continue;
+      }
       const playerDistance = this.distance(
         enemy.x,
         enemy.z,
@@ -6395,6 +6554,24 @@ class FreemanCanvasEngine implements GameController {
         if (enemy.telegraphLeft <= 0) {
           enemy.cooldownLeft = enemy.attackCooldown;
           if (enemy.type === "phisher") {
+            if (enemy.resistanceFlags.includes("decoy")) {
+              const hasActiveDecoys = this.enemies.some(
+                (threat) => threat.decoyOwnerId === enemy.id,
+              );
+              if (!hasActiveDecoys) {
+                for (const offset of getPhisherDecoyOffsets(
+                  this.wave,
+                  enemy.id,
+                )) {
+                  this.createEnemy(
+                    "phisher",
+                    enemy.x + offset.x,
+                    enemy.z + offset.z,
+                    { decoyOwnerId: enemy.id, reward: 0 },
+                  );
+                }
+              }
+            }
             const availableAgents = this.agents.filter(
               (agent) => agent.disabledLeft <= 0,
             );
@@ -6428,6 +6605,25 @@ class FreemanCanvasEngine implements GameController {
               slow: 0,
             });
           } else if (distance <= enemy.range + 0.9) {
+            if (enemy.type === "rootkit") {
+              const updates = getRootkitRebootUpdates(enemy, this.enemies);
+              for (const update of updates) {
+                const rebooted = this.enemies.find(
+                  (threat) => threat.id === update.id,
+                );
+                if (!rebooted) continue;
+                rebooted.hp = update.hp;
+                rebooted.slow = update.slow;
+                this.addBeam(
+                  enemy.x,
+                  enemy.z,
+                  rebooted.x,
+                  rebooted.z,
+                  0xe86b64,
+                  0.28,
+                );
+              }
+            }
             this.damageTarget(targetPlayer ? "player" : "core", enemy.damage);
             this.addRing(
               targetX,
@@ -6462,13 +6658,14 @@ class FreemanCanvasEngine implements GameController {
         const directZ = (targetZ - enemy.z) / length;
         const routeBias =
           this.terrain.routeBias * (enemy.id % 2 === 0 ? 1 : -1);
+        const routed = applyTerrainRouteBias(directX, directZ, routeBias);
         enemy.x +=
-          (directX - directZ * routeBias) *
+          routed.x *
           delta *
           enemy.speed *
           slowFactor;
         enemy.z +=
-          (directZ + directX * routeBias) *
+          routed.z *
           delta *
           enemy.speed *
           slowFactor;
@@ -6634,7 +6831,13 @@ class FreemanCanvasEngine implements GameController {
     type: EnemyType,
     x: number,
     z: number,
-    options: { tutorial?: boolean; speed?: number; damage?: number; reward?: number } = {},
+    options: {
+      tutorial?: boolean;
+      speed?: number;
+      damage?: number;
+      reward?: number;
+      decoyOwnerId?: number;
+    } = {},
   ) {
     const definitions: Record<
       EnemyType,
@@ -6651,6 +6854,8 @@ class FreemanCanvasEngine implements GameController {
         | "bossPhase"
         | "tutorial"
         | "resistanceFlags"
+        | "decoyOwnerId"
+        | "decoyLeft"
       >
     > = {
       virus: {
@@ -6695,7 +6900,8 @@ class FreemanCanvasEngine implements GameController {
       },
     };
     const definition = definitions[type];
-    const resistanceFlags: ResistanceFlag[] = options.tutorial
+    const resistanceFlags: ResistanceFlag[] =
+      options.tutorial || options.decoyOwnerId
       ? []
       : [...this.encounterModifiers.flagsByType[type]] as ResistanceFlag[];
     const healthScale =
@@ -6703,7 +6909,9 @@ class FreemanCanvasEngine implements GameController {
     const damageScale = 1 + (this.wave - 1) * 0.055;
     const speedScale = 1 + Math.min(0.28, (this.wave - 1) * 0.035);
     const attackRateScale = Math.max(0.72, 1 - (this.wave - 1) * 0.035);
-    const scaledHp = Math.round(definition.hp * healthScale);
+    const scaledHp = options.decoyOwnerId
+      ? 1
+      : Math.round(definition.hp * healthScale);
     const enemy: FlatEnemy = {
       id: ++this.enemySequence,
       type,
@@ -6712,7 +6920,9 @@ class FreemanCanvasEngine implements GameController {
       ...definition,
       hp: scaledHp,
       maxHp: scaledHp,
-      speed: options.speed ?? definition.speed * speedScale,
+      speed: options.decoyOwnerId
+        ? 0
+        : options.speed ?? definition.speed * speedScale,
       damage:
         options.damage ??
         Math.round(
@@ -6722,12 +6932,14 @@ class FreemanCanvasEngine implements GameController {
         ),
       reward: options.reward ?? definition.reward,
       attackCooldown: definition.attackCooldown * attackRateScale,
-      cooldownLeft: 0.4 + Math.random() * 0.8,
+      cooldownLeft: options.decoyOwnerId ? 0 : 0.4 + Math.random() * 0.8,
       telegraphLeft: 0,
       slow: 0,
       bossPhase: type === "rootkit" ? 1 : 0,
       tutorial: options.tutorial ?? false,
       resistanceFlags,
+      decoyOwnerId: options.decoyOwnerId ?? null,
+      decoyLeft: options.decoyOwnerId ? 4.2 : 0,
     };
     this.enemies.push(enemy);
     this.addRing(
@@ -6923,6 +7135,15 @@ class FreemanCanvasEngine implements GameController {
     this.audio.play("hit");
     if (enemy.hp > 0) return;
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
+    if (enemy.decoyOwnerId !== null) {
+      this.addBurst(enemy.x, enemy.z, 0xc6a6e8, 5);
+      return;
+    }
+    for (const decoy of this.enemies.filter(
+      (threat) => threat.decoyOwnerId === enemy.id,
+    )) {
+      this.enemies.splice(this.enemies.indexOf(decoy), 1);
+    }
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
@@ -8038,6 +8259,26 @@ class FreemanCanvasEngine implements GameController {
 
   private drawEnemy(enemy: FlatEnemy) {
     const context = this.context;
+    if (enemy.resistanceFlags.includes("jammer")) {
+      const jammerZoneName = "enemy-jammer-zone";
+      const center = this.project(enemy.x, enemy.z);
+      const edge = this.project(enemy.x + JAMMER_ZONE_RADIUS, enemy.z);
+      context.save();
+      context.strokeStyle = "rgba(232,107,100,.28)";
+      context.lineWidth = 2;
+      context.setLineDash([5, 7]);
+      context.beginPath();
+      context.arc(
+        center.x,
+        center.y,
+        Math.hypot(edge.x - center.x, edge.y - center.y),
+        0,
+        Math.PI * 2,
+      );
+      context.stroke();
+      context.restore();
+      void jammerZoneName;
+    }
     const point = this.project(
       enemy.x,
       enemy.z,
@@ -8057,6 +8298,7 @@ class FreemanCanvasEngine implements GameController {
       enemy.telegraphLeft > 0 ? 1 + Math.sin(this.elapsed * 18) * 0.09 : 1;
     const size = baseSize * pulse;
     context.save();
+    if (enemy.decoyOwnerId !== null) context.globalAlpha = 0.48;
     context.fillStyle = "rgba(0,0,0,.48)";
     context.beginPath();
     context.ellipse(
@@ -8165,7 +8407,11 @@ class FreemanCanvasEngine implements GameController {
     context.textAlign = "center";
     context.textBaseline = "bottom";
     context.fillText(
-      enemy.type === "rootkit" ? "ROOTKIT BOSS" : enemy.type.toUpperCase(),
+      enemy.decoyOwnerId !== null
+        ? "PHISHER DECOY"
+        : enemy.type === "rootkit"
+          ? "ROOTKIT BOSS"
+          : enemy.type.toUpperCase(),
       point.x,
       point.y - size - 15,
     );

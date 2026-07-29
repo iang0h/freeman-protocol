@@ -47,6 +47,10 @@ import {
   tickSubAgents,
 } from "../app/game/autonomy-rules.mjs";
 import {
+  applyTerrainRouteBias,
+  getEffectiveResistanceFlags,
+  getPhisherDecoyOffsets,
+  getRootkitRebootUpdates,
   getTerrainModifier,
   getWaveModifiers,
   resolveEmpDamage,
@@ -140,6 +144,63 @@ test("terrain modifiers are deterministic, serializable, and cycle after wave on
     assert.ok(first.targetingRangeMultiplier >= 0.7);
     assert.ok(Math.abs(first.routeBias) <= 0.35);
   }
+});
+
+test("terrain route bias stays normalized for renderer parity", () => {
+  const direction = applyTerrainRouteBias(0.6, 0.8, 0.3);
+
+  assert.ok(Math.abs(Math.hypot(direction.x, direction.z) - 1) < 1e-12);
+  assert.deepEqual(direction, applyTerrainRouteBias(0.6, 0.8, 0.3));
+  assert.deepEqual(applyTerrainRouteBias(0, 0, 0.3), { x: 0, z: 0 });
+});
+
+test("Phisher decoys are deterministic and absent from wave one", () => {
+  assert.deepEqual(getPhisherDecoyOffsets(1, 7), []);
+  const offsets = getPhisherDecoyOffsets(3, 7);
+
+  assert.equal(offsets.length, 2);
+  assert.deepEqual(offsets, getPhisherDecoyOffsets(3, 7));
+  assert.notDeepEqual(offsets[0], offsets[1]);
+});
+
+test("jammer zones add EMP resistance to nearby threats only", () => {
+  const jammer = {
+    id: 1,
+    x: 0,
+    z: 0,
+    resistanceFlags: ["jammer"],
+  };
+
+  assert.deepEqual(
+    getEffectiveResistanceFlags(
+      { id: 2, x: 3, z: 0, resistanceFlags: ["shield"] },
+      [jammer],
+    ),
+    ["shield", "jammer"],
+  );
+  assert.deepEqual(
+    getEffectiveResistanceFlags(
+      { id: 3, x: 6, z: 0, resistanceFlags: ["shield"] },
+      [jammer],
+    ),
+    ["shield"],
+  );
+});
+
+test("Rootkits reboot nearby damaged or slowed threats deterministically", () => {
+  const source = {
+    id: 1,
+    x: 0,
+    z: 0,
+    resistanceFlags: ["jammer"],
+  };
+  const updates = getRootkitRebootUpdates(source, [
+    { id: 1, x: 0, z: 0, hp: 100, maxHp: 100, slow: 0 },
+    { id: 2, x: 3, z: 0, hp: 40, maxHp: 100, slow: 2.8 },
+    { id: 3, x: 6, z: 0, hp: 40, maxHp: 100, slow: 2.8 },
+  ]);
+
+  assert.deepEqual(updates, [{ id: 2, hp: 58, slow: 0 }]);
 });
 
 test("paces queued enemies without changing the remaining threat total", () => {
