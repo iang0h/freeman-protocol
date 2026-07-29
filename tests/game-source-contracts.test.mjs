@@ -315,6 +315,19 @@ test("both renderers credit pending material drops before wave cleanup", () => {
   }
 });
 
+test("both renderers explain why boss caches include autonomous field reserves", () => {
+  assert.match(
+    game,
+    /BOSS_REWARD_RATIONALE[\s\S]*?from "\.\/game\/boss-rules\.mjs"/,
+  );
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /WARBOSS CONTAINED[\s\S]*?BOSS_REWARD_RATIONALE/,
+    );
+  }
+});
+
 test("both renderers emit pooled visual feedback when a temporary sub-agent spawns", () => {
   for (const engine of [webglGame, canvasGame]) {
     const spawn = engine.slice(

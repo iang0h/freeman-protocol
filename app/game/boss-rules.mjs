@@ -6,6 +6,17 @@ export const BOSS_CAPS = Object.freeze({
   maxReinforcements: 6,
 });
 
+export const BOSS_REWARD_RATIONALE =
+  "Warboss caches include field reserves so autonomous agents can improvise while your warband keeps growing.";
+
+const PRE_FINAL_MATERIAL_REWARDS = Object.freeze({
+  3: Object.freeze({ components: 4, shards: 3 }),
+  4: Object.freeze({ components: 4, shards: 3 }),
+  5: Object.freeze({ components: 4, shards: 3 }),
+  6: Object.freeze({ components: 5, shards: 3 }),
+  7: Object.freeze({ components: 5, shards: 3 }),
+});
+
 const finite = (value, fallback = 0) =>
   Number.isFinite(value) ? value : fallback;
 
@@ -46,11 +57,14 @@ export function getBossEncounter(wave, seed) {
         Number((0.38 + (normalizedWave - 3) * 0.025 + intensity * 0.005).toFixed(3)),
       )
     : 0;
+  const preFinalRewards = PRE_FINAL_MATERIAL_REWARDS[normalizedWave];
   const components = scheduled
-    ? Math.min(5, 2 + Math.floor((normalizedWave - 2) / 2))
+    ? preFinalRewards?.components ??
+      Math.min(5, 2 + Math.floor((normalizedWave - 2) / 2))
     : 0;
   const shards = scheduled
-    ? Math.min(3, 1 + Math.floor((normalizedWave - 1) / 3))
+    ? preFinalRewards?.shards ??
+      Math.min(3, 1 + Math.floor((normalizedWave - 1) / 3))
     : 0;
   const rewardQuantity = Math.min(
     BOSS_CAPS.maxRewardQuantity,

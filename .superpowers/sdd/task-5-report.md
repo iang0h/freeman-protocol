@@ -165,3 +165,43 @@ and Sites artifact validation; all passed.
 - `tsc --noEmit --incremental false`: passed.
 - ESLint: passed with no warnings or errors.
 - `git diff --check`: passed.
+
+## Formal review follow-up: pre-victory autonomy and Nova reachability
+
+- Rebalanced the deterministic wave-three-through-seven warboss caches to
+  `4C/3S`, `4C/3S`, `4C/3S`, `5C/3S`, and `5C/3S`. The five-cache total is a
+  bounded `22 Components / 15 Shards`; no cache exceeds the existing
+  eight-material cap.
+- The pre-final total pays one sentient automatic child's `1C/1S` construction
+  cost and still preserves the complete `21C/13S` reservation for persistent
+  slots five through eight. Nova is therefore reachable before the wave-eight
+  victory transition, without depending on the final boss payout.
+- Kept the reservation and automatic intent/spawn rules unchanged. Both
+  renderers continue to expose only true surplus to child construction and
+  deduct the live wallet only after a successful spawn.
+- Added shared player-facing cache copy explaining that the extra materials are
+  field reserves for autonomous improvisation while the persistent warband
+  continues to grow. WebGL and Canvas use the same copy.
+- Replaced the exact-budget lifecycle regression with a clean-campaign
+  integration regression. It recruits the four starter slots from an empty
+  roster, applies waves three through seven boss rewards to independent WebGL
+  and Canvas campaign wallets, exercises automatic Forge improvisation and
+  child spending, compares both wallet transitions after every wave, and proves
+  all eight agents are recruited before the final encounter with the bounded
+  `0C/1S` remainder.
+
+### Follow-up TDD evidence
+
+1. The new focused integration regression first failed with zero automatic
+   children by wave seven (`0 !== 1`).
+2. The player-facing renderer contract independently failed because the shared
+   reward rationale was not imported or displayed.
+3. After adding only the bounded reward curve and shared copy, both focused
+   regressions passed.
+
+### Follow-up verification
+
+- Bundled Node `node --test tests/*.test.mjs`: 123 passed, 0 failed.
+- Bundled Node TypeScript `tsc --noEmit --incremental false`: passed.
+- Bundled Node ESLint: passed with no warnings or errors.
+- `git diff --check`: passed.

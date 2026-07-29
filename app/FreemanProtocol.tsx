@@ -48,6 +48,7 @@ import {
   useSkill as activateAgentSkill,
 } from "./game/skill-rules.mjs";
 import {
+  BOSS_REWARD_RATIONALE,
   getBossArmorMultiplier,
   getBossEncounter,
   tickBoss,
@@ -5146,7 +5147,7 @@ class FreemanEngine {
       this.callbacks.onToast({
         eyebrow: "WARBOSS CONTAINED",
         title: "RARE PROTOCOL SHARDS DROPPED",
-        detail: `${rewardState.rewards.components} Components · ${rewardState.rewards.shards} Shards are recoverable in the arena.`,
+        detail: `${rewardState.rewards.components} Components · ${rewardState.rewards.shards} Shards are recoverable in the arena. ${BOSS_REWARD_RATIONALE}`,
       });
     }
     if (enemy.bossVisual) {
@@ -8706,7 +8707,7 @@ class FreemanCanvasEngine implements GameController {
       this.callbacks.onToast({
         eyebrow: "WARBOSS CONTAINED",
         title: "RARE PROTOCOL SHARDS DROPPED",
-        detail: `${rewardState.rewards.components} Components · ${rewardState.rewards.shards} Shards are recoverable in the arena.`,
+        detail: `${rewardState.rewards.components} Components · ${rewardState.rewards.shards} Shards are recoverable in the arena. ${BOSS_REWARD_RATIONALE}`,
       });
     }
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
