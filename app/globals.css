@@ -1453,6 +1453,10 @@ canvas:focus-visible {
   justify-content: center;
 }
 
+.protocol-screen.evolution-screen {
+  justify-content: flex-start;
+}
+
 .overlay-copy h2 {
   margin: 14px 0 8px;
   font-family: var(--serif);
@@ -2277,6 +2281,25 @@ canvas:focus-visible {
   .protocol-grid em,
   .protocol-grid p {
     display: none;
+  }
+
+  .protocol-screen:not(.evolution-screen) .protocol-grid em {
+    display: block;
+    margin-bottom: 3px;
+    font-size: 6px;
+    line-height: 1.2;
+  }
+
+  .evolution-screen .progression-grid button {
+    min-height: 136px;
+  }
+
+  .evolution-screen .progression-grid p {
+    display: block;
+    max-width: none;
+    margin-top: 4px;
+    font-size: 9px;
+    line-height: 1.25;
   }
 
   .protocol-grid strong {

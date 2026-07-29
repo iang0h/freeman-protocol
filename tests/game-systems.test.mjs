@@ -184,6 +184,27 @@ test("wave drafts offer one player, agent, and defense choice", () => {
   );
 });
 
+test("wave drafts keep every category selectable after category upgrades cap", () => {
+  const cappedStacks = {
+    overclock: 2,
+    bastion: 2,
+    bandwidth: 2,
+    command: 2,
+    voltage: 2,
+  };
+  const draft = getUpgradeDraft(6, cappedStacks);
+
+  assert.deepEqual(
+    draft.map((item) => item.category),
+    ["player", "agent", "defense"],
+  );
+  for (const choice of draft) {
+    assert.doesNotThrow(() =>
+      applyUpgradeStack({ stacks: cappedStacks }, choice.id),
+    );
+  }
+});
+
 test("armor profiles expose mutually exclusive concrete player bonuses", () => {
   assert.deepEqual(Object.keys(PLAYER_ARMORS), ["vanguard", "striker", "relay"]);
   assert.equal(PLAYER_ARMORS.vanguard.bonuses.maxHealth, 35);

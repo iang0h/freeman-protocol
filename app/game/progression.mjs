@@ -247,6 +247,11 @@ export function getUpgradeDraft(wave, stacks) {
       if ((stacks[id] ?? 0) >= UPGRADE_CAPS[id]) continue;
       return [{ id, category, stacks: stacks[id] ?? 0 }];
     }
-    return [];
+    const fallbackId = "repair";
+    return [{
+      id: fallbackId,
+      category,
+      stacks: stacks[fallbackId] ?? 0,
+    }];
   });
 }

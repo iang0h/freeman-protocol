@@ -8676,7 +8676,7 @@ export default function FreemanProtocol() {
             {getUpgradeChoices(hud.wave, hud.upgradeStacks).map((upgrade) => (
               <button
                 type="button"
-                key={upgrade.id}
+                key={`${upgrade.category}:${upgrade.id}`}
                 onClick={() => engineRef.current?.applyUpgrade(upgrade.id)}
               >
                 <small>{upgrade.index}</small>
