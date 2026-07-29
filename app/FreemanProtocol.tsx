@@ -161,6 +161,9 @@ type HudState = {
   armorId: PlayerArmorId | null;
   armorBonuses: ArmorBonuses;
   componentUpgradeRanks: ComponentUpgradeRanks;
+  temporarySubAgents: number;
+  terrainLabel: string;
+  empResistance: number;
   tutorialStep: TutorialStep | null;
   canRetryWave: boolean;
   loot: LootCounters;
@@ -489,6 +492,15 @@ const COMPONENT_COPY: Record<string, string> = {
   "breach-ammo": "+16% damage and 10% faster attacks per rank",
   "nanite-reserve": "+30% healing per rank",
 };
+const getEmpResistancePercent = (modifiers: {
+  resistance: Record<string, number>;
+}) =>
+  Math.round(
+    Math.max(
+      0,
+      ...Object.values(modifiers.resistance).map((reduction) => reduction * 100),
+    ),
+  );
 const UPGRADE_CATEGORY_LABELS: Record<string, string> = {
   player: "PLAYER DRAFT",
   agent: "AGENT DRAFT",
@@ -524,6 +536,9 @@ const INITIAL_HUD: HudState = {
   armorId: null,
   armorBonuses: {},
   componentUpgradeRanks: { ...EMPTY_COMPONENT_UPGRADE_RANKS },
+  temporarySubAgents: 0,
+  terrainLabel: "CLEAR GRID",
+  empResistance: 0,
   tutorialStep: null,
   canRetryWave: false,
   loot: { repairs: 0, components: 0, shards: 0 },
@@ -4963,6 +4978,9 @@ class FreemanEngine {
       armorId: this.armorId,
       armorBonuses: getArmorBonuses(this.armorId),
       componentUpgradeRanks: { ...this.componentUpgradeRanks },
+      temporarySubAgents: this.temporarySubAgents.length,
+      terrainLabel: this.terrain.label,
+      empResistance: getEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
@@ -8554,6 +8572,9 @@ class FreemanCanvasEngine implements GameController {
       armorId: this.armorId,
       armorBonuses: getArmorBonuses(this.armorId),
       componentUpgradeRanks: { ...this.componentUpgradeRanks },
+      temporarySubAgents: this.temporarySubAgents.length,
+      terrainLabel: this.terrain.label,
+      empResistance: getEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
@@ -8725,6 +8746,16 @@ export default function FreemanProtocol() {
 
   const isOverlay = mode !== "playing";
   const recruitedCount = Object.values(hud.agents).filter(Boolean).length;
+  const agentRankSummary = AGENTS.filter((agent) => hud.agents[agent.id])
+    .map((agent) => {
+      const componentRanks = AGENT_COMPONENT_UPGRADES[agent.id].reduce(
+        (total: number, upgrade: { id: string }) =>
+          total + getComponentRank(hud.componentUpgradeRanks, agent.id, upgrade.id),
+        0,
+      );
+      return `${agent.code} ${hud.evolutions[agent.id] ? "II" : "I"}${componentRanks ? ` +${componentRanks}` : ""}`;
+    })
+    .join(" · ") || "NO AGENTS";
   const tutorial =
     hud.tutorialStep &&
     hud.tutorialStep !== "complete" &&
@@ -8888,11 +8919,42 @@ export default function FreemanProtocol() {
                 <small>SCORE</small>
                 <strong>{hud.score.toLocaleString()}</strong>
               </span>
-              <span>
-                <small>LOOT R/C/S</small>
-                <strong>{hud.loot.repairs}/{hud.loot.components}/{hud.loot.shards}</strong>
-              </span>
             </div>
+            <section
+              className="progression-telemetry"
+              aria-label="Progression and encounter telemetry"
+            >
+              <div>
+                <small>LOOT INVENTORY</small>
+                <strong>R {hud.loot.repairs} · C {hud.loot.components} · S {hud.loot.shards}</strong>
+                <span>REPAIRS · MODULES · SHARDS</span>
+              </div>
+              <div>
+                <small>ARMOR PROFILE</small>
+                <strong>{hud.armorId?.toUpperCase() ?? "UNASSIGNED"}</strong>
+                <span>{hud.armorId ? ARMOR_COPY[hud.armorId] : "INSTALL AT THE WORKSHOP"}</span>
+              </div>
+              <div>
+                <small>AGENT RANKS</small>
+                <strong>{agentRankSummary}</strong>
+                <span>RANK · COMPONENT STACKS</span>
+              </div>
+              <div>
+                <small>TEMP SUB-AGENTS</small>
+                <strong>{hud.temporarySubAgents}/{MAX_TEMPORARY_SUB_AGENTS_PER_WAVE}</strong>
+                <span>ACTIVE THIS WAVE</span>
+              </div>
+              <div>
+                <small>TERRAIN SIGNAL</small>
+                <strong>{hud.terrainLabel}</strong>
+                <span>ENCOUNTER ROUTING MODIFIER</span>
+              </div>
+              <div>
+                <small>EMP RESISTANCE</small>
+                <strong>{hud.empResistance}% MAX</strong>
+                <span>HIGHEST HOSTILE REDUCTION</span>
+              </div>
+            </section>
             <button
               type="button"
               className={`base-builder ${hud.placingDefense ? "is-placing" : ""}`}

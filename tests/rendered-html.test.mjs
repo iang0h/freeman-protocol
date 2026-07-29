@@ -45,15 +45,45 @@ test("catalog source defines the living network sections and reusable cards", as
   assert.match(catalog, /const agentEntries/);
   assert.match(catalog, /const threatEntries/);
   assert.match(catalog, /const lootEntries/);
+  assert.match(catalog, /const armorEntries/);
+  assert.match(catalog, /const terrainSignals/);
   assert.match(catalog, /function SignalBadge/);
   assert.match(catalog, /function AgentPortraitCard/);
   assert.match(catalog, /function LootCard/);
   assert.match(catalog, />Live Agents</);
   assert.match(catalog, />Threat Archive</);
   assert.match(catalog, />Field Components</);
+  assert.match(catalog, />Armor Profiles</);
+  assert.match(catalog, />Elite Recovery</);
+  assert.match(catalog, />Terrain Signals</);
   assert.match(styles, /--loot-cyan:\s*#83d7df/);
   assert.match(styles, /--loot-amber:\s*#d8a14b/);
   assert.match(styles, /--loot-violet:\s*#a78bfa/);
+  assert.match(styles, /\.progressionGrid/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
+test("HUD source surfaces the progression and encounter telemetry from both engines", async () => {
+  const game = await readFile(
+    new URL("../app/FreemanProtocol.tsx", import.meta.url),
+    "utf8",
+  );
+
+  for (const label of [
+    "LOOT INVENTORY",
+    "ARMOR PROFILE",
+    "AGENT RANKS",
+    "TEMP SUB-AGENTS",
+    "TERRAIN SIGNAL",
+    "EMP RESISTANCE",
+  ]) {
+    assert.match(game, new RegExp(label));
+  }
+  for (const field of ["temporarySubAgents", "terrainLabel", "empResistance"]) {
+    assert.ok((game.match(new RegExp(`${field}:`, "g")) ?? []).length >= 3);
+  }
+  assert.match(game, /className="progression-telemetry"/);
+  assert.match(game, /prefers-reduced-motion: reduce/);
 });
 
 test("renders the living network catalog route", async () => {
@@ -80,4 +110,7 @@ test("renders the living network catalog route", async () => {
   assert.match(html, /Live Agents/);
   assert.match(html, /Threat Archive/);
   assert.match(html, /Field Components/);
+  assert.match(html, /Armor Profiles/);
+  assert.match(html, /Elite Recovery/);
+  assert.match(html, /Terrain Signals/);
 });

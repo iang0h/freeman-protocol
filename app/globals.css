@@ -463,6 +463,50 @@ canvas:focus-visible {
   letter-spacing: 0.04em;
 }
 
+.progression-telemetry {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+.progression-telemetry > div {
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid rgba(158, 216, 221, 0.16);
+  background: rgba(5, 12, 15, 0.5);
+}
+
+.progression-telemetry small,
+.progression-telemetry span {
+  display: block;
+  overflow: hidden;
+  color: #78847f;
+  font-family: var(--mono);
+  font-size: 5px;
+  letter-spacing: 0.07em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progression-telemetry strong {
+  display: block;
+  overflow: hidden;
+  margin: 4px 0 3px;
+  color: var(--ivory);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progression-telemetry > div:nth-child(5) strong { color: var(--ice); }
+.progression-telemetry > div:nth-child(6) strong { color: #efad86; }
+
 .base-builder {
   display: flex;
   width: 100%;
@@ -1977,6 +2021,29 @@ canvas:focus-visible {
 
   .vitals-panel .resource-grid strong {
     font-size: 7px;
+  }
+
+  .vitals-panel .progression-telemetry {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 3px;
+    margin-top: 1px;
+    padding-top: 5px;
+  }
+
+  .vitals-panel .progression-telemetry > div {
+    padding: 4px;
+  }
+
+  .vitals-panel .progression-telemetry small,
+  .vitals-panel .progression-telemetry span {
+    font-size: 4px;
+  }
+
+  .vitals-panel .progression-telemetry strong {
+    margin: 2px 0;
+    font-size: 6px;
   }
 
   .vitals-panel .base-builder {
