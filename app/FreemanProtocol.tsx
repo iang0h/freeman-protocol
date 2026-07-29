@@ -36,7 +36,7 @@ import {
   clearSubAgents,
   decideAgentIntent,
   spawnTemporarySubAgent,
-  tickSubAgents,
+  tickTemporarySubAgent,
 } from "./game/autonomy-rules.mjs";
 import {
   FIRST_WAVE,
@@ -51,8 +51,11 @@ import { SpatialGrid } from "./game/spatial-grid";
 import {
   BoundedPool,
   createLootPickupMesh,
+  createTemporarySubAgentMarker,
   disposeObject3D,
   resetLootPickupMesh,
+  resetTemporarySubAgentMarker,
+  updateTemporarySubAgentHealthCue,
 } from "./game/three-resources";
 import { AudioManager } from "./game/AudioManager";
 
@@ -220,12 +223,25 @@ type TemporarySubAgent = {
   parentId: AgentId;
   role: AutonomyRole;
   remainingMs: number;
+  maxLifetimeMs: number;
+  cooldownLeftMs: number;
+  healthRatio: number;
   canSpawn: false;
 };
 
+type TemporarySubAgentAction =
+  | { type: "attack"; damage: number }
+  | {
+      type: "repair";
+      playerHealing: number;
+      coreHealing: number;
+      allyCooldownReductionMs: number;
+    }
+  | { type: "guard"; damage: number; slowMs: number }
+  | { type: "idle" };
+
 type WebglTemporarySubAgent = TemporarySubAgent & {
   marker: THREE.Group;
-  cooldownLeft: number;
 };
 
 type DefenseRuntime = {
@@ -737,6 +753,7 @@ class FreemanEngine {
   private readonly disposedResources = new WeakSet<object>();
   private readonly projectilePool = new BoundedPool<THREE.Mesh>(128);
   private readonly lootPool = new BoundedPool<THREE.Group>(48);
+  private readonly temporarySubAgentPool = new BoundedPool<THREE.Group>(6);
   private readonly pickups: LootRuntime[] = [];
   private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly aimPoint = new THREE.Vector3(0, 0, -4);
@@ -1456,6 +1473,9 @@ class FreemanEngine {
     this.clearDynamic();
     this.projectilePool.clear((mesh) => this.disposeDynamicObject(mesh));
     this.lootPool.clear((mesh) => this.disposeDynamicObject(mesh));
+    this.temporarySubAgentPool.clear((marker) =>
+      this.disposeDynamicObject(marker),
+    );
     this.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh || object instanceof THREE.Line))
         return;
@@ -3099,39 +3119,78 @@ class FreemanEngine {
   }
 
   private updateTemporarySubAgents(delta: number) {
-    const active = tickSubAgents(
-      this.temporarySubAgents,
-      delta * 1_000,
-    ) as WebglTemporarySubAgent[];
-    const activeIds = new Set(active.map((subAgent) => subAgent.id));
-    for (const subAgent of this.temporarySubAgents) {
-      if (!activeIds.has(subAgent.id)) {
-        this.disposeDynamicObject(subAgent.marker);
-      }
-    }
-    this.temporarySubAgents = active;
+    const active: WebglTemporarySubAgent[] = [];
     this.temporarySubAgents.forEach((subAgent, index) => {
       const parent = this.agents.find((agent) => agent.id === subAgent.parentId);
-      if (!parent) return;
+      if (!parent) {
+        this.temporarySubAgentPool.release(
+          subAgent.marker,
+          (marker) => resetTemporarySubAgentMarker(marker, 0xffffff),
+          (marker) => this.disposeDynamicObject(marker),
+        );
+        return;
+      }
       const angle = this.elapsed * 1.8 + index * 2.1;
       subAgent.marker.position
         .copy(parent.group.position)
         .add(new THREE.Vector3(Math.cos(angle) * 0.75, 0.3, Math.sin(angle) * 0.75));
       subAgent.marker.rotation.y += delta * 2.5;
-      subAgent.cooldownLeft = Math.max(0, subAgent.cooldownLeft - delta);
-      if (subAgent.cooldownLeft <= 0) {
-        const target = this.enemies.find((enemy) => enemy.group.position.distanceTo(subAgent.marker.position) < 6);
-        if (target) {
-          subAgent.cooldownLeft = 1.4;
-          if (subAgent.role === "support") {
-            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
-            this.core.hp = Math.min(this.core.maxHp, this.core.hp + 2);
-          } else {
-            this.damageEnemy(target, 8, subAgent.marker.position);
-          }
-        }
+      const attackTarget = this.enemies.find(
+        (enemy) => enemy.group.position.distanceTo(subAgent.marker.position) < 6,
+      );
+      const coreThreat = this.enemies.find(
+        (enemy) => enemy.group.position.distanceTo(this.core.group.position) < 7.5,
+      );
+      const result = tickTemporarySubAgent(
+        subAgent,
+        {
+          attackTargetInRange: Boolean(attackTarget),
+          playerNeedsRepair: this.player.hp < this.player.maxHp,
+          coreNeedsRepair: this.core.hp < this.core.maxHp,
+          coreThreatInRange: Boolean(coreThreat),
+        },
+        delta * 1_000,
+      );
+      Object.assign(subAgent, result.state);
+      updateTemporarySubAgentHealthCue(subAgent.marker, subAgent.healthRatio);
+      const healthBar = subAgent.marker.getObjectByName(
+        "temporary-sub-agent-health",
+      );
+      healthBar?.quaternion.copy(this.camera.quaternion);
+      if (result.expired) {
+        this.temporarySubAgentPool.release(
+          subAgent.marker,
+          (marker) => resetTemporarySubAgentMarker(marker, 0xffffff),
+          (marker) => this.disposeDynamicObject(marker),
+        );
+        return;
       }
+      const action = result.action as TemporarySubAgentAction;
+      if (action.type === "attack" && attackTarget) {
+        this.damageEnemy(attackTarget, action.damage, subAgent.marker.position);
+      } else if (action.type === "repair") {
+        this.player.hp = Math.min(
+          this.player.maxHp,
+          this.player.hp + action.playerHealing,
+        );
+        this.core.hp = Math.min(
+          this.core.maxHp,
+          this.core.hp + action.coreHealing,
+        );
+        for (const ally of this.agents) {
+          ally.cooldownLeft = Math.max(
+            0,
+            ally.cooldownLeft - action.allyCooldownReductionMs / 1_000,
+          );
+        }
+        this.addRing(subAgent.marker.position, parent.color, 0.12, 1.2, 0.25);
+      } else if (action.type === "guard" && coreThreat) {
+        coreThreat.slow = Math.max(coreThreat.slow, action.slowMs / 1_000);
+        this.damageEnemy(coreThreat, action.damage, subAgent.marker.position);
+      }
+      active.push(subAgent);
     });
+    this.temporarySubAgents = active;
   }
 
   private maybeSpawnTemporarySubAgent(
@@ -3157,34 +3216,28 @@ class FreemanEngine {
       },
     ) as TemporarySubAgent | null;
     if (!spawned) return;
-    const marker = new THREE.Group();
-    marker.name = "temporary-sub-agent";
-    const signal = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.2),
-      new THREE.MeshBasicMaterial({
-        color: agent.color,
-        transparent: true,
-        opacity: 0.82,
-      }),
+    const marker = this.temporarySubAgentPool.acquire(() =>
+      createTemporarySubAgentMarker(agent.color),
     );
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.36, 0.025, 6, 20),
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.65,
-      }),
-    );
-    ring.rotation.x = Math.PI / 2;
-    marker.add(signal, ring);
+    resetTemporarySubAgentMarker(marker, agent.color, 1);
     this.scene.add(marker);
-    this.temporarySubAgents.push({ ...spawned, marker, cooldownLeft: 0.35 });
+    this.temporarySubAgents.push({
+      ...spawned,
+      marker,
+      maxLifetimeMs: spawned.remainingMs,
+      cooldownLeftMs: 350,
+      healthRatio: 1,
+    });
     this.subAgentsSpawnedThisWave += 1;
   }
 
   private clearTemporarySubAgents() {
     for (const subAgent of this.temporarySubAgents) {
-      this.disposeDynamicObject(subAgent.marker);
+      this.temporarySubAgentPool.release(
+        subAgent.marker,
+        (marker) => resetTemporarySubAgentMarker(marker, 0xffffff),
+        (marker) => this.disposeDynamicObject(marker),
+      );
     }
     this.temporarySubAgents = clearSubAgents() as WebglTemporarySubAgent[];
     this.autonomyState = {};
@@ -4707,7 +4760,6 @@ type FlatTemporarySubAgent = TemporarySubAgent & {
   x: number;
   z: number;
   color: number;
-  cooldownLeft: number;
 };
 
 type FlatDefense = {
@@ -5805,30 +5857,59 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private updateTemporarySubAgents(delta: number) {
-    this.temporarySubAgents = tickSubAgents(
-      this.temporarySubAgents,
-      delta * 1_000,
-    ) as FlatTemporarySubAgent[];
+    const active: FlatTemporarySubAgent[] = [];
     this.temporarySubAgents.forEach((subAgent, index) => {
       const parent = this.agents.find((agent) => agent.id === subAgent.parentId);
       if (!parent) return;
       const angle = this.elapsed * 1.8 + index * 2.1;
       subAgent.x = parent.x + Math.cos(angle) * 0.75;
       subAgent.z = parent.z + Math.sin(angle) * 0.75;
-      subAgent.cooldownLeft = Math.max(0, subAgent.cooldownLeft - delta);
-      if (subAgent.cooldownLeft <= 0) {
-        const target = this.enemies.find((enemy) => this.distance(enemy.x, enemy.z, subAgent.x, subAgent.z) < 6);
-        if (target) {
-          subAgent.cooldownLeft = 1.4;
-          if (subAgent.role === "support") {
-            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
-            this.core.hp = Math.min(this.core.maxHp, this.core.hp + 2);
-          } else {
-            this.damageEnemy(target, 8);
-          }
+      const attackTarget = this.enemies.find(
+        (enemy) =>
+          this.distance(enemy.x, enemy.z, subAgent.x, subAgent.z) < 6,
+      );
+      const coreThreat = this.enemies.find(
+        (enemy) =>
+          this.distance(enemy.x, enemy.z, this.core.x, this.core.z) < 7.5,
+      );
+      const result = tickTemporarySubAgent(
+        subAgent,
+        {
+          attackTargetInRange: Boolean(attackTarget),
+          playerNeedsRepair: this.player.hp < this.player.maxHp,
+          coreNeedsRepair: this.core.hp < this.core.maxHp,
+          coreThreatInRange: Boolean(coreThreat),
+        },
+        delta * 1_000,
+      );
+      Object.assign(subAgent, result.state);
+      if (result.expired) return;
+      const action = result.action as TemporarySubAgentAction;
+      if (action.type === "attack" && attackTarget) {
+        this.damageEnemy(attackTarget, action.damage);
+      } else if (action.type === "repair") {
+        this.player.hp = Math.min(
+          this.player.maxHp,
+          this.player.hp + action.playerHealing,
+        );
+        this.core.hp = Math.min(
+          this.core.maxHp,
+          this.core.hp + action.coreHealing,
+        );
+        for (const ally of this.agents) {
+          ally.cooldownLeft = Math.max(
+            0,
+            ally.cooldownLeft - action.allyCooldownReductionMs / 1_000,
+          );
         }
+        this.addRing(subAgent.x, subAgent.z, parent.color, 0.12, 1.2, 0.25);
+      } else if (action.type === "guard" && coreThreat) {
+        coreThreat.slow = Math.max(coreThreat.slow, action.slowMs / 1_000);
+        this.damageEnemy(coreThreat, action.damage);
       }
+      active.push(subAgent);
     });
+    this.temporarySubAgents = active;
   }
 
   private maybeSpawnTemporarySubAgent(
@@ -5859,7 +5940,9 @@ class FreemanCanvasEngine implements GameController {
       x: agent.x,
       z: agent.z,
       color: agent.color,
-      cooldownLeft: 0.35,
+      maxLifetimeMs: spawned.remainingMs,
+      cooldownLeftMs: 350,
+      healthRatio: 1,
     });
     this.subAgentsSpawnedThisWave += 1;
   }
@@ -7575,6 +7658,17 @@ class FreemanCanvasEngine implements GameController {
     context.lineTo(signal.x - size, signal.y);
     context.closePath();
     context.fill();
+    const healthRatio = Math.min(1, Math.max(0, subAgent.healthRatio));
+    context.shadowBlur = 0;
+    context.fillStyle = "#071015";
+    context.fillRect(signal.x - size * 1.3, signal.y - size * 1.75, size * 2.6, 3);
+    context.fillStyle = toCssColor(subAgent.color);
+    context.fillRect(
+      signal.x - size * 1.3,
+      signal.y - size * 1.75,
+      size * 2.6 * healthRatio,
+      3,
+    );
     context.restore();
   }
 

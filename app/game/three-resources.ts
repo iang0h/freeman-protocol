@@ -100,6 +100,75 @@ export class BoundedPool<T> {
   }
 }
 
+export function createTemporarySubAgentMarker(color: number) {
+  const marker = new THREE.Group();
+  marker.name = "temporary-sub-agent";
+  const signal = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.2),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.82 }),
+  );
+  signal.name = "temporary-sub-agent-signal";
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.36, 0.025, 6, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.65,
+    }),
+  );
+  ring.name = "temporary-sub-agent-ring";
+  ring.rotation.x = Math.PI / 2;
+  const healthBar = new THREE.Group();
+  healthBar.name = "temporary-sub-agent-health";
+  healthBar.position.y = 0.48;
+  const healthBack = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.76, 0.08),
+    new THREE.MeshBasicMaterial({ color: 0x091014, transparent: true, opacity: 0.8 }),
+  );
+  const healthFill = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.7, 0.045),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  healthFill.name = "temporary-sub-agent-health-fill";
+  healthFill.position.z = 0.002;
+  healthBar.add(healthBack, healthFill);
+  marker.add(signal, ring, healthBar);
+  resetTemporarySubAgentMarker(marker, color, 1);
+  return marker;
+}
+
+export function updateTemporarySubAgentHealthCue(
+  marker: THREE.Group,
+  healthRatio: number,
+) {
+  const ratio = Math.min(1, Math.max(0, healthRatio));
+  const fill = marker.getObjectByName(
+    "temporary-sub-agent-health-fill",
+  ) as THREE.Mesh;
+  fill.scale.x = Math.max(0.001, ratio);
+  fill.position.x = -0.35 * (1 - ratio);
+}
+
+export function resetTemporarySubAgentMarker(
+  marker: THREE.Group,
+  color: number,
+  healthRatio = 1,
+) {
+  const signal = marker.getObjectByName(
+    "temporary-sub-agent-signal",
+  ) as THREE.Mesh;
+  const fill = marker.getObjectByName(
+    "temporary-sub-agent-health-fill",
+  ) as THREE.Mesh;
+  (signal.material as THREE.MeshBasicMaterial).color.setHex(color);
+  (fill.material as THREE.MeshBasicMaterial).color.setHex(color);
+  updateTemporarySubAgentHealthCue(marker, healthRatio);
+  marker.position.set(0, 0, 0);
+  marker.rotation.set(0, 0, 0);
+  marker.scale.setScalar(1);
+  marker.removeFromParent();
+}
+
 export function createLootPickupMesh(type: string) {
   const group = new THREE.Group();
   group.name = "loot-pickup";

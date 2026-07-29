@@ -14,6 +14,10 @@ const storage = await readFile(
   new URL("../app/game/storage.mjs", import.meta.url),
   "utf8",
 ).catch(() => "");
+const threeResources = await readFile(
+  new URL("../app/game/three-resources.ts", import.meta.url),
+  "utf8",
+);
 const webglGame = game.slice(
   game.indexOf("class FreemanEngine"),
   game.indexOf("type FlatEnemy"),
@@ -253,7 +257,7 @@ test("both engines drive recruited agents from shared autonomous role intents", 
 test("temporary autonomous sub-agents are bounded, rendered, expired, and reset", () => {
   assert.match(game, /const MAX_TEMPORARY_SUB_AGENTS_PER_WAVE = 3/);
   assert.match(game, /spawnTemporarySubAgent/);
-  assert.match(game, /tickSubAgents/);
+  assert.match(game, /tickTemporarySubAgent/);
   assert.match(game, /clearSubAgents/);
   assert.match(webglGame, /temporary-sub-agent/);
   assert.match(canvasGame, /private drawTemporarySubAgent/);
@@ -277,6 +281,24 @@ test("temporary autonomous sub-agents are bounded, rendered, expired, and reset"
       /private defeat\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
     );
   }
+});
+
+test("both engines consume shared temporary role actions and health cues", () => {
+  assert.match(threeResources, /createTemporarySubAgentMarker/);
+  assert.match(threeResources, /resetTemporarySubAgentMarker/);
+  assert.match(threeResources, /updateTemporarySubAgentHealthCue/);
+  assert.match(webglGame, /temporarySubAgentPool/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /private updateTemporarySubAgents\([\s\S]*?tickTemporarySubAgent\(/,
+    );
+    assert.match(engine, /action\.type === "attack"[\s\S]*?damageEnemy/);
+    assert.match(engine, /action\.type === "repair"[\s\S]*?playerHealing/);
+    assert.match(engine, /action\.type === "guard"[\s\S]*?slowMs/);
+    assert.match(engine, /healthRatio/);
+  }
+  assert.match(webglGame, /this\.temporarySubAgentPool\.clear/);
 });
 
 test("follow command overrides autonomous roles and Canvas disposal clears sub-agents", () => {

@@ -43,6 +43,7 @@ import {
   decideAgentIntent,
   shouldImprovise,
   spawnTemporarySubAgent,
+  tickTemporarySubAgent,
   tickSubAgents,
 } from "../app/game/autonomy-rules.mjs";
 
@@ -625,6 +626,106 @@ test("temporary sub-agents expire and are cleared between waves", () => {
   ]);
   assert.deepEqual(clearSubAgents(subAgents), []);
   assert.equal(subAgents.length, 2);
+});
+
+test("assault sub-agents deterministically damage nearby threats", () => {
+  const result = tickTemporarySubAgent(
+    {
+      id: "subagent-kira-1",
+      parentId: "kira",
+      role: "assault",
+      remainingMs: 5_000,
+      maxLifetimeMs: 5_000,
+      cooldownLeftMs: 0,
+      canSpawn: false,
+    },
+    { attackTargetInRange: true },
+    100,
+  );
+
+  assert.deepEqual(result.action, { type: "attack", damage: 8 });
+  assert.equal(result.state.remainingMs, 4_900);
+  assert.equal(result.state.cooldownLeftMs, 1_400);
+  assert.equal(result.state.healthRatio, 0.98);
+  assert.equal(result.expired, false);
+});
+
+test("support sub-agents recover the player and Core while buffing allies", () => {
+  const result = tickTemporarySubAgent(
+    {
+      role: "support",
+      remainingMs: 4_000,
+      maxLifetimeMs: 5_000,
+      cooldownLeftMs: 0,
+      canSpawn: false,
+    },
+    { playerNeedsRepair: true, coreNeedsRepair: true },
+    0,
+  );
+
+  assert.deepEqual(result.action, {
+    type: "repair",
+    playerHealing: 2,
+    coreHealing: 2,
+    allyCooldownReductionMs: 250,
+  });
+});
+
+test("defense sub-agents intercept threats near the Core", () => {
+  const result = tickTemporarySubAgent(
+    {
+      role: "defend",
+      remainingMs: 3_000,
+      maxLifetimeMs: 5_000,
+      cooldownLeftMs: 0,
+      canSpawn: false,
+    },
+    { coreThreatInRange: true },
+    0,
+  );
+
+  assert.deepEqual(result.action, {
+    type: "guard",
+    damage: 6,
+    slowMs: 350,
+  });
+});
+
+test("temporary sub-agent ticks expose expiry and health cue state", () => {
+  const result = tickTemporarySubAgent(
+    {
+      role: "assault",
+      remainingMs: 250,
+      maxLifetimeMs: 1_000,
+      cooldownLeftMs: 800,
+      canSpawn: false,
+    },
+    { attackTargetInRange: true },
+    250,
+  );
+
+  assert.deepEqual(result.action, { type: "idle" });
+  assert.equal(result.state.remainingMs, 0);
+  assert.equal(result.state.cooldownLeftMs, 550);
+  assert.equal(result.state.healthRatio, 0);
+  assert.equal(result.expired, true);
+});
+
+test("temporary sub-agent cooldowns prevent repeated role actions", () => {
+  const result = tickTemporarySubAgent(
+    {
+      role: "assault",
+      remainingMs: 5_000,
+      maxLifetimeMs: 5_000,
+      cooldownLeftMs: 900,
+      canSpawn: false,
+    },
+    { attackTargetInRange: true },
+    100,
+  );
+
+  assert.deepEqual(result.action, { type: "idle" });
+  assert.equal(result.state.cooldownLeftMs, 800);
 });
 
 function sequence(values) {

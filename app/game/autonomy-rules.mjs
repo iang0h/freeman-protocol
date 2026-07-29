@@ -15,6 +15,7 @@ export const AGENT_ROLES = Object.freeze({
 
 const DEFAULT_MAX_SUB_AGENTS = 3;
 const DEFAULT_SUB_AGENT_LIFETIME_MS = 5_000;
+const SUB_AGENT_ACTION_COOLDOWN_MS = 1_400;
 
 function getRole(agent) {
   return AGENT_ROLES[agent.role] ? agent.role : "defend";
@@ -100,6 +101,56 @@ export function tickSubAgents(subAgents, elapsedMs) {
     if (remainingMs > 0) active.push({ ...subAgent, remainingMs });
     return active;
   }, []);
+}
+
+export function tickTemporarySubAgent(state, context = {}, elapsedMs = 0) {
+  const elapsed = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0;
+  const remainingMs = Math.max(0, state.remainingMs - elapsed);
+  const maxLifetimeMs =
+    Number.isFinite(state.maxLifetimeMs) && state.maxLifetimeMs > 0
+      ? state.maxLifetimeMs
+      : Math.max(1, state.remainingMs);
+  const cooldownLeftMs = Math.max(
+    0,
+    (Number.isFinite(state.cooldownLeftMs) ? state.cooldownLeftMs : 0) -
+      elapsed,
+  );
+  const nextState = {
+    ...state,
+    remainingMs,
+    maxLifetimeMs,
+    cooldownLeftMs,
+    healthRatio: Math.min(1, remainingMs / maxLifetimeMs),
+  };
+
+  if (remainingMs <= 0) {
+    return { state: nextState, action: { type: "idle" }, expired: true };
+  }
+  if (cooldownLeftMs > 0) {
+    return { state: nextState, action: { type: "idle" }, expired: false };
+  }
+
+  let action = { type: "idle" };
+  if (getRole(state) === "assault" && context.attackTargetInRange) {
+    action = { type: "attack", damage: 8 };
+  } else if (
+    getRole(state) === "support" &&
+    (context.playerNeedsRepair || context.coreNeedsRepair)
+  ) {
+    action = {
+      type: "repair",
+      playerHealing: 2,
+      coreHealing: 2,
+      allyCooldownReductionMs: 250,
+    };
+  } else if (getRole(state) === "defend" && context.coreThreatInRange) {
+    action = { type: "guard", damage: 6, slowMs: 350 };
+  }
+
+  if (action.type !== "idle") {
+    nextState.cooldownLeftMs = SUB_AGENT_ACTION_COOLDOWN_MS;
+  }
+  return { state: nextState, action, expired: false };
 }
 
 export function clearSubAgents() {
