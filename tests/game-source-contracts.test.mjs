@@ -317,6 +317,43 @@ test("both engines consume shared temporary role actions and health cues", () =>
   assert.match(webglGame, /this\.temporarySubAgentPool\.clear/);
 });
 
+test("Canvas fallback owns the same repair-bay, retreat, and hostile-target contracts as WebGL", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /repairBay/);
+    assert.match(engine, /getRepairDecision/);
+    assert.match(engine, /tickRepairBay/);
+    assert.match(engine, /repairDecision === "repair" \|\| agent\.repairDecision === "retreat"/);
+    assert.match(engine, /damageAgent/);
+    assert.match(engine, /damageDefense/);
+    assert.match(engine, /damageRepairBay/);
+    assert.match(engine, /findHostileProjectileHit/);
+  }
+  assert.match(canvasGame, /private drawRepairBay/);
+  assert.match(canvasGame, /this\.drawWorldHealthBar\([\s\S]*?agent\.hp \/ agent\.maxHp/);
+  assert.match(canvasGame, /this\.drawWorldHealthBar\([\s\S]*?defense\.hp \/ defense\.maxHp/);
+});
+
+test("the Core remains protect-only across upgrades, Covenant, support sub-agents, and repair loot", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const upgrade = engine.slice(
+      engine.indexOf("applyUpgrade(id: UpgradeId)"),
+      engine.indexOf("evolveAgent(", engine.indexOf("applyUpgrade(id: UpgradeId)")),
+    );
+    const subAgents = engine.slice(
+      engine.indexOf("private updateTemporarySubAgents"),
+      engine.indexOf("private maybeSpawnTemporarySubAgent"),
+    );
+    const loot = engine.slice(
+      engine.indexOf("private updateLootPickups"),
+      engine.indexOf("private clearLootPickups"),
+    );
+    assert.doesNotMatch(upgrade, /this\.core\.hp/);
+    assert.doesNotMatch(subAgents, /this\.core\.hp/);
+    assert.doesNotMatch(loot, /this\.core\.hp/);
+  }
+  assert.doesNotMatch(game, /coreHealing|coreNeedsRepair|coreRepair/);
+});
+
 test("follow command overrides autonomous roles and Canvas disposal clears sub-agents", () => {
   assert.match(game, /this\.squadCommand === "follow"[\s\S]*?intent/);
   const canvasDispose = canvasGame.slice(canvasGame.lastIndexOf("dispose()"));

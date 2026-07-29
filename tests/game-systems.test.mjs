@@ -77,7 +77,7 @@ async function loadRepairRules() {
   return import("../app/game/repair-rules.mjs");
 }
 
-test("agents retreat below their threshold, repair only at a separate functioning bay, and return at their configured ratio", async () => {
+test("repair lifecycle persists at the bay until the configured return ratio", async () => {
   const { getRepairDecision, tickRepairBay } = await loadRepairRules();
   const agent = {
     id: "relay",
@@ -96,9 +96,34 @@ test("agents retreat below their threshold, repair only at a separate functionin
   assert.equal(getRepairDecision(agent, { repairBay: sharedCore }), "retreat");
   assert.equal(getRepairDecision(agent, { repairBay: functioningBay }), "repair");
 
-  const repaired = tickRepairBay(functioningBay, [agent], 2_500);
-  assert.equal(repaired.units[0].hp, 78);
-  assert.equal(getRepairDecision(repaired.units[0], { repairBay: functioningBay }), "return");
+  const firstTick = tickRepairBay(functioningBay, [agent], 1_000).units[0];
+  assert.equal(firstTick.hp, 48);
+  assert.equal(
+    getRepairDecision(firstTick, { repairBay: functioningBay }),
+    "repair",
+  );
+
+  const secondTick = tickRepairBay(
+    functioningBay,
+    [{ ...firstTick, repairDecision: getRepairDecision(firstTick, { repairBay: functioningBay }) }],
+    1_000,
+  ).units[0];
+  assert.equal(secondTick.hp, 68);
+  assert.equal(
+    getRepairDecision(secondTick, { repairBay: functioningBay }),
+    "repair",
+  );
+
+  const returnTick = tickRepairBay(
+    functioningBay,
+    [{ ...secondTick, repairDecision: getRepairDecision(secondTick, { repairBay: functioningBay }) }],
+    1_000,
+  ).units[0];
+  assert.equal(returnTick.hp, 88);
+  assert.equal(
+    getRepairDecision(returnTick, { repairBay: functioningBay }),
+    "return",
+  );
 });
 
 test("unit damage and repair timers clamp without mutating Core health", async () => {
@@ -126,8 +151,8 @@ test("unit damage and repair timers clamp without mutating Core health", async (
   assert.equal(damaged.coreHealth, 137);
 });
 
-test("turrets take enemy damage, repair with Components, and a destroyed bay never silently heals units", async () => {
-  const { applyUnitDamage, repairTurret, tickRepairBay } = await loadRepairRules();
+test("destroyed bays remain a withdrawal fallback while turrets repair with Components", async () => {
+  const { applyUnitDamage, getRepairDecision, repairTurret, tickRepairBay } = await loadRepairRules();
   const turret = applyUnitDamage({ id: "sentry-1", hp: 55, maxHp: 100 }, 80);
   assert.equal(turret.hp, 0);
 
@@ -140,12 +165,45 @@ test("turrets take enemy damage, repair with Components, and a destroyed bay nev
 
   const fieldKit = repairTurret({ hp: 25, maxHp: 100, repairAmount: 20 }, 1);
   assert.equal(fieldKit.turret.hp, 45);
+  const destroyedBay = applyUnitDamage(
+    { hp: 60, maxHp: 60, isSeparate: true, repairPerSecond: 40 },
+    60,
+  );
+  assert.equal(destroyedBay.hp, 0);
+  const withdrawnUnit = { hp: 25, maxHp: 100, repairThreshold: 0.4, repairDecision: "repair" };
   const noBayRepair = tickRepairBay(
-    { hp: 0, maxHp: 60, isSeparate: true, repairPerSecond: 40 },
-    [{ hp: 25, maxHp: 100, repairDecision: "repair" }],
+    destroyedBay,
+    [withdrawnUnit],
     5_000,
   );
   assert.equal(noBayRepair.units[0].hp, 25);
+  assert.equal(
+    getRepairDecision(
+      withdrawnUnit,
+      { repairBay: destroyedBay, fieldKits: 0 },
+    ),
+    "retreat",
+  );
+});
+
+test("hostile projectile collisions cover agents, turrets, and repair bays", async () => {
+  const { findHostileProjectileHit } = await loadRepairRules();
+  const projectile = { x: 0, z: 0, radius: 0.2 };
+  const targets = [
+    { id: "kairos", kind: "agent", x: 0.35, z: 0, radius: 0.3, hp: 75 },
+    { id: "sentry-1", kind: "turret", x: 1.1, z: 0, radius: 0.35, hp: 100 },
+    { id: "repair-bay", kind: "repair-bay", x: 1.9, z: 0, radius: 0.55, hp: 70 },
+  ];
+
+  assert.deepEqual(findHostileProjectileHit(projectile, targets), targets[0]);
+  assert.deepEqual(
+    findHostileProjectileHit({ ...projectile, x: 1.1 }, targets.slice(1)),
+    targets[1],
+  );
+  assert.deepEqual(
+    findHostileProjectileHit({ ...projectile, x: 1.9 }, targets.slice(2)),
+    targets[2],
+  );
 });
 
 test("warband recruitment keeps starter costs and escalates material costs after slot four", () => {
@@ -546,7 +604,7 @@ test("an agent can buy exactly one evolution", () => {
   assert.equal(EVOLUTIONS.kairos[0].chainTargets, 2);
   assert.equal(EVOLUTIONS.kira[1].pierceMultipliers[1], 0.45);
   assert.equal(EVOLUTIONS.forge[0].splashDamageMultiplier, 0.45);
-  assert.equal(EVOLUTIONS.covenant[0].coreShield, 30);
+  assert.equal(EVOLUTIONS.covenant[0].playerShield, 20);
 });
 
 test("evolution purchase validates recruitment and Compute", () => {
@@ -851,7 +909,7 @@ test("loot requires player overlap before it can be collected", () => {
   assert.equal(canCollectLoot({ x: 1.2, y: 0, radius: 0.5 }, loot), true);
 });
 
-test("repair loot clamps player and core health at their maxima", () => {
+test("repair loot restores the player without healing the protected Core", () => {
   const state = {
     health: 92,
     maxHealth: 100,
@@ -862,7 +920,7 @@ test("repair loot clamps player and core health at their maxima", () => {
   };
   assert.deepEqual(
     applyLootPickup(state, { type: LOOT_TYPES.repair.id, value: 25 }),
-    { ...state, health: 100, coreHealth: 180 },
+    { ...state, health: 100 },
   );
   assert.deepEqual(state, {
     health: 92,
@@ -1064,7 +1122,7 @@ test("assault sub-agents deterministically damage nearby threats", () => {
   assert.equal(result.expired, false);
 });
 
-test("support sub-agents recover the player and Core while buffing allies", () => {
+test("support sub-agents recover the player without healing the protected Core", () => {
   const result = tickTemporarySubAgent(
     {
       role: "support",
@@ -1080,7 +1138,6 @@ test("support sub-agents recover the player and Core while buffing allies", () =
   assert.deepEqual(result.action, {
     type: "repair",
     playerHealing: 2,
-    coreHealing: 2,
     allyCooldownReductionMs: 250,
   });
 });

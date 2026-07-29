@@ -135,12 +135,11 @@ export function tickTemporarySubAgent(state, context = {}, elapsedMs = 0) {
     action = { type: "attack", damage: 8 };
   } else if (
     getRole(state) === "support" &&
-    (context.playerNeedsRepair || context.coreNeedsRepair)
+    context.playerNeedsRepair
   ) {
     action = {
       type: "repair",
       playerHealing: 2,
-      coreHealing: 2,
       allyCooldownReductionMs: 250,
     };
   } else if (getRole(state) === "defend" && context.coreThreatInRange) {

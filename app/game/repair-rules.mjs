@@ -51,6 +51,11 @@ export function getRepairDecision(unit, context = {}) {
   const returnRatio = Math.max(threshold, Math.min(1, finite(unit?.returnHealthRatio, 0.8)));
 
   if (ratio >= returnRatio) return "return";
+  if (unit?.repairDecision === "repair" || unit?.repairDecision === "retreat") {
+    return functioningSeparateBay(context.repairBay) || finite(context.fieldKits) > 0
+      ? "repair"
+      : "retreat";
+  }
   if (ratio > threshold) return "fight";
   if (functioningSeparateBay(context.repairBay)) return "repair";
   if (finite(context.fieldKits) > 0) return "repair";
@@ -87,4 +92,23 @@ export function repairTurret(turret, components) {
     turret: withHealth(turret, Math.min(maxHealth(turret), health(turret) + amount)),
     components: available - repairCost,
   };
+}
+
+export function findHostileProjectileHit(projectile, targets) {
+  const projectileX = finite(projectile?.x);
+  const projectileZ = finite(projectile?.z);
+  const projectileRadius = Math.max(0, finite(projectile?.radius));
+  const candidates = (Array.isArray(targets) ? targets : [])
+    .filter((target) => finite(target?.hp ?? target?.health) > 0)
+    .map((target) => ({
+      target,
+      distance: Math.hypot(
+        projectileX - finite(target?.x),
+        projectileZ - finite(target?.z),
+      ),
+      radius: Math.max(0, finite(target?.radius)),
+    }))
+    .filter((candidate) => candidate.distance <= projectileRadius + candidate.radius)
+    .sort((left, right) => left.distance - right.distance);
+  return candidates[0]?.target ?? null;
 }

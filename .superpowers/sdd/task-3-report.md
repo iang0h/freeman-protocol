@@ -35,3 +35,44 @@
   - Could not run in this supplied worktree: its `node_modules` directory is not
     present and the bundled Node runtime does not include `npm`. The TypeScript
     verification above used the repository's existing dependency tree directly.
+
+## Review follow-up fixes
+
+- Made repair decisions stateful: agents that have begun withdrawing/repairing
+  remain in that lifecycle until `returnHealthRatio`, then resume combat.
+- Brought the Canvas fallback to repair parity: it now has a destructible,
+  separately rendered repair bay; retreat movement; bay healing; agent/turret
+  damage; agent/turret health bars; and hostile projectile collisions for all
+  vulnerable targets.
+- Made the Core protect-only. Upgrade, Covenant, temporary support-agent, and
+  repair-loot paths no longer restore Core health; player, agent, and turret
+  repair paths remain available.
+- Added behavioral lifecycle, destroyed-bay fallback, Core-isolation, and
+  projectile-target tests, plus renderer parity source contracts.
+
+## Follow-up TDD and verification evidence
+
+1. Wrote the new lifecycle/projectile/Core/Canvas tests, then ran:
+
+   `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs`
+
+   Initial output: 92 tests, 86 passed, 6 expected failures. The failures
+   identified the stateless repair transition, absent hostile-projectile helper,
+   repair-loot Core healing, support-sub-agent Core healing, and missing Canvas
+   parity implementation.
+
+2. After implementation, ran:
+
+   `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/*.test.mjs`
+
+   Output: 107 tests passed, 0 failures.
+
+3. Ran:
+
+   `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node /Users/iangoh/Documents/Codex/2026-07-28/iang0h-freeman-protocol-https-github-com/work/freeman-protocol/node_modules/typescript/bin/tsc --noEmit --project tsconfig.json`
+
+   Output: exit 0.
+
+4. Ran `git diff --check`.
+
+   Output: no whitespace errors.

@@ -108,7 +108,6 @@ export function applyLootPickup(state, loot) {
     return {
       ...state,
       health: clampRepair(state.health, state.maxHealth, value),
-      coreHealth: clampRepair(state.coreHealth, state.maxCoreHealth, value),
     };
   }
 
