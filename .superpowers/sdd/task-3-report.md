@@ -76,3 +76,28 @@
 4. Ran `git diff --check`.
 
    Output: no whitespace errors.
+
+## Review follow-up: WebGL repair-bay convergence
+
+### Root cause and fix
+
+- The Canvas fallback gives agents with a `repair` or `retreat` decision a zero
+  movement radius around the repair bay. WebGL anchored those agents to the same
+  bay but retained its normal 1.45–1.83 orbit radius, which is outside the
+  1.35-unit repair gate and could leave agents permanently unable to heal.
+- WebGL now derives the same `withdrawing` state and uses a zero-radius bay
+  target, allowing agents to reach the existing repair threshold.
+- Added a source-contract regression test requiring both renderers to define
+  withdrawal, select a zero-radius target, and preserve the 1.35 repair gate.
+
+### TDD and verification
+
+1. Added the renderer-parity source test and ran the focused source suite.
+   It failed as expected because WebGL had no withdrawal movement branch.
+2. Applied the minimal WebGL zero-radius withdrawal fix and reran:
+
+   `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs tests/mobile-layout.test.mjs`
+
+   Output: 102 tests passed, 0 failures.
+3. Ran TypeScript no-emit with the bundled Node runtime: exit 0.
+4. Ran `git diff --check`: no whitespace errors.

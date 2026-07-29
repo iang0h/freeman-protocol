@@ -3616,8 +3616,10 @@ class FreemanEngine {
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
         (intent === "support" ? this.elapsed * 0.18 : 0);
+      const withdrawing =
+        agent.repairDecision === "repair" || agent.repairDecision === "retreat";
       const anchor =
-        agent.repairDecision === "repair" || agent.repairDecision === "retreat"
+        withdrawing
         ? this.repairBay.group.position
         : gatheringPickup
         ? new THREE.Vector3(gatheringPickup.x, 0.02, gatheringPickup.y)
@@ -3632,7 +3634,7 @@ class FreemanEngine {
             : intent === "defend"
               ? this.core.group.position
               : priority?.group.position ?? this.player.group.position;
-      const radius = gatheringPickup
+      const radius = withdrawing || gatheringPickup
         ? 0
         : intent === "defend"
           ? 2.75

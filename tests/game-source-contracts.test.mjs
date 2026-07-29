@@ -333,6 +333,21 @@ test("Canvas fallback owns the same repair-bay, retreat, and hostile-target cont
   assert.match(canvasGame, /this\.drawWorldHealthBar\([\s\S]*?defense\.hp \/ defense\.maxHp/);
 });
 
+test("withdrawing agents converge on the repair bay before repair ticks in both renderers", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const updateAgents = engine.slice(
+      engine.indexOf("private updateAgents(delta: number)"),
+      engine.indexOf("private updateDefenses(delta: number)"),
+    );
+    assert.match(
+      updateAgents,
+      /const withdrawing\s*=\s*agent\.repairDecision === "repair" \|\| agent\.repairDecision === "retreat"/,
+    );
+    assert.match(updateAgents, /const radius = withdrawing \|\| gatheringPickup\s*\? 0/);
+    assert.match(updateAgents, /atRepairBay[\s\S]*?<= 1\.35/);
+  }
+});
+
 test("the Core remains protect-only across upgrades, Covenant, support sub-agents, and repair loot", () => {
   for (const engine of [webglGame, canvasGame]) {
     const upgrade = engine.slice(
