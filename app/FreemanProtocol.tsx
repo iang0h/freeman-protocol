@@ -25,6 +25,14 @@ import {
   purchaseComponentUpgrade,
   purchaseEvolution,
 } from "./game/progression.mjs";
+import {
+  WARBAND_SLOTS,
+  canRecruitWarbandSlot,
+  collectMaterials,
+  getRecruitCost,
+  recruitWarbandSlot,
+  tickAgentGathering,
+} from "./game/warband-rules.mjs";
 import { normalizeStickInput, tapToFire } from "./game/input-rules.mjs";
 import {
   applyLootPickup,
@@ -73,7 +81,10 @@ import { AudioManager } from "./game/AudioManager";
 type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
 
-type AgentId = "kairos" | "kira" | "forge" | "covenant";
+type AgentId =
+  | "kairos" | "kira" | "forge" | "covenant"
+  | "relay" | "scout" | "warden" | "nova";
+type EvolutionAgentId = "kairos" | "kira" | "forge" | "covenant";
 type SquadCommand = "auto" | "follow" | "defend" | "focus";
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type UpgradeId =
@@ -87,7 +98,7 @@ type EvolutionId =
   | "aegis-relay" | "nanite-repair";
 type PlayerArmorId = "vanguard" | "striker" | "relay";
 type UpgradeStacks = Record<UpgradeId, number>;
-type Evolutions = Record<AgentId, EvolutionId | null>;
+type Evolutions = Record<EvolutionAgentId, EvolutionId | null>;
 type ComponentUpgradeRanks = Record<string, number>;
 type ArmorBonuses = {
   maxHealth?: number;
@@ -136,6 +147,10 @@ const AUTONOMY_ROLES: Record<AgentId, AutonomyRole> = {
   kira: "assault",
   forge: "assault",
   covenant: "support",
+  relay: "support",
+  scout: "assault",
+  warden: "defend",
+  nova: "assault",
 };
 
 type HudState = {
@@ -157,6 +172,9 @@ type HudState = {
   threat: string;
   command: SquadCommand;
   agents: Record<AgentId, boolean>;
+  warbandCount: number;
+  maxWarband: number;
+  nextRecruitCost: { compute: number; components: number; shards: number } | null;
   upgradeStacks: UpgradeStacks;
   evolutions: Evolutions;
   armorId: PlayerArmorId | null;
@@ -201,8 +219,8 @@ interface GameController {
   dash(): void;
   ultimate(): void;
   applyUpgrade(id: UpgradeId): void;
-  purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string): void;
-  evolveAgent(agentId: AgentId, evolutionId: EvolutionId): void;
+  purchaseComponentUpgrade(target: "player" | EvolutionAgentId, upgradeId: string): void;
+  evolveAgent(agentId: EvolutionAgentId, evolutionId: EvolutionId): void;
   continueWithoutEvolution(): void;
   rotateCamera(direction: -1 | 1): void;
   zoomCamera(direction: -1 | 1): void;
@@ -231,6 +249,8 @@ type AgentRuntime = AgentDefinition & {
   disabledLeft: number;
   rig: AnimatedRig | null;
   moving: boolean;
+  gatheringCooldownMs: number;
+  gatheringTargetId: string | null;
 };
 
 type TemporarySubAgent = {
@@ -368,6 +388,54 @@ const AGENTS: AgentDefinition[] = [
     damage: 9,
     cooldown: 1.8,
     range: 7,
+  },
+  {
+    id: "relay",
+    code: "05",
+    name: "RELAY",
+    role: "Resource support",
+    detail: "Secures nearby Components and Protocol Shards when the perimeter is clear.",
+    cost: 175,
+    color: 0x76c6c1,
+    damage: 10,
+    cooldown: 0.75,
+    range: 7,
+  },
+  {
+    id: "scout",
+    code: "06",
+    name: "SCOUT",
+    role: "Fast assault",
+    detail: "Flanks exposed threats and recovers materials between engagements.",
+    cost: 225,
+    color: 0xb6dd72,
+    damage: 18,
+    cooldown: 0.7,
+    range: 8,
+  },
+  {
+    id: "warden",
+    code: "07",
+    name: "WARDEN",
+    role: "Core defender",
+    detail: "Holds the Core perimeter and gathers only when no threat is close.",
+    cost: 285,
+    color: 0xa9a0e8,
+    damage: 22,
+    cooldown: 1.15,
+    range: 8,
+  },
+  {
+    id: "nova",
+    code: "08",
+    name: "NOVA",
+    role: "Boss assault",
+    detail: "Pressures priority threats and converts safe windows into material recovery.",
+    cost: 355,
+    color: 0xf0719b,
+    damage: 30,
+    cooldown: 1.3,
+    range: 10,
   },
 ];
 
@@ -522,7 +590,14 @@ const INITIAL_HUD: HudState = {
     kira: false,
     forge: false,
     covenant: false,
+    relay: false,
+    scout: false,
+    warden: false,
+    nova: false,
   },
+  warbandCount: 0,
+  maxWarband: WARBAND_SLOTS.length,
+  nextRecruitCost: getRecruitCost(WARBAND_SLOTS[0]),
   upgradeStacks: { ...EMPTY_UPGRADE_STACKS },
   evolutions: { ...EMPTY_EVOLUTIONS },
   armorId: null,
@@ -1153,15 +1228,29 @@ class FreemanEngine {
   ): boolean {
     const definition = AGENTS.find((agent) => agent.id === id);
     if (!definition || this.agents.some((agent) => agent.id === id)) return false;
-    if (options.charge && this.data < definition.cost) {
+    const recruitmentState = {
+      compute: this.data,
+      components: this.loot.components,
+      shards: this.loot.shards,
+      warband: this.agents.map((agent) => agent.id),
+    };
+    if (options.charge && !canRecruitWarbandSlot(recruitmentState, id)) {
+      const cost = getRecruitCost(id);
       this.callbacks.onToast({
-        eyebrow: "NOT ENOUGH COMPUTE",
-        title: `YOU NEED ${definition.cost - this.data} MORE`,
-        detail: "Destroy enemies to earn Compute, then recruit this agent.",
+        eyebrow: "WARBAND SLOT UNAVAILABLE",
+        title: cost
+          ? `NEEDS ${cost.compute} COMPUTE · ${cost.components} COMPONENTS · ${cost.shards} SHARDS`
+          : "RECRUITMENT LOCKED",
+        detail: "Recruit in slot order and recover materials from nearby loot.",
       });
       return false;
     }
-    if (options.charge) this.data -= definition.cost;
+    if (options.charge) {
+      const next = recruitWarbandSlot(recruitmentState, id);
+      this.data = next.compute;
+      this.loot.components = next.components;
+      this.loot.shards = next.shards;
+    }
     const group = this.createAgentModel(definition);
     group.position
       .copy(this.player.group.position)
@@ -1175,6 +1264,8 @@ class FreemanEngine {
       disabledLeft: 0,
       rig: null,
       moving: false,
+      gatheringCooldownMs: 0,
+      gatheringTargetId: null,
     };
     this.agents.push(runtime);
     if (options.notify) {
@@ -1399,13 +1490,13 @@ class FreemanEngine {
     this.emitHud(true);
   }
 
-  evolveAgent(agentId: AgentId, evolutionId: EvolutionId) {
+  evolveAgent(agentId: EvolutionAgentId, evolutionId: EvolutionId) {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
         compute: this.data,
         recruited: Object.fromEntries(
-          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+          (Object.keys(this.evolutions) as EvolutionAgentId[]).map((id) => [
             id,
             this.agents.some((agent) => agent.id === id),
           ]),
@@ -1432,14 +1523,14 @@ class FreemanEngine {
     }
   }
 
-  purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string) {
+  purchaseComponentUpgrade(target: "player" | EvolutionAgentId, upgradeId: string) {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseComponentUpgrade({
         components: this.loot.components,
         armorId: this.armorId,
         recruited: Object.fromEntries(
-          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+          (Object.keys(this.evolutions) as EvolutionAgentId[]).map((id) => [
             id,
             this.agents.some((agent) => agent.id === id),
           ]),
@@ -3388,11 +3479,33 @@ class FreemanEngine {
           : this.squadCommand === "defend"
             ? "defend"
             : roleIntent;
+      const gathering = tickAgentGathering(
+        {
+          id: agent.id,
+          x: agent.group.position.x,
+          y: agent.group.position.z,
+          gatheringCooldownMs: agent.gatheringCooldownMs,
+        },
+        {
+          hostileTargetInRange: Boolean(
+            this.getNearestEnemy(agent.group.position, agent.range),
+          ),
+          retreating: agent.disabledLeft > 0,
+          nearbyLoot: this.pickups,
+        },
+        delta * 1000,
+      );
+      agent.gatheringCooldownMs = gathering.gatheringCooldownMs;
+      agent.gatheringTargetId = gathering.gatheringTargetId;
+      const gatheringPickup = agent.gatheringTargetId
+        ? this.pickups.find((pickup) => pickup.id === agent.gatheringTargetId) ?? null
+        : null;
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
         (intent === "support" ? this.elapsed * 0.18 : 0);
-      const anchor =
-        intent === "follow"
+      const anchor = gatheringPickup
+        ? new THREE.Vector3(gatheringPickup.x, 0.02, gatheringPickup.y)
+        : intent === "follow"
           ? this.player.group.position
           : intent === "assault" && priority
           ? priority.group.position
@@ -3403,8 +3516,9 @@ class FreemanEngine {
             : intent === "defend"
               ? this.core.group.position
               : priority?.group.position ?? this.player.group.position;
-      const radius =
-        intent === "defend"
+      const radius = gatheringPickup
+        ? 0
+        : intent === "defend"
           ? 2.75
           : intent === "assault" || intent === "improvise"
             ? Math.max(2.6, agent.range * 0.46)
@@ -3477,6 +3591,31 @@ class FreemanEngine {
       if (agent.disabledLeft > 0) return;
       agent.supportClock -= delta;
 
+      if (gatheringPickup) {
+        const collection = collectMaterials(
+          {
+            id: agent.id,
+            x: agent.group.position.x,
+            y: agent.group.position.z,
+            gatheringCooldownMs: agent.gatheringCooldownMs,
+          },
+          this.pickups,
+        );
+        agent.gatheringCooldownMs = collection.agent.gatheringCooldownMs;
+        if (collection.collected.components || collection.collected.shards) {
+          this.loot.components += collection.collected.components;
+          this.loot.shards += collection.collected.shards;
+          const pickupIndex = this.pickups.findIndex(
+            (pickup) => pickup.id === collection.agent.gatheredLootId,
+          );
+          if (pickupIndex >= 0) {
+            const [pickup] = this.pickups.splice(pickupIndex, 1);
+            this.releaseLootPickup(pickup);
+          }
+          this.emitHud(true);
+        }
+      }
+
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
         const aegis = this.evolutions.covenant === "aegis-relay";
@@ -3504,11 +3643,11 @@ class FreemanEngine {
       }
 
       let target: EnemyRuntime | null = null;
-      if (intent === "assault" || intent === "improvise") {
+      if (!gatheringPickup && (intent === "assault" || intent === "improvise")) {
         target = priority;
-      } else if (intent === "follow" || intent === "support") {
+      } else if (!gatheringPickup && (intent === "follow" || intent === "support")) {
         target = this.getNearestEnemy(agent.group.position, agent.range);
-      } else if (intent === "defend") {
+      } else if (!gatheringPickup && intent === "defend") {
         const coreThreat = this.getNearestEnemy(this.core.group.position, 9.5);
         if (
           coreThreat &&
@@ -4962,7 +5101,14 @@ class FreemanEngine {
         kira: recruited("kira"),
         forge: recruited("forge"),
         covenant: recruited("covenant"),
+        relay: recruited("relay"),
+        scout: recruited("scout"),
+        warden: recruited("warden"),
+        nova: recruited("nova"),
       },
+      warbandCount: this.agents.length,
+      maxWarband: WARBAND_SLOTS.length,
+      nextRecruitCost: getRecruitCost(WARBAND_SLOTS[this.agents.length]),
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
       armorId: this.armorId,
@@ -5013,6 +5159,8 @@ type FlatAgent = AgentDefinition & {
   cooldownLeft: number;
   supportClock: number;
   disabledLeft: number;
+  gatheringCooldownMs: number;
+  gatheringTargetId: string | null;
 };
 
 type FlatTemporarySubAgent = TemporarySubAgent & {
@@ -5070,14 +5218,14 @@ type FlatEffect = {
 const toCssColor = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
 
 class FreemanCanvasEngine implements GameController {
-  purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string) {
+  purchaseComponentUpgrade(target: "player" | EvolutionAgentId, upgradeId: string) {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseComponentUpgrade({
         components: this.loot.components,
         armorId: this.armorId,
         recruited: Object.fromEntries(
-          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+          (Object.keys(this.evolutions) as EvolutionAgentId[]).map((id) => [
             id,
             this.agents.some((agent) => agent.id === id),
           ]),
@@ -5460,15 +5608,29 @@ class FreemanCanvasEngine implements GameController {
   ): boolean {
     const definition = AGENTS.find((agent) => agent.id === id);
     if (!definition || this.agents.some((agent) => agent.id === id)) return false;
-    if (options.charge && this.data < definition.cost) {
+    const recruitmentState = {
+      compute: this.data,
+      components: this.loot.components,
+      shards: this.loot.shards,
+      warband: this.agents.map((agent) => agent.id),
+    };
+    if (options.charge && !canRecruitWarbandSlot(recruitmentState, id)) {
+      const cost = getRecruitCost(id);
       this.callbacks.onToast({
-        eyebrow: "NOT ENOUGH COMPUTE",
-        title: `YOU NEED ${definition.cost - this.data} MORE`,
-        detail: "Destroy enemies to earn Compute, then recruit this agent.",
+        eyebrow: "WARBAND SLOT UNAVAILABLE",
+        title: cost
+          ? `NEEDS ${cost.compute} COMPUTE · ${cost.components} COMPONENTS · ${cost.shards} SHARDS`
+          : "RECRUITMENT LOCKED",
+        detail: "Recruit in slot order and recover materials from nearby loot.",
       });
       return false;
     }
-    if (options.charge) this.data -= definition.cost;
+    if (options.charge) {
+      const next = recruitWarbandSlot(recruitmentState, id);
+      this.data = next.compute;
+      this.loot.components = next.components;
+      this.loot.shards = next.shards;
+    }
     this.agents.push({
       ...definition,
       x: this.player.x,
@@ -5476,6 +5638,8 @@ class FreemanCanvasEngine implements GameController {
       cooldownLeft: 0.35,
       supportClock: 5,
       disabledLeft: 0,
+      gatheringCooldownMs: 0,
+      gatheringTargetId: null,
     });
     if (!options.notify) return true;
     this.addRing(
@@ -5702,13 +5866,13 @@ class FreemanCanvasEngine implements GameController {
     this.emitHud(true);
   }
 
-  evolveAgent(agentId: AgentId, evolutionId: EvolutionId) {
+  evolveAgent(agentId: EvolutionAgentId, evolutionId: EvolutionId) {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
         compute: this.data,
         recruited: Object.fromEntries(
-          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+          (Object.keys(this.evolutions) as EvolutionAgentId[]).map((id) => [
             id,
             this.agents.some((agent) => agent.id === id),
           ]),
@@ -6259,11 +6423,33 @@ class FreemanCanvasEngine implements GameController {
           : this.squadCommand === "defend"
             ? "defend"
             : roleIntent;
+      const gathering = tickAgentGathering(
+        {
+          id: agent.id,
+          x: agent.x,
+          y: agent.z,
+          gatheringCooldownMs: agent.gatheringCooldownMs,
+        },
+        {
+          hostileTargetInRange: Boolean(
+            this.getNearestEnemy(agent.x, agent.z, agent.range),
+          ),
+          retreating: agent.disabledLeft > 0,
+          nearbyLoot: this.pickups,
+        },
+        delta * 1000,
+      );
+      agent.gatheringCooldownMs = gathering.gatheringCooldownMs;
+      agent.gatheringTargetId = gathering.gatheringTargetId;
+      const gatheringPickup = agent.gatheringTargetId
+        ? this.pickups.find((pickup) => pickup.id === agent.gatheringTargetId) ?? null
+        : null;
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
         (intent === "support" ? this.elapsed * 0.18 : 0);
-      const anchorX =
-        intent === "follow"
+      const anchorX = gatheringPickup
+        ? gatheringPickup.x
+        : intent === "follow"
           ? this.player.x
           : intent === "assault" && priority
           ? priority.x
@@ -6274,8 +6460,9 @@ class FreemanCanvasEngine implements GameController {
             : intent === "defend"
               ? this.core.x
               : priority?.x ?? this.player.x;
-      const anchorZ =
-        intent === "follow"
+      const anchorZ = gatheringPickup
+        ? gatheringPickup.y
+        : intent === "follow"
           ? this.player.z
           : intent === "assault" && priority
           ? priority.z
@@ -6286,8 +6473,9 @@ class FreemanCanvasEngine implements GameController {
             : intent === "defend"
               ? this.core.z
               : priority?.z ?? this.player.z;
-      const radius =
-        intent === "defend"
+      const radius = gatheringPickup
+        ? 0
+        : intent === "defend"
           ? 2.75
           : intent === "assault" || intent === "improvise"
             ? Math.max(2.6, agent.range * 0.46)
@@ -6306,6 +6494,27 @@ class FreemanCanvasEngine implements GameController {
       agent.disabledLeft = Math.max(0, agent.disabledLeft - delta);
       if (agent.disabledLeft > 0) return;
       agent.supportClock -= delta;
+      if (gatheringPickup) {
+        const collection = collectMaterials(
+          {
+            id: agent.id,
+            x: agent.x,
+            y: agent.z,
+            gatheringCooldownMs: agent.gatheringCooldownMs,
+          },
+          this.pickups,
+        );
+        agent.gatheringCooldownMs = collection.agent.gatheringCooldownMs;
+        if (collection.collected.components || collection.collected.shards) {
+          this.loot.components += collection.collected.components;
+          this.loot.shards += collection.collected.shards;
+          const pickupIndex = this.pickups.findIndex(
+            (pickup) => pickup.id === collection.agent.gatheredLootId,
+          );
+          if (pickupIndex >= 0) this.pickups.splice(pickupIndex, 1);
+          this.emitHud(true);
+        }
+      }
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
         const aegis = this.evolutions.covenant === "aegis-relay";
@@ -6332,11 +6541,11 @@ class FreemanCanvasEngine implements GameController {
         this.addRing(this.player.x, this.player.z, agent.color, 0.4, 3.2, 0.72);
       }
       let target: FlatEnemy | null = null;
-      if (intent === "assault" || intent === "improvise") {
+      if (!gatheringPickup && (intent === "assault" || intent === "improvise")) {
         target = priority;
-      } else if (intent === "follow" || intent === "support") {
+      } else if (!gatheringPickup && (intent === "follow" || intent === "support")) {
         target = this.getNearestEnemy(agent.x, agent.z, agent.range);
-      } else if (intent === "defend") {
+      } else if (!gatheringPickup && intent === "defend") {
         const coreThreat = this.getNearestEnemy(this.core.x, this.core.z, 9.5);
         if (
           coreThreat &&
@@ -8554,7 +8763,14 @@ class FreemanCanvasEngine implements GameController {
         kira: recruited("kira"),
         forge: recruited("forge"),
         covenant: recruited("covenant"),
+        relay: recruited("relay"),
+        scout: recruited("scout"),
+        warden: recruited("warden"),
+        nova: recruited("nova"),
       },
+      warbandCount: this.agents.length,
+      maxWarband: WARBAND_SLOTS.length,
+      nextRecruitCost: getRecruitCost(WARBAND_SLOTS[this.agents.length]),
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
       armorId: this.armorId,
@@ -8733,15 +8949,14 @@ export default function FreemanProtocol() {
   };
 
   const isOverlay = mode !== "playing";
-  const recruitedCount = Object.values(hud.agents).filter(Boolean).length;
   const agentRankSummary = AGENTS.filter((agent) => hud.agents[agent.id])
     .map((agent) => {
-      const componentRanks = AGENT_COMPONENT_UPGRADES[agent.id].reduce(
+      const componentRanks = (AGENT_COMPONENT_UPGRADES[agent.id as EvolutionAgentId] ?? []).reduce(
         (total: number, upgrade: { id: string }) =>
           total + getComponentRank(hud.componentUpgradeRanks, agent.id, upgrade.id),
         0,
       );
-      return `${agent.code} ${hud.evolutions[agent.id] ? "II" : "I"}${componentRanks ? ` +${componentRanks}` : ""}`;
+      return `${agent.code} ${hud.evolutions[agent.id as EvolutionAgentId] ? "II" : "I"}${componentRanks ? ` +${componentRanks}` : ""}`;
     })
     .join(" · ") || "NO AGENTS";
   const tutorial =
@@ -8913,6 +9128,17 @@ export default function FreemanProtocol() {
               aria-label="Progression and encounter telemetry"
             >
               <div>
+                <small>WARBAND MATERIALS</small>
+                <strong>
+                  COMPONENTS {hud.loot.components} · SHARDS {hud.loot.shards}
+                </strong>
+                <span>
+                  {hud.nextRecruitCost
+                    ? `NEXT: ${hud.nextRecruitCost.compute} COMPUTE · ${hud.nextRecruitCost.components} COMPONENTS · ${hud.nextRecruitCost.shards} SHARDS`
+                    : "WARBAND AT FULL CAPACITY"}
+                </span>
+              </div>
+              <div>
                 <small>LOOT INVENTORY</small>
                 <strong>R {hud.loot.repairs} · C {hud.loot.components} · S {hud.loot.shards}</strong>
                 <span>REPAIRS · MODULES · SHARD INVENTORY</span>
@@ -9033,15 +9259,15 @@ export default function FreemanProtocol() {
               aria-controls="mobile-squad-panel"
             >
               <span>
-                AI TEAM <b>{recruitedCount}/4</b>
+                WARband <b>{hud.warbandCount}/{hud.maxWarband}</b>
               </span>
               <strong>{mobileSquadOpen ? "CLOSE" : "MANAGE"}</strong>
             </button>
             <div className="agent-dock__heading">
               <span>
-                <small>YOUR AI TEAM</small>
+                <small>YOUR WARBAND</small>
                 <strong>
-                  RECRUIT AI AGENTS <b>{recruitedCount}/4</b>
+                  WARband <b>{hud.warbandCount}/{hud.maxWarband}</b>
                 </strong>
               </span>
               <span className="desktop-only">CLICK A CARD OR PRESS 1–4</span>
@@ -9081,7 +9307,14 @@ export default function FreemanProtocol() {
             <div className="agent-grid">
               {AGENTS.map((agent, index) => {
                 const recruited = hud.agents[agent.id];
-                const affordable = hud.data >= agent.cost;
+                const cost = getRecruitCost(agent.id);
+                const affordable = Boolean(
+                  cost &&
+                    hud.data >= cost.compute &&
+                    hud.loot.components >= cost.components &&
+                    hud.loot.shards >= cost.shards,
+                );
+                const evolution = hud.evolutions[agent.id as EvolutionAgentId];
                 return (
                   <button
                     type="button"
@@ -9112,12 +9345,12 @@ export default function FreemanProtocol() {
                         DMG {agent.damage} · {agent.cooldown.toFixed(1)}S · RNG{" "}
                         {agent.range}
                       </small>
-                      {hud.evolutions[agent.id] && (
+                      {evolution && (
                         <em>
                           RANK II ·{" "}
-                          {EVOLUTIONS[agent.id].find(
+                          {EVOLUTIONS[agent.id as EvolutionAgentId].find(
                             (item: { id: string }) =>
-                              item.id === hud.evolutions[agent.id],
+                              item.id === evolution,
                           )?.name}
                         </em>
                       )}
@@ -9125,7 +9358,9 @@ export default function FreemanProtocol() {
                     <span
                       className={`agent-card__cost ${!affordable && !recruited ? "is-low" : ""}`}
                     >
-                      {recruited ? "RECRUITED" : `${agent.cost} COMPUTE`}
+                      {recruited
+                        ? "RECRUITED"
+                        : `${cost?.compute ?? agent.cost} C · ${cost?.components ?? 0} COMP · ${cost?.shards ?? 0} SHARDS`}
                     </span>
                     <kbd>{index + 1}</kbd>
                   </button>
@@ -9366,7 +9601,7 @@ export default function FreemanProtocol() {
             </div>
             <div className="protocol-grid progression-grid">
               {AGENTS.filter((agent) => hud.agents[agent.id]).flatMap((agent) =>
-                AGENT_COMPONENT_UPGRADES[agent.id].map(
+                (AGENT_COMPONENT_UPGRADES[agent.id as EvolutionAgentId] ?? []).map(
                   (upgrade: {
                     id: string;
                     name: string;
@@ -9387,7 +9622,7 @@ export default function FreemanProtocol() {
                         disabled={capped || unaffordable}
                         onClick={() =>
                           engineRef.current?.purchaseComponentUpgrade(
-                            agent.id,
+                            agent.id as EvolutionAgentId,
                             upgrade.id,
                           )
                         }
@@ -9414,9 +9649,12 @@ export default function FreemanProtocol() {
           </div>
           <div className="protocol-grid evolution-grid">
             {AGENTS.filter(
-              (agent) => hud.agents[agent.id] && !hud.evolutions[agent.id],
+              (agent) =>
+                hud.agents[agent.id] &&
+                EVOLUTIONS[agent.id as EvolutionAgentId] &&
+                !hud.evolutions[agent.id as EvolutionAgentId],
             ).flatMap((agent) =>
-              EVOLUTIONS[agent.id].map(
+              EVOLUTIONS[agent.id as EvolutionAgentId].map(
                 (evolution: {
                   id: EvolutionId;
                   name: string;
@@ -9428,7 +9666,7 @@ export default function FreemanProtocol() {
                     disabled={hud.data < evolution.price}
                     onClick={() =>
                       engineRef.current?.evolveAgent(
-                        agent.id,
+                        agent.id as EvolutionAgentId,
                         evolution.id,
                       )
                     }
@@ -9501,8 +9739,8 @@ export default function FreemanProtocol() {
               <strong>{hud.best.toLocaleString()}</strong>
             </span>
             <span>
-              <small>AGENTS</small>
-              <strong>{recruitedCount}/4</strong>
+              <small>WARBAND</small>
+              <strong>{hud.warbandCount}/{hud.maxWarband}</strong>
             </span>
           </div>
           {mode === "defeat" && hud.canRetryWave && (

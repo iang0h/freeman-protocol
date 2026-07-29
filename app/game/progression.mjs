@@ -72,6 +72,39 @@ export const EVOLUTIONS = Object.freeze({
   ]),
 });
 
+export const MATERIAL_NAMES = Object.freeze({
+  compute: "Compute",
+  components: "Components",
+  shards: "Protocol Shards",
+});
+
+export function scaleMaterialCost(cost, progression = {}) {
+  const multiplier = Number.isFinite(progression.recruitCostMultiplier)
+    ? Math.max(0, progression.recruitCostMultiplier)
+    : 1;
+  return {
+    compute: Math.ceil((cost?.compute ?? 0) * multiplier),
+    components: Math.ceil((cost?.components ?? 0) * multiplier),
+    shards: Math.ceil((cost?.shards ?? 0) * multiplier),
+  };
+}
+
+export function canAffordMaterialCost(wallet, cost) {
+  return ["compute", "components", "shards"].every(
+    (material) => Number.isFinite(wallet?.[material]) &&
+      wallet[material] >= (cost?.[material] ?? 0),
+  );
+}
+
+export function spendMaterialCost(wallet, cost) {
+  if (!canAffordMaterialCost(wallet, cost)) return wallet;
+  return {
+    compute: wallet.compute - (cost?.compute ?? 0),
+    components: wallet.components - (cost?.components ?? 0),
+    shards: wallet.shards - (cost?.shards ?? 0),
+  };
+}
+
 export const UPGRADE_ORDER = Object.freeze([
   "overclock",
   "bastion",

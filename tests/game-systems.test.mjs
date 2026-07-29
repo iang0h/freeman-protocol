@@ -64,6 +64,89 @@ import {
   getEmpUpgrade,
   tickEmp,
 } from "../app/game/emp-rules.mjs";
+import {
+  WARBAND_SLOTS,
+  canRecruitWarbandSlot,
+  collectMaterials,
+  getRecruitCost,
+  recruitWarbandSlot,
+  tickAgentGathering,
+} from "../app/game/warband-rules.mjs";
+
+test("warband recruitment keeps starter costs and escalates material costs after slot four", () => {
+  assert.equal(WARBAND_SLOTS.length, 8);
+  assert.deepEqual(
+    WARBAND_SLOTS.slice(0, 4).map((slot) => getRecruitCost(slot)),
+    [
+      { compute: 45, components: 0, shards: 0 },
+      { compute: 75, components: 0, shards: 0 },
+      { compute: 105, components: 0, shards: 0 },
+      { compute: 135, components: 0, shards: 0 },
+    ],
+  );
+  const lateCosts = WARBAND_SLOTS.slice(4).map((slot) => getRecruitCost(slot));
+  for (let index = 1; index < lateCosts.length; index += 1) {
+    assert.ok(lateCosts[index].compute > lateCosts[index - 1].compute);
+    assert.ok(lateCosts[index].components > lateCosts[index - 1].components);
+    assert.ok(lateCosts[index].shards > lateCosts[index - 1].shards);
+  }
+});
+
+test("warband recruitment is atomic and rejects an unavailable ninth slot", () => {
+  const state = {
+    compute: 500,
+    components: 10,
+    shards: 5,
+    warband: WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id),
+    untouched: { keep: true },
+  };
+  const insufficient = { ...state, components: 1 };
+  assert.equal(canRecruitWarbandSlot(insufficient, WARBAND_SLOTS[4]), false);
+  assert.strictEqual(recruitWarbandSlot(insufficient, WARBAND_SLOTS[4]), insufficient);
+
+  const recruited = recruitWarbandSlot(state, WARBAND_SLOTS[4]);
+  assert.deepEqual(recruited.warband, [
+    "kairos", "kira", "forge", "covenant", "relay",
+  ]);
+  assert.deepEqual(recruited.untouched, { keep: true });
+  assert.equal(recruited.compute, 325);
+  assert.equal(recruited.components, 8);
+  assert.equal(recruited.shards, 4);
+
+  const full = { ...state, warband: WARBAND_SLOTS.map((slot) => slot.id) };
+  assert.equal(canRecruitWarbandSlot(full, 9), false);
+  assert.strictEqual(recruitWarbandSlot(full, 9), full);
+});
+
+test("agents deterministically collect visible materials and respect gathering cooldown", () => {
+  const agent = { id: "relay", x: 0, y: 0, gatheringCooldownMs: 0 };
+  const nearbyLoot = [
+    { id: "shard-b", type: "upgrade-shard", x: 0.1, y: 0, value: 2 },
+    { id: "component-a", type: "component", x: 0.1, y: 0, value: 3 },
+    { id: "repair-c", type: "repair", x: 0, y: 0, value: 25 },
+  ];
+  const collection = collectMaterials(agent, nearbyLoot);
+  assert.deepEqual(collection.collected, { components: 3, shards: 0 });
+  assert.equal(collection.agent.gatheringCooldownMs, 750);
+  assert.equal(collection.agent.gatheredLootId, "component-a");
+
+  const cooling = collectMaterials(collection.agent, nearbyLoot);
+  assert.deepEqual(cooling.collected, { components: 0, shards: 0 });
+  assert.equal(cooling.agent.gatheringCooldownMs, 750);
+
+  const ready = tickAgentGathering(collection.agent, {
+    hostileTargetInRange: false,
+    retreating: false,
+    nearbyLoot,
+  }, 750);
+  assert.equal(ready.gatheringCooldownMs, 0);
+  assert.equal(ready.gatheringTargetId, "component-a");
+  assert.equal(
+    tickAgentGathering(ready, { hostileTargetInRange: true, nearbyLoot }, 0)
+      .gatheringTargetId,
+    null,
+  );
+});
 
 test("EMP starts charged, fires once, and completes its deterministic cooldown", () => {
   const fresh = createEmpState({ cooldownMs: 12000, maxCharge: 100 });
