@@ -28,6 +28,12 @@ import {
   isTutorialProtected,
 } from "../app/game/tutorial-rules.mjs";
 import { normalizeStickInput } from "../app/game/input-rules.mjs";
+import {
+  LOOT_TYPES,
+  applyLootPickup,
+  canCollectLoot,
+  rollLootDrop,
+} from "../app/game/loot-rules.mjs";
 
 test("paces queued enemies without changing the remaining threat total", () => {
   assert.equal(getActiveEnemyLimit("webgl"), 36);
@@ -257,3 +263,80 @@ test("virtual stick applies a dead zone and preserves direction", () => {
   assert.equal(diagonal.x, 0.6);
   assert.equal(diagonal.y, 0.8);
 });
+
+test("loot drops are deterministic and respect each enemy drop chance", () => {
+  const noDrop = rollLootDrop("virus", () => 0.99);
+  assert.equal(noDrop, null);
+
+  const first = rollLootDrop("trojan", sequence([0.1, 0.6, 0.25, 0.75]));
+  const repeated = rollLootDrop(
+    "trojan",
+    sequence([0.1, 0.6, 0.25, 0.75]),
+  );
+  assert.deepEqual(first, repeated);
+  assert.deepEqual(first, {
+    id: "loot-trojan-component-250-750",
+    type: LOOT_TYPES.component,
+    x: -0.5,
+    y: 0.5,
+    value: 2,
+  });
+});
+
+test("loot requires player overlap before it can be collected", () => {
+  const loot = { x: 2, y: 0, radius: 0.4 };
+  assert.equal(canCollectLoot({ x: 0, y: 0, radius: 0.5 }, loot), false);
+  assert.equal(canCollectLoot({ x: 1.2, y: 0, radius: 0.5 }, loot), true);
+});
+
+test("repair loot clamps player and core health at their maxima", () => {
+  const state = {
+    health: 92,
+    maxHealth: 100,
+    coreHealth: 174,
+    maxCoreHealth: 180,
+    components: 0,
+    upgradeShards: 0,
+  };
+  assert.deepEqual(
+    applyLootPickup(state, { type: LOOT_TYPES.repair, value: 25 }),
+    { ...state, health: 100, coreHealth: 180 },
+  );
+  assert.deepEqual(state, {
+    health: 92,
+    maxHealth: 100,
+    coreHealth: 174,
+    maxCoreHealth: 180,
+    components: 0,
+    upgradeShards: 0,
+  });
+});
+
+test("component loot increments the component inventory", () => {
+  const state = {
+    health: 60,
+    maxHealth: 100,
+    coreHealth: 120,
+    maxCoreHealth: 180,
+    components: 3,
+    upgradeShards: 0,
+  };
+  const result = applyLootPickup(state, {
+    type: LOOT_TYPES.component,
+    value: 2,
+  });
+  assert.equal(result.components, 5);
+  assert.equal(state.components, 3);
+});
+
+test("invalid loot is rejected", () => {
+  assert.throws(
+    () => applyLootPickup({}, { type: "malware", value: 1 }),
+    /Unknown loot type/,
+  );
+});
+
+function sequence(values) {
+  let index = 0;
+  return () => values[index++];
+}
