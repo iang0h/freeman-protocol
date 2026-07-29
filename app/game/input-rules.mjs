@@ -6,8 +6,10 @@ export function normalizeStickInput(x, y, deadZone = 0.12) {
 }
 
 export function tapToFire(x, y) {
+  const normalizedX = Math.min(1, Math.max(0, Number.isFinite(x) ? x : 0));
+  const normalizedY = Math.min(1, Math.max(0, Number.isFinite(y) ? y : 0));
   return {
-    x: Math.min(1, Math.max(0, Number.isFinite(x) ? x : 0)),
-    y: Math.min(1, Math.max(0, Number.isFinite(y) ? y : 0)),
+    x: (normalizedX - 0.5) * 20,
+    z: (normalizedY - 0.5) * 14,
   };
 }

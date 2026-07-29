@@ -2667,8 +2667,8 @@ class FreemanEngine {
       const rect = this.canvas.getBoundingClientRect();
       const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
       this.touchAimActive = true;
-      this.updateAim(event);
-      this.hasPointerAim = tap.x >= 0 && tap.y >= 0;
+      this.aimPoint.set(tap.x, 0, tap.z);
+      this.hasPointerAim = true;
       if (this.placementActive) this.confirmDefensePlacement();
       else this.attack();
       return;
@@ -5190,8 +5190,9 @@ class FreemanCanvasEngine implements GameController {
       const rect = this.canvas.getBoundingClientRect();
       const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
       this.touchAimActive = true;
-      this.updateAim(event);
-      this.hasPointerAim = tap.x >= 0 && tap.y >= 0;
+      this.aim.x = tap.x;
+      this.aim.z = tap.z;
+      this.hasPointerAim = true;
       if (this.placementActive) this.confirmDefensePlacement();
       else this.attack();
       return;

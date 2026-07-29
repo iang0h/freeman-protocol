@@ -273,8 +273,10 @@ test("virtual stick applies a dead zone and preserves direction", () => {
 });
 
 test("mobile tap-to-fire clamps normalized arena coordinates", () => {
-  assert.deepEqual(tapToFire(-0.2, 1.4), { x: 0, y: 1 });
-  assert.deepEqual(tapToFire(0.4, 0.6), { x: 0.4, y: 0.6 });
+  assert.deepEqual(tapToFire(-0.2, 1.4), { x: -10, z: 7 });
+  const tap = tapToFire(0.4, 0.6);
+  assert.ok(Math.abs(tap.x + 2) < 1e-9);
+  assert.ok(Math.abs(tap.z - 1.4) < 1e-9);
 });
 
 test("loot drops are deterministic and respect each enemy drop chance", () => {
