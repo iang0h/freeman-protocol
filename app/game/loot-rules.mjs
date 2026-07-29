@@ -82,7 +82,10 @@ export function getLootPresentation(type, value = LOOT_BY_ID[type]?.value) {
     ...loot,
     worldLabel: loot.label.toUpperCase(),
     beamHeight: loot.eliteOnly ? 1.5 : 1.2,
-    toastText: `${loot.label} +${value}`,
+    toastText:
+      type === LOOT_TYPES.repair.id
+        ? `${loot.label} +${value} HP · +1 KIT`
+        : `${loot.label} +${value}`,
   };
 }
 
@@ -108,6 +111,7 @@ export function applyLootPickup(state, loot) {
     return {
       ...state,
       health: clampRepair(state.health, state.maxHealth, value),
+      repairKits: (state.repairKits ?? 0) + 1,
     };
   }
 

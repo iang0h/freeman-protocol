@@ -99,6 +99,8 @@ export function getBossEncounter(wave, seed) {
     attackRadius: Math.min(3.8, 2.4 + (normalizedWave - 3) * 0.18),
     pendingTargetId: null,
     pendingTargetKind: null,
+    pendingTargetX: null,
+    pendingTargetZ: null,
     attackCount: 0,
     reinforcementCap,
     reinforcementsSpawned: 0,
@@ -119,6 +121,8 @@ export function getBossArmorMultiplier(boss, armorBroken = false) {
 }
 
 function activeTargets(context) {
+  const bossX = finite(context?.bossX);
+  const bossZ = finite(context?.bossZ);
   return (Array.isArray(context?.targets) ? context.targets : [])
     .filter(
       (target) =>
@@ -126,8 +130,14 @@ function activeTargets(context) {
         finite(target?.hp ?? target?.health) > 0,
     )
     .sort((left, right) => {
-      const leftDistance = Math.hypot(finite(left.x), finite(left.z ?? left.y));
-      const rightDistance = Math.hypot(finite(right.x), finite(right.z ?? right.y));
+      const leftDistance = Math.hypot(
+        finite(left.x) - bossX,
+        finite(left.z ?? left.y) - bossZ,
+      );
+      const rightDistance = Math.hypot(
+        finite(right.x) - bossX,
+        finite(right.z ?? right.y) - bossZ,
+      );
       return (
         leftDistance - rightDistance ||
         String(left.kind).localeCompare(String(right.kind)) ||
@@ -136,10 +146,48 @@ function activeTargets(context) {
     });
 }
 
+export function getNearestBossTarget(targets, bossX = 0, bossZ = 0) {
+  return activeTargets({ targets, bossX, bossZ })[0] ?? null;
+}
+
 function selectTarget(boss, context) {
   const targets = activeTargets(context);
   if (targets.length === 0) return null;
   return targets[Math.max(0, Math.trunc(finite(boss.attackCount))) % targets.length];
+}
+
+export function getPendingBossTarget(boss, targets) {
+  if (
+    boss?.pendingTargetId === null ||
+    boss?.pendingTargetId === undefined ||
+    (boss?.pendingTargetKind !== "agent" &&
+      boss?.pendingTargetKind !== "turret")
+  ) {
+    return null;
+  }
+  return (Array.isArray(targets) ? targets : []).find(
+    (target) =>
+      target?.id === boss.pendingTargetId &&
+      target?.kind === boss.pendingTargetKind &&
+      finite(target?.hp ?? target?.health) > 0,
+  ) ?? null;
+}
+
+function targetsInsideTelegraph(boss, context) {
+  if (
+    !Number.isFinite(boss.pendingTargetX) ||
+    !Number.isFinite(boss.pendingTargetZ)
+  ) {
+    return [];
+  }
+  const radius = Math.max(0, finite(boss.attackRadius));
+  return activeTargets(context).filter(
+    (target) =>
+      Math.hypot(
+        finite(target.x) - boss.pendingTargetX,
+        finite(target.z ?? target.y) - boss.pendingTargetZ,
+      ) <= radius,
+  );
 }
 
 function rewardEvent(boss) {
@@ -155,7 +203,7 @@ export function tickBoss(boss, elapsedMs, context = {}) {
   const next = { ...boss, rewards: { ...(boss?.rewards ?? {}) } };
   const events = [];
   if (!next.scheduled) return { boss: next, events };
-  const elapsed = clamp(finite(elapsedMs), 0, 60_000);
+  let remainingMs = clamp(finite(elapsedMs), 0, 60_000);
 
   if (finite(next.hp) <= 0) {
     if (!next.rewardClaimed) {
@@ -193,42 +241,70 @@ export function tickBoss(boss, elapsedMs, context = {}) {
     }
   }
 
-  if (next.telegraphLeftMs > 0) {
-    next.telegraphLeftMs = Math.max(0, next.telegraphLeftMs - elapsed);
-    if (next.telegraphLeftMs === 0 && next.pendingTargetId !== null) {
-      events.push({
-        type: "damage",
-        bossId: next.id,
-        targetId: next.pendingTargetId,
-        targetKind: next.pendingTargetKind,
-        amount: next.attackDamage,
-      });
+  for (let transition = 0; transition < 64; transition += 1) {
+    if (next.telegraphLeftMs > 0) {
+      if (remainingMs <= 0) break;
+      const consumedMs = Math.min(next.telegraphLeftMs, remainingMs);
+      next.telegraphLeftMs = Math.max(
+        0,
+        next.telegraphLeftMs - consumedMs,
+      );
+      remainingMs -= consumedMs;
+      if (next.telegraphLeftMs > 0) break;
+      for (const target of targetsInsideTelegraph(next, context)) {
+        events.push({
+          type: "damage",
+          bossId: next.id,
+          targetId: target.id,
+          targetKind: target.kind,
+          amount: next.attackDamage,
+        });
+      }
       next.pendingTargetId = null;
       next.pendingTargetKind = null;
+      next.pendingTargetX = null;
+      next.pendingTargetZ = null;
       next.attackCount = Math.max(0, Math.trunc(finite(next.attackCount))) + 1;
-      next.attackCooldownLeftMs = next.attackIntervalMs;
+      next.attackCooldownLeftMs = Math.max(
+        1,
+        finite(next.attackIntervalMs, 1),
+      );
+      continue;
     }
-    return { boss: next, events };
+
+    next.attackCooldownLeftMs = Math.max(
+      0,
+      finite(next.attackCooldownLeftMs),
+    );
+    if (next.attackCooldownLeftMs > 0) {
+      if (remainingMs <= 0) break;
+      const consumedMs = Math.min(next.attackCooldownLeftMs, remainingMs);
+      next.attackCooldownLeftMs = Math.max(
+        0,
+        next.attackCooldownLeftMs - consumedMs,
+      );
+      remainingMs -= consumedMs;
+      if (next.attackCooldownLeftMs > 0) break;
+    }
+
+    const target = selectTarget(next, context);
+    if (!target) break;
+    next.pendingTargetId = target.id;
+    next.pendingTargetKind = target.kind;
+    next.pendingTargetX = finite(target.x);
+    next.pendingTargetZ = finite(target.z ?? target.y);
+    next.telegraphLeftMs = Math.max(1, finite(next.telegraphMs, 1));
+    events.push({
+      type: "telegraph",
+      bossId: next.id,
+      targetId: target.id,
+      targetKind: target.kind,
+      x: next.pendingTargetX,
+      z: next.pendingTargetZ,
+      durationMs: next.telegraphMs,
+      radius: next.attackRadius,
+    });
+    if (remainingMs <= 0) break;
   }
-
-  next.attackCooldownLeftMs = Math.max(
-    0,
-    finite(next.attackCooldownLeftMs) - elapsed,
-  );
-  if (next.attackCooldownLeftMs > 0) return { boss: next, events };
-
-  const target = selectTarget(next, context);
-  if (!target) return { boss: next, events };
-  next.pendingTargetId = target.id;
-  next.pendingTargetKind = target.kind;
-  next.telegraphLeftMs = next.telegraphMs;
-  events.push({
-    type: "telegraph",
-    bossId: next.id,
-    targetId: target.id,
-    targetKind: target.kind,
-    durationMs: next.telegraphMs,
-    radius: next.attackRadius,
-  });
   return { boss: next, events };
 }

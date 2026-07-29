@@ -25,6 +25,29 @@ test("keeps mobile gameplay clear by collapsing secondary controls", () => {
   assert.match(styles, /\.camera-panel\s*\{\s*display:\s*none;/);
 });
 
+test("keeps the recruitment dock interactive above workshop overlays", () => {
+  const overlayZ = Number(
+    styles.match(/\.overlay-screen\s*\{[\s\S]*?z-index:\s*(\d+)/)?.[1],
+  );
+  const workshopZ = Number(
+    styles.match(/\.agent-dock\.is-workshop\s*\{[\s\S]*?z-index:\s*(\d+)/)?.[1],
+  );
+
+  assert.ok(workshopZ > overlayZ);
+  assert.match(
+    styles,
+    /\.agent-dock\.is-workshop\s*\{[\s\S]*?pointer-events:\s*auto/,
+  );
+  assert.match(
+    styles,
+    /\.(?:mobile-squad-toggle|agent-card)[\s\S]*?touch-action:\s*manipulation/,
+  );
+  assert.match(
+    game,
+    /className=\{`agent-dock \$\{workshopActive \? "is-workshop" : ""\}/,
+  );
+});
+
 test("pulls the camera back for portrait play", () => {
   assert.match(game, /const portraitPullback/);
   assert.match(game, /aspect < 0\.58 \? 1\.5/);

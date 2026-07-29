@@ -788,6 +788,11 @@ canvas:focus-visible {
   pointer-events: auto;
 }
 
+.agent-dock.is-workshop {
+  z-index: 34;
+  pointer-events: auto;
+}
+
 .tutorial-card {
   position: absolute;
   z-index: 28;
@@ -986,6 +991,7 @@ canvas:focus-visible {
   color: var(--ivory);
   text-align: left;
   cursor: pointer;
+  touch-action: manipulation;
   backdrop-filter: blur(14px);
   transition:
     border-color 160ms ease,
@@ -1303,7 +1309,7 @@ canvas:focus-visible {
   transform: scale(1.035);
 }
 
-.ability--ultimate.is-ready {
+.ability--emp.is-ready {
   border-color: var(--ice);
   box-shadow: 0 0 28px rgba(158, 191, 192, 0.2);
   animation: ready-pulse 1.4s ease-in-out infinite;
@@ -2312,6 +2318,7 @@ canvas:focus-visible {
     font-size: 6px;
     letter-spacing: 0.1em;
     pointer-events: auto;
+    touch-action: manipulation;
     backdrop-filter: blur(12px);
   }
 

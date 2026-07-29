@@ -147,8 +147,19 @@ export const PLAYER_ARMORS = Object.freeze({
     name: "RELAY HARNESS",
     cost: 3,
     maxRank: 1,
-    bonuses: Object.freeze({ empMultiplier: 1.4, healingMultiplier: 1.25 }),
+    bonuses: Object.freeze({
+      empRadiusMultiplier: 1.25,
+      healingMultiplier: 1.25,
+    }),
   }),
+});
+
+const SUB_AGENT_LIFETIME_UPGRADE = Object.freeze({
+  id: "sub-agent-lifetime",
+  name: "LIFETIME MATRIX",
+  cost: 2,
+  maxRank: 2,
+  bonuses: Object.freeze({ lifetimeSecondsPerRank: 5 }),
 });
 
 export const AGENT_COMPONENT_UPGRADES = Object.freeze({
@@ -160,6 +171,7 @@ export const AGENT_COMPONENT_UPGRADES = Object.freeze({
       maxRank: 2,
       bonuses: Object.freeze({ cooldownMultiplier: 0.88 }),
     }),
+    SUB_AGENT_LIFETIME_UPGRADE,
   ]),
   kira: Object.freeze([
     Object.freeze({
@@ -169,6 +181,7 @@ export const AGENT_COMPONENT_UPGRADES = Object.freeze({
       maxRank: 2,
       bonuses: Object.freeze({ damageMultiplier: 1.22 }),
     }),
+    SUB_AGENT_LIFETIME_UPGRADE,
   ]),
   forge: Object.freeze([
     Object.freeze({
@@ -178,6 +191,7 @@ export const AGENT_COMPONENT_UPGRADES = Object.freeze({
       maxRank: 2,
       bonuses: Object.freeze({ damageMultiplier: 1.16, cooldownMultiplier: 0.9 }),
     }),
+    SUB_AGENT_LIFETIME_UPGRADE,
   ]),
   covenant: Object.freeze([
     Object.freeze({
@@ -187,7 +201,12 @@ export const AGENT_COMPONENT_UPGRADES = Object.freeze({
       maxRank: 2,
       bonuses: Object.freeze({ healingMultiplier: 1.3 }),
     }),
+    SUB_AGENT_LIFETIME_UPGRADE,
   ]),
+  relay: Object.freeze([SUB_AGENT_LIFETIME_UPGRADE]),
+  scout: Object.freeze([SUB_AGENT_LIFETIME_UPGRADE]),
+  warden: Object.freeze([SUB_AGENT_LIFETIME_UPGRADE]),
+  nova: Object.freeze([SUB_AGENT_LIFETIME_UPGRADE]),
 });
 
 export function purchaseEvolution(state, agentId, evolutionId) {

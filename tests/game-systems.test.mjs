@@ -62,11 +62,14 @@ import {
 } from "../app/game/encounter-rules.mjs";
 import {
   EMP_BASE_DAMAGE,
+  EMP_BASE_RADIUS,
   canFireEmp,
   createEmpState,
   fireEmp,
+  getEmpRuntimeProfile,
   getEmpUpgrade,
   tickEmp,
+  updateEmpCooldown,
 } from "../app/game/emp-rules.mjs";
 import {
   WARBAND_SLOTS,
@@ -91,6 +94,8 @@ import {
   BOSS_REWARD_RATIONALE,
   getBossArmorMultiplier,
   getBossEncounter,
+  getNearestBossTarget,
+  getPendingBossTarget,
   tickBoss,
 } from "../app/game/boss-rules.mjs";
 
@@ -362,7 +367,11 @@ test("EMP starts charged, fires once, and completes its deterministic cooldown",
     damageMultiplier: 1.5,
     terrainMultiplier: 0.9,
   });
-  assert.equal(fired.damage, 43);
+  assert.equal(
+    fired.damage,
+    EMP_BASE_DAMAGE,
+    "legacy damage and terrain multipliers must be ignored",
+  );
   assert.deepEqual(fired.state, {
     charge: 0,
     maxCharge: 100,
@@ -372,7 +381,7 @@ test("EMP starts charged, fires once, and completes its deterministic cooldown",
 
   const ticking = tickEmp(fired.state, 4500);
   assert.deepEqual(ticking, {
-    charge: 0,
+    charge: 37.5,
     maxCharge: 100,
     cooldownLeftMs: 7500,
     cooldownMs: 12000,
@@ -399,6 +408,7 @@ test("EMP rejects a second pulse until its cooldown completes", () => {
 
 test("EMP damage is restrained and upgrades change only their documented dimension", () => {
   assert.ok(EMP_BASE_DAMAGE < 44);
+  assert.equal(EMP_BASE_RADIUS, 10.5);
   assert.deepEqual(getEmpUpgrade("efficiency"), {
     id: "efficiency",
     label: "PULSE EFFICIENCY",
@@ -427,6 +437,86 @@ test("EMP damage is restrained and upgrades change only their documented dimensi
     ),
     100,
   );
+});
+
+test("live EMP profile converts progression into cadence, radius, and bypass only", () => {
+  assert.deepEqual(getEmpRuntimeProfile(), {
+    cooldownMs: 16_000,
+    radius: 10.5,
+    resistanceBypass: 0,
+  });
+  assert.deepEqual(getEmpRuntimeProfile({ voltageRank: 1 }), {
+    cooldownMs: 12_000,
+    radius: 10.5,
+    resistanceBypass: 0,
+  });
+  assert.deepEqual(
+    getEmpRuntimeProfile({
+      voltageRank: 2,
+      radiusMultiplier: 1.25,
+      terrainRadiusMultiplier: 0.9,
+    }),
+    {
+      cooldownMs: 12_000,
+      radius: 11.813,
+      resistanceBypass: 0.25,
+    },
+  );
+
+  const fired = fireEmp(createEmpState(), { baseDamage: EMP_BASE_DAMAGE });
+  assert.equal(fired.damage, EMP_BASE_DAMAGE);
+  assert.deepEqual(
+    updateEmpCooldown(tickEmp(fired.state, 4_000), 12_000),
+    {
+      charge: 25,
+      maxCharge: 100,
+      cooldownLeftMs: 9_000,
+      cooldownMs: 12_000,
+    },
+  );
+});
+
+test("renderer parity gate suppresses retreat, disabled-parent children, and Covenant support", async () => {
+  const { getAgentActionState } = await loadRepairRules();
+  const scenarios = [
+    {
+      name: "repairing Covenant",
+      unit: {
+        hp: 32,
+        maxHp: 100,
+        disabledLeftMs: 0,
+        repairDecision: "repair",
+      },
+      expected: { withdrawing: true, canAct: false },
+    },
+    {
+      name: "disabled Forge",
+      unit: {
+        hp: 70,
+        maxHp: 100,
+        disabledLeftMs: 500,
+        repairDecision: "fight",
+      },
+      expected: { withdrawing: false, canAct: false },
+    },
+    {
+      name: "active Kairos",
+      unit: {
+        hp: 70,
+        maxHp: 100,
+        disabledLeftMs: 0,
+        repairDecision: "fight",
+      },
+      expected: { withdrawing: false, canAct: true },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const webgl = getAgentActionState({ ...scenario.unit });
+    const canvas = getAgentActionState({ ...scenario.unit });
+    assert.deepEqual(webgl, scenario.expected, scenario.name);
+    assert.deepEqual(canvas, webgl, scenario.name);
+  }
 });
 
 test("wave one preserves the unmodified encounter and EMP", () => {
@@ -747,18 +837,26 @@ test("armor profiles expose mutually exclusive concrete player bonuses", () => {
   assert.deepEqual(Object.keys(PLAYER_ARMORS), ["vanguard", "striker", "relay"]);
   assert.equal(PLAYER_ARMORS.vanguard.bonuses.maxHealth, 35);
   assert.equal(PLAYER_ARMORS.striker.bonuses.damageMultiplier, 1.2);
-  assert.equal(PLAYER_ARMORS.relay.bonuses.empMultiplier, 1.4);
+  assert.equal(PLAYER_ARMORS.relay.bonuses.empRadiusMultiplier, 1.25);
   assert.equal(PLAYER_ARMORS.relay.bonuses.healingMultiplier, 1.25);
 });
 
-test("each agent has a component-funded identity upgrade", () => {
+test("each agent has a component-funded identity and lifetime upgrade", () => {
   assert.equal(AGENT_COMPONENT_UPGRADES.kairos[0].id, "stasis-array");
   assert.equal(AGENT_COMPONENT_UPGRADES.kira[0].id, "hunter-core");
   assert.equal(AGENT_COMPONENT_UPGRADES.forge[0].id, "breach-ammo");
   assert.equal(AGENT_COMPONENT_UPGRADES.covenant[0].id, "nanite-reserve");
+  assert.deepEqual(
+    Object.keys(AGENT_COMPONENT_UPGRADES),
+    ["kairos", "kira", "forge", "covenant", "relay", "scout", "warden", "nova"],
+  );
   for (const upgrades of Object.values(AGENT_COMPONENT_UPGRADES)) {
     assert.ok(upgrades[0].cost > 0);
     assert.ok(Object.keys(upgrades[0].bonuses).length > 0);
+    assert.equal(
+      upgrades.find((upgrade) => upgrade.id === "sub-agent-lifetime")?.maxRank,
+      2,
+    );
   }
 });
 
@@ -980,18 +1078,20 @@ test("repair loot restores the player without healing the protected Core", () =>
     maxHealth: 100,
     coreHealth: 174,
     maxCoreHealth: 180,
+    repairKits: 0,
     components: 0,
     upgradeShards: 0,
   };
   assert.deepEqual(
     applyLootPickup(state, { type: LOOT_TYPES.repair.id, value: 25 }),
-    { ...state, health: 100 },
+    { ...state, health: 100, repairKits: 1 },
   );
   assert.deepEqual(state, {
     health: 92,
     maxHealth: 100,
     coreHealth: 174,
     maxCoreHealth: 180,
+    repairKits: 0,
     components: 0,
     upgradeShards: 0,
   });
@@ -1205,6 +1305,48 @@ test("temporary sub-agent lifetimes advance only through the documented upgrade 
       tickSubAgents([{ ...spawned }], lifetime),
       [],
     );
+  }
+});
+
+test("purchased lifetime matrix ranks drive 10, 15, and 20 second children in both renderer paths", () => {
+  const agent = { id: "relay", role: "support" };
+  let progression = {
+    components: 4,
+    armorId: null,
+    recruited: { relay: true },
+    componentUpgradeRanks: {},
+  };
+
+  for (const [renderer, expectedLifetime] of [
+    ["WebGL", 10_000],
+    ["Canvas", 10_000],
+  ]) {
+    const spawned = spawnTemporarySubAgent(agent, {
+      playerHealthRatio: 0.45,
+      upgrades: {
+        componentUpgradeRanks: progression.componentUpgradeRanks,
+      },
+      materials: { components: 1, shards: 1 },
+    });
+    assert.equal(spawned.remainingMs, expectedLifetime, renderer);
+  }
+
+  for (const expectedLifetime of [15_000, 20_000]) {
+    progression = purchaseComponentUpgrade(
+      progression,
+      "relay",
+      "sub-agent-lifetime",
+    );
+    for (const renderer of ["WebGL", "Canvas"]) {
+      const spawned = spawnTemporarySubAgent(agent, {
+        playerHealthRatio: 0.45,
+        upgrades: {
+          componentUpgradeRanks: progression.componentUpgradeRanks,
+        },
+        materials: { components: 1, shards: 1 },
+      });
+      assert.equal(spawned.remainingMs, expectedLifetime, renderer);
+    }
   }
 });
 
@@ -1696,10 +1838,10 @@ test("both renderers consume skill slow strength, boss armor, and accurate final
   assert.doesNotMatch(source, /all three boss phases/);
 });
 
-test("warboss attacks telegraph before deterministically damaging agents and turrets", () => {
+test("warboss telegraphs a fixed evadable area and damages its current occupants", () => {
   const targets = [
     { id: "kairos", kind: "agent", hp: 75, maxHp: 75, x: 1, z: 0 },
-    { id: "sentry-1", kind: "turret", hp: 100, maxHp: 100, x: 2, z: 0 },
+    { id: "sentry-1", kind: "turret", hp: 100, maxHp: 100, x: 10, z: 0 },
   ];
   const encounter = getBossEncounter(3, "attacks");
   const telegraph = tickBoss(
@@ -1713,40 +1855,110 @@ test("warboss attacks telegraph before deterministically damaging agents and tur
       bossId: encounter.id,
       targetId: "kairos",
       targetKind: "agent",
+      x: 1,
+      z: 0,
       durationMs: encounter.telegraphMs,
       radius: encounter.attackRadius,
     },
   ]);
+  assert.equal(telegraph.boss.pendingTargetX, 1);
+  assert.equal(telegraph.boss.pendingTargetZ, 0);
 
+  const movedTargets = [
+    { ...targets[0], x: 10 },
+    { ...targets[1], x: 1.5 },
+  ];
   const firstAttack = tickBoss(
     telegraph.boss,
     encounter.telegraphMs,
-    { targets },
+    { targets: movedTargets },
   );
   assert.deepEqual(firstAttack.events, [
     {
       type: "damage",
       bossId: encounter.id,
-      targetId: "kairos",
-      targetKind: "agent",
+      targetId: "sentry-1",
+      targetKind: "turret",
       amount: encounter.attackDamage,
     },
   ]);
+  assert.equal(firstAttack.boss.pendingTargetX, null);
+  assert.equal(firstAttack.boss.pendingTargetZ, null);
+});
 
-  const secondTelegraph = tickBoss(
-    firstAttack.boss,
-    encounter.attackIntervalMs,
-    { targets },
+test("pending boss targets match both kind and ID", () => {
+  const collision = [
+    { id: "1", kind: "agent", hp: 75, x: 1, z: 0 },
+    { id: "1", kind: "turret", hp: 100, x: 4, z: 0 },
+  ];
+  assert.deepEqual(
+    getPendingBossTarget(
+      { pendingTargetId: "1", pendingTargetKind: "turret" },
+      collision,
+    ),
+    collision[1],
   );
-  assert.equal(secondTelegraph.events[0].type, "telegraph");
-  assert.equal(secondTelegraph.events[0].targetKind, "turret");
-  const secondAttack = tickBoss(
-    secondTelegraph.boss,
+});
+
+test("warboss target priority is measured from the boss instead of arena origin", () => {
+  const targets = [
+    { id: "origin-near", kind: "agent", hp: 75, x: 1, z: 0 },
+    { id: "boss-near", kind: "turret", hp: 100, x: 9, z: 0 },
+  ];
+  assert.equal(getNearestBossTarget(targets, 10, 0).id, "boss-near");
+
+  const encounter = getBossEncounter(3, "boss-position");
+  const telegraph = tickBoss(
+    { ...encounter, attackCooldownLeftMs: 0 },
+    0,
+    { targets, bossX: 10, bossZ: 0 },
+  );
+  assert.equal(telegraph.events[0].targetId, "boss-near");
+  assert.equal(telegraph.events[0].targetKind, "turret");
+});
+
+test("warboss timing is invariant across equivalent timestep partitions", () => {
+  const targets = [
+    { id: "kairos", kind: "agent", hp: 75, x: 1, z: 0 },
+    { id: "sentry-1", kind: "turret", hp: 100, x: 2, z: 0 },
+  ];
+  const encounter = getBossEncounter(3, "timing");
+  const started = tickBoss(
+    { ...encounter, attackCooldownLeftMs: 0 },
+    0,
+    { targets, bossX: 0, bossZ: 0 },
+  );
+  const extraTelegraphTime = 250;
+  const combined = tickBoss(
+    started.boss,
+    encounter.telegraphMs + encounter.attackIntervalMs + extraTelegraphTime,
+    { targets, bossX: 0, bossZ: 0 },
+  );
+  const afterStrike = tickBoss(
+    started.boss,
     encounter.telegraphMs,
-    { targets },
+    { targets, bossX: 0, bossZ: 0 },
   );
-  assert.equal(secondAttack.events[0].type, "damage");
-  assert.equal(secondAttack.events[0].targetKind, "turret");
+  const afterCooldown = tickBoss(
+    afterStrike.boss,
+    encounter.attackIntervalMs,
+    { targets, bossX: 0, bossZ: 0 },
+  );
+  const partitioned = tickBoss(
+    afterCooldown.boss,
+    extraTelegraphTime,
+    { targets, bossX: 0, bossZ: 0 },
+  );
+
+  assert.deepEqual(combined.boss, partitioned.boss);
+  assert.deepEqual(
+    combined.events,
+    [
+      ...afterStrike.events,
+      ...afterCooldown.events,
+      ...partitioned.events,
+    ],
+  );
 });
 
 test("warboss rewards include bounded rare Shards and reinforcements cannot grow unbounded", () => {

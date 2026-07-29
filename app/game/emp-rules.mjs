@@ -1,4 +1,5 @@
 export const EMP_BASE_DAMAGE = 32;
+export const EMP_BASE_RADIUS = 10.5;
 export const EMP_COOLDOWN_MS = 16000;
 export const EMP_MAX_CHARGE = 100;
 
@@ -35,9 +36,9 @@ const normalizeState = (state = {}) => {
     cooldownMs,
     nonNegativeFinite(state.cooldownLeftMs),
   );
-  const charge = cooldownLeftMs > 0
-    ? 0
-    : Math.min(maxCharge, nonNegativeFinite(state.charge));
+  const charge = cooldownLeftMs > 0 && cooldownMs > 0
+    ? maxCharge * (1 - cooldownLeftMs / cooldownMs)
+    : Math.min(maxCharge, nonNegativeFinite(state.charge, maxCharge));
 
   return { charge, maxCharge, cooldownLeftMs, cooldownMs };
 };
@@ -63,7 +64,10 @@ export function tickEmp(state, elapsedMs) {
   return {
     ...current,
     cooldownLeftMs,
-    charge: cooldownLeftMs === 0 ? current.maxCharge : 0,
+    charge:
+      cooldownLeftMs === 0 || current.cooldownMs === 0
+        ? current.maxCharge
+        : current.maxCharge * (1 - cooldownLeftMs / current.cooldownMs),
   };
 }
 
@@ -74,17 +78,11 @@ export function canFireEmp(state) {
 
 export function fireEmp(state, {
   baseDamage = EMP_BASE_DAMAGE,
-  damageMultiplier = 1,
-  terrainMultiplier = 1,
 } = {}) {
   const current = normalizeState(state);
   if (!canFireEmp(current)) return { state: current, damage: 0 };
 
-  const damage = Math.round(
-    nonNegativeFinite(baseDamage, EMP_BASE_DAMAGE) *
-      nonNegativeFinite(damageMultiplier, 1) *
-      nonNegativeFinite(terrainMultiplier, 1),
-  );
+  const damage = Math.round(nonNegativeFinite(baseDamage, EMP_BASE_DAMAGE));
   return {
     state: {
       ...current,
@@ -92,6 +90,52 @@ export function fireEmp(state, {
       cooldownLeftMs: current.cooldownMs,
     },
     damage,
+  };
+}
+
+export function updateEmpCooldown(state, cooldownMs) {
+  const current = normalizeState(state);
+  const nextCooldownMs = nonNegativeFinite(cooldownMs, EMP_COOLDOWN_MS);
+  const progress = current.maxCharge > 0
+    ? current.charge / current.maxCharge
+    : 1;
+  const cooldownLeftMs = progress >= 1
+    ? 0
+    : nextCooldownMs * (1 - progress);
+  return {
+    ...current,
+    charge: progress >= 1 ? current.maxCharge : current.maxCharge * progress,
+    cooldownLeftMs,
+    cooldownMs: nextCooldownMs,
+  };
+}
+
+export function getEmpRuntimeProfile({
+  voltageRank = 0,
+  radiusMultiplier = 1,
+  terrainRadiusMultiplier = 1,
+} = {}) {
+  const normalizedRank = Math.min(
+    2,
+    Math.max(0, Math.floor(nonNegativeFinite(voltageRank))),
+  );
+  const efficiency = getEmpUpgrade("efficiency");
+  const radius = getEmpUpgrade("radius");
+  const bypass = getEmpUpgrade("bypass");
+  return {
+    cooldownMs:
+      normalizedRank >= 1
+        ? EMP_COOLDOWN_MS * efficiency.cooldownMultiplier
+        : EMP_COOLDOWN_MS,
+    radius: Number(
+      (
+        EMP_BASE_RADIUS *
+        nonNegativeFinite(radiusMultiplier, radius.radiusMultiplier) *
+        nonNegativeFinite(terrainRadiusMultiplier, 1)
+      ).toFixed(3),
+    ),
+    resistanceBypass:
+      normalizedRank >= 2 ? bypass.resistanceBypass : 0,
   };
 }
 

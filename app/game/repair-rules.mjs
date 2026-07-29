@@ -62,6 +62,19 @@ export function getRepairDecision(unit, context = {}) {
   return "retreat";
 }
 
+export function getAgentActionState(unit) {
+  const repairDecision = unit?.repairDecision ?? "fight";
+  const withdrawing =
+    repairDecision === "repair" || repairDecision === "retreat";
+  return {
+    withdrawing,
+    canAct:
+      health(unit) > 0 &&
+      disabledMs(unit) === 0 &&
+      !withdrawing,
+  };
+}
+
 export function tickRepairBay(bay, units, elapsedMs) {
   const elapsed = Math.max(0, finite(elapsedMs));
   const canRepair = functioningSeparateBay(bay);

@@ -90,6 +90,18 @@ test("loot collection is overlap-gated in both renderers", () => {
   }
 });
 
+test("repair caches grant one field kit while restoring their HP value", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const loot = engine.slice(
+      engine.indexOf("private updateLootPickups"),
+      engine.indexOf("private clearLootPickups"),
+    );
+    assert.match(loot, /repairKits: this\.loot\.repairs/);
+    assert.match(loot, /this\.loot\.repairs = next\.repairKits \?\? 0/);
+    assert.doesNotMatch(loot, /this\.loot\.repairs \+= pickup\.value/);
+  }
+});
+
 test("loot presentation is shared, pooled, touch-safe, and announced", () => {
   assert.match(game, /getLootPresentation/);
   assert.match(webglGame, /new BoundedPool<THREE\.Group>/);
@@ -172,6 +184,29 @@ test("hybrid progression exposes armor, component ranks, and categorized drafts"
   assert.match(game, /ARMOR PROFILE/);
   assert.match(game, /COMPONENTS/);
   assert.match(game, /INSUFFICIENT COMPONENTS/);
+});
+
+test("all eight agents can buy the shared temporary-unit lifetime upgrade", () => {
+  assert.match(
+    game,
+    /purchaseComponentUpgrade\(target: "player" \| AgentId, upgradeId: string\)/,
+  );
+  assert.match(
+    game,
+    /AGENTS\.map\(\(agent\) => \[\s*agent\.id,\s*this\.agents\.some/,
+  );
+  assert.ok(
+    (game.match(/AGENT_COMPONENT_UPGRADES\[agent\.id\]/g) ?? []).length >= 2,
+  );
+  assert.match(game, /"sub-agent-lifetime":/);
+});
+
+test("late recruitment labels announce every required resource", () => {
+  assert.match(
+    game,
+    /Recruit \$\{agent\.name\} for \$\{cost\?\.compute \?\? agent\.cost\} Compute, \$\{cost\?\.components \?\? 0\} Components, and \$\{cost\?\.shards \?\? 0\} Shards/,
+  );
+  assert.match(game, /CLICK A CARD OR PRESS 1–8/);
 });
 
 test("streams a shuffled soundtrack through a crossfading audio manager", () => {
@@ -350,6 +385,34 @@ test("both renderers explain why boss caches include autonomous field reserves",
   }
 });
 
+test("boss telegraphs stay fixed and resolve strict kind-aware area damage", () => {
+  assert.match(
+    game,
+    /getNearestBossTarget,[\s\S]*?getPendingBossTarget,[\s\S]*?from "\.\/game\/boss-rules\.mjs"/,
+  );
+  assert.match(game, /pendingTargetX: number \| null/);
+  assert.match(game, /pendingTargetZ: number \| null/);
+  assert.match(
+    webglGame,
+    /event\.type === "telegraph"[\s\S]*?position\.set\(event\.x, 0\.04, event\.z\)/,
+  );
+  assert.match(
+    canvasGame,
+    /bossState\.pendingTargetX[\s\S]*?bossState\.pendingTargetZ/,
+  );
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /getPendingBossTarget\(result\.boss, bossTargets\)/);
+    assert.match(
+      engine,
+      /getNearestBossTarget\(\s*bossTargets,\s*enemy\.(?:group\.position\.)?x,\s*enemy\.(?:group\.position\.)?z/,
+    );
+    assert.match(
+      engine,
+      /bossX: enemy\.(?:group\.position\.)?x[\s\S]*?bossZ: enemy\.(?:group\.position\.)?z/,
+    );
+  }
+});
+
 test("both renderers emit pooled visual feedback when a temporary sub-agent spawns", () => {
   for (const engine of [webglGame, canvasGame]) {
     const spawn = engine.slice(
@@ -397,6 +460,28 @@ test("Canvas fallback owns the same repair-bay, retreat, and hostile-target cont
   assert.match(canvasGame, /private drawRepairBay/);
   assert.match(canvasGame, /this\.drawWorldHealthBar\([\s\S]*?agent\.hp \/ agent\.maxHp/);
   assert.match(canvasGame, /this\.drawWorldHealthBar\([\s\S]*?defense\.hp \/ defense\.maxHp/);
+});
+
+test("both field-kit actions explain unaffordable repairs without mutating inventory", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const fieldKit = engine.slice(
+      engine.indexOf("useFieldKit()"),
+      engine.indexOf("setMuted(", engine.indexOf("useFieldKit()")),
+    );
+    assert.match(
+      fieldKit,
+      /repaired\.components !== this\.loot\.components/,
+    );
+    assert.match(fieldKit, /FIELD KIT UNAVAILABLE/);
+  }
+});
+
+test("destroyed repair bays truthfully remain offline for the mission", () => {
+  assert.doesNotMatch(game, /until it is rebuilt/i);
+  assert.equal(
+    (game.match(/for the rest of this mission/g) ?? []).length,
+    2,
+  );
 });
 
 test("withdrawing agents converge on the repair bay before repair ticks in both renderers", () => {
@@ -471,6 +556,64 @@ test("both renderers consume shared hacker and terrain encounter rules", () => {
   }
 });
 
+test("both live engines own, tick, fire, and visibly report the shared EMP state", () => {
+  assert.match(
+    game,
+    /EMP_BASE_DAMAGE,[\s\S]*?canFireEmp,[\s\S]*?createEmpState,[\s\S]*?fireEmp,[\s\S]*?getEmpRuntimeProfile,[\s\S]*?tickEmp,[\s\S]*?updateEmpCooldown,[\s\S]*?from "\.\/game\/emp-rules\.mjs"/,
+  );
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private empState: EmpState = createEmpState\(\)/);
+    assert.match(
+      engine,
+      /private updateGame\(delta: number\) \{[\s\S]*?this\.empState = tickEmp\(this\.empState, delta \* 1_000\) as EmpState;/,
+    );
+    assert.match(
+      engine,
+      /activateEmp\(\) \{[\s\S]*?canFireEmp\(this\.empState\)[\s\S]*?fireEmp\(this\.empState, \{ baseDamage: EMP_BASE_DAMAGE \}\)[\s\S]*?this\.empState = pulse\.state as EmpState;/,
+    );
+    assert.match(engine, /empCharge: this\.empState\.charge \/ this\.empState\.maxCharge/);
+    assert.match(engine, /empCooldownLeftMs: this\.empState\.cooldownLeftMs/);
+    assert.match(engine, /empCooldownMs: this\.empState\.cooldownMs/);
+    assert.doesNotMatch(engine, /player\.ultimate/);
+    assert.doesNotMatch(engine, /this\.agents\.length \* 8/);
+    assert.doesNotMatch(engine, /this\.player\.ultimate \+/);
+    assert.doesNotMatch(engine, /private empMultiplier|this\.empMultiplier/);
+  }
+  assert.match(game, /EMP COOLDOWN/);
+  assert.match(game, /hud\.empCooldownLeftMs/);
+});
+
+test("both renderer agent loops share action ordering across repair, children, and Covenant", () => {
+  assert.match(
+    game,
+    /getAgentActionState,[\s\S]*?from "\.\/game\/repair-rules\.mjs"/,
+  );
+  for (const engine of [webglGame, canvasGame]) {
+    const temporary = engine.slice(
+      engine.indexOf("private updateTemporarySubAgents(delta: number)"),
+      engine.indexOf("private maybeSpawnTemporarySubAgent("),
+    );
+    const agents = engine.slice(
+      engine.indexOf("private updateAgents(delta: number)"),
+      engine.indexOf("private updateDefenses(delta: number)"),
+    );
+    assert.match(
+      temporary,
+      /canAct: parentCanAct[\s\S]*?getAgentActionState\([\s\S]*?attackTargetInRange: parentCanAct && Boolean\(attackTarget\)/,
+    );
+    const actionGate = agents.indexOf("const actionState = getAgentActionState(");
+    const spawn = agents.indexOf("this.maybeSpawnTemporarySubAgent(");
+    const covenant = agents.indexOf('agent.id === "covenant"');
+    assert.ok(actionGate >= 0, "missing shared action gate");
+    assert.ok(spawn > actionGate, "child spawn must follow the action gate");
+    assert.ok(covenant > actionGate, "Covenant support must follow the action gate");
+    assert.match(
+      agents,
+      /const actionState = getAgentActionState\([\s\S]*?if \(!actionState\.canAct\) return;[\s\S]*?this\.maybeSpawnTemporarySubAgent/,
+    );
+  }
+});
+
 test("both renderers show resistance cues and deterministic terrain overlays", () => {
   assert.match(webglGame, /enemy-resistance-cue/);
   assert.match(webglGame, /terrain-overlay/);
@@ -537,6 +680,20 @@ test("documents the complete warband and EMP discipline catalog", () => {
   }
 });
 
+test("catalog copy matches all eight agents and live EMP, repair, and lifetime rules", () => {
+  for (const id of ["relay", "scout", "warden", "nova"]) {
+    assert.match(catalog, new RegExp(`id: "${id}"`));
+  }
+  assert.match(catalog, /<dt>08<\/dt><dd>LIVE AGENTS<\/dd>/);
+  assert.match(catalog, /name: "Lifetime Matrix"/);
+  assert.match(catalog, /quantity: "\+25 HP · \+1 KIT"/);
+  assert.match(catalog, /cooldown recovers over time/i);
+  assert.match(catalog, /EMP radius/i);
+  assert.match(catalog, /rest of the mission/i);
+  assert.doesNotMatch(catalog, /visible EMP charge through combat/i);
+  assert.doesNotMatch(catalog, /reinforces the Covenant Core/i);
+});
+
 test("Repair Cache documents operator and field-kit recovery without restoring the Core", () => {
   const repairCache = catalog.slice(
     catalog.indexOf('id: "repair"'),
@@ -550,7 +707,7 @@ test("Repair Cache documents operator and field-kit recovery without restoring t
 });
 
 test("the player-facing HUD preserves EMP, Core, roster, touch, and pooled-cleanup contracts", () => {
-  assert.match(game, /EMP CHARGING/);
+  assert.match(game, /EMP COOLDOWN/);
   assert.match(game, /CORE HEALTH · PROTECT-ONLY/);
   assert.match(game, /WARBAND <b>\{hud\.warbandCount\}\/\{hud\.maxWarband\}<\/b>/);
   assert.match(game, /className="skill-actions"/);
