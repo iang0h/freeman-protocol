@@ -60,7 +60,10 @@
 .agentGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .agentCard { display: grid; min-height: 276px; grid-template-rows: 1fr auto; padding: 0; overflow: hidden; border: 1px solid rgba(238, 241, 232, 0.15); color: inherit; background: rgba(8, 17, 21, 0.8); text-align: left; cursor: pointer; transition: transform 180ms ease, border-color 180ms ease, background 180ms ease; }
 .agentCard:hover, .agentCardSelected { z-index: 1; border-color: var(--card-tone); background: rgba(13, 28, 32, 0.96); transform: translateY(-3px); }
-[data-tone="cyan"] { --card-tone: var(--loot-cyan); } [data-tone="amber"] { --card-tone: var(--loot-amber); } [data-tone="violet"] { --card-tone: var(--loot-violet); } [data-tone="red"] { --card-tone: #e06358; }
+.agentCard[data-tone="cyan"], .agentReadout[data-tone="cyan"], .threatCard[data-tone="cyan"], .lootCard[data-tone="cyan"] { --card-tone: var(--loot-cyan); }
+.agentCard[data-tone="amber"], .agentReadout[data-tone="amber"], .threatCard[data-tone="amber"], .lootCard[data-tone="amber"] { --card-tone: var(--loot-amber); }
+.agentCard[data-tone="violet"], .agentReadout[data-tone="violet"], .threatCard[data-tone="violet"], .lootCard[data-tone="violet"] { --card-tone: var(--loot-violet); }
+.agentCard[data-tone="red"], .agentReadout[data-tone="red"], .threatCard[data-tone="red"], .lootCard[data-tone="red"] { --card-tone: #e06358; }
 .portrait { position: relative; display: grid; min-height: 174px; overflow: hidden; place-items: center; background: radial-gradient(circle, color-mix(in srgb, var(--card-tone) 25%, transparent), transparent 62%), linear-gradient(125deg, rgba(255,255,255,0.035), transparent); }
 .portrait::before, .portrait::after { position: absolute; content: ""; border: 1px solid color-mix(in srgb, var(--card-tone) 42%, transparent); }
 .portrait::before { width: 92px; height: 92px; transform: rotate(45deg); animation: portraitTurn 12s linear infinite; }.portrait::after { width: 138px; height: 138px; border-color: color-mix(in srgb, var(--card-tone) 18%, transparent); }
