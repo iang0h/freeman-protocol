@@ -7,6 +7,7 @@ import {
   canCompleteWave,
   getActiveEnemyLimit,
   releaseSpawnBatch,
+  resolveArmoredDamage,
   remainingThreats,
 } from "../app/game/combat-rules.mjs";
 import {
@@ -149,6 +150,24 @@ test("repair lifecycle persists at the bay until the configured return ratio", a
   assert.equal(
     getRepairDecision(returnTick, { repairBay: functioningBay }),
     "return",
+  );
+});
+
+test("field-kit inventory cannot manufacture a repair decision", async () => {
+  const { getRepairDecision } = await loadRepairRules();
+  const agent = {
+    id: "kairos",
+    hp: 20,
+    maxHp: 100,
+    repairThreshold: 0.4,
+    repairDecision: "fight",
+  };
+  assert.equal(
+    getRepairDecision(agent, {
+      repairBay: { hp: 0, maxHp: 70, isSeparate: true },
+      fieldKits: 3,
+    }),
+    "retreat",
   );
 });
 
@@ -1003,6 +1022,27 @@ test("tutorial protection and first-wave retry are explicit", () => {
   assert.equal(FIRST_WAVE.damageMultiplier, 0.72);
 });
 
+test("first-wave retry restores EMP, loot, and repair-bay state without farming", () => {
+  const checkpoint = {
+    empState: { charge: 100, maxCharge: 100, cooldownLeftMs: 0, cooldownMs: 16_000 },
+    loot: { repairs: 1, components: 2, shards: 3 },
+    repairBayHp: 70,
+  };
+  const failedRun = {
+    empState: { charge: 0, maxCharge: 100, cooldownLeftMs: 8_000, cooldownMs: 16_000 },
+    loot: { repairs: 4, components: 9, shards: 11 },
+    repairBayHp: 0,
+  };
+  const restored = {
+    ...failedRun,
+    empState: { ...checkpoint.empState },
+    loot: { ...checkpoint.loot },
+    repairBayHp: checkpoint.repairBayHp,
+  };
+  assert.deepEqual(restored, checkpoint);
+  assert.deepEqual(creditPendingMaterialLoot(restored.loot, []), checkpoint.loot);
+});
+
 test("virtual stick applies a dead zone and preserves direction", () => {
   assert.deepEqual(normalizeStickInput(0.05, -0.04), { x: 0, y: 0 });
   assert.deepEqual(normalizeStickInput(2, 0), { x: 1, y: 0 });
@@ -1665,6 +1705,23 @@ test("agent skills enforce ownership, cooldown, live-agent, and target constrain
     agent,
     effects: [],
   });
+});
+
+test("Forge armor break consumes its declared magnitude in live damage", () => {
+  const armoredDamage = resolveArmoredDamage(100, {
+    armored: true,
+    armorMultiplier: 0.42,
+    armorBreakReduction: 0,
+  });
+  const brokenDamage = resolveArmoredDamage(100, {
+    armored: true,
+    armorMultiplier: 0.42,
+    armorBreakReduction: 0.55,
+  });
+  assert.equal(armoredDamage, 42);
+  assert.equal(brokenDamage, 73.9);
+  assert.ok(brokenDamage < 100, "Forge must not become a full armor bypass");
+  assert.ok(brokenDamage > armoredDamage, "Forge must improve damage against armor");
 });
 
 test("waves three and later schedule exactly one bounded slow armored warboss", () => {

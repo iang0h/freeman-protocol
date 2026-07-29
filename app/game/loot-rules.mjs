@@ -75,17 +75,21 @@ export function rollLootDrop(enemyKind, rng) {
   };
 }
 
-export function getLootPresentation(type, value = LOOT_BY_ID[type]?.value) {
+export function getLootPresentation(type, value) {
   const loot = LOOT_BY_ID[type];
   if (!loot) throw new Error(`Unknown loot type ${type}`);
+  const quantity = Number.isFinite(value) ? value : loot.value;
   return {
     ...loot,
-    worldLabel: loot.label.toUpperCase(),
+    worldLabel:
+      type === LOOT_TYPES.repair.id
+        ? `${loot.label.toUpperCase()} +${quantity} HP · +1 KIT`
+        : `${loot.label.toUpperCase()} +${quantity}`,
     beamHeight: loot.eliteOnly ? 1.5 : 1.2,
     toastText:
       type === LOOT_TYPES.repair.id
-        ? `${loot.label} +${value} HP · +1 KIT`
-        : `${loot.label} +${value}`,
+        ? `${loot.label} +${quantity} HP · +1 KIT`
+        : `${loot.label} +${quantity}`,
   };
 }
 

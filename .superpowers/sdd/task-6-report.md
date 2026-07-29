@@ -138,3 +138,38 @@ so macOS could load Rolldown's native module. Running the worktree-local Vinext
 binary avoided loading two dependency trees. This was an environment-only
 workaround; it did not change the repository. No external deployment was
 performed because this work was explicitly local-only.
+
+## V2 whole-branch review remediation (2026-07-29)
+
+- First-wave checkpoints now snapshot and restore EMP charge/cooldown, all loot
+  counters, and Repair Bay HP in both WebGL and Canvas. The retry regression
+  proves a failed run cannot retain extra materials, a spent EMP, or a destroyed
+  bay across retry.
+- Forge's `armorReduction: 0.55` is now consumed by the live damage path. Armor
+  break raises damage from the normal armored multiplier while preserving a
+  non-bypass remainder; the shared `resolveArmoredDamage` result is covered by
+  a live damage-result test.
+- Manual agent skills now pass through `getAgentActionState`, so repairing,
+  retreating, disabled, dead, or otherwise unavailable agents cannot activate
+  skills. HUD skill controls expose the same availability state and disable
+  unavailable actions.
+- Removed Bastion's protected-Core `maxHp` mutation and strengthened the
+  protect-only contract to reject both Core HP and max-HP writes.
+- Durable help copy now documents recruitment shortcuts through slots 1–8.
+- Shard catalog copy now matches the economy: Protocol Shards fund late
+  persistent recruits and the one-shard temporary-child material cost. Boss
+  pickup presentation receives the actual pickup value in both renderers, so
+  cache labels/toasts announce variable quantities accurately.
+- Removed `fieldKits` from repair-decision semantics. A decision can only become
+  `repair` when a functioning Repair Bay exists; field-kit use remains an
+  explicit atomic action.
+
+### V2 verification
+
+- Bundled Node suite: 149 passed, 0 failed.
+- TypeScript `tsc --noEmit --incremental false`: passed.
+- ESLint for the repository, excluding generated output: passed.
+- Production `vinext build`: passed; routes `/` and `/asset-catalog` emitted.
+- `scripts/validate-artifact.sh`: passed; ESM Worker `default.fetch` and the
+  hosting manifest were present.
+- `git diff --check`: passed.

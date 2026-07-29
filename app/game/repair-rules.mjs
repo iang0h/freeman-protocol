@@ -52,13 +52,12 @@ export function getRepairDecision(unit, context = {}) {
 
   if (ratio >= returnRatio) return "return";
   if (unit?.repairDecision === "repair" || unit?.repairDecision === "retreat") {
-    return functioningSeparateBay(context.repairBay) || finite(context.fieldKits) > 0
+    return functioningSeparateBay(context.repairBay)
       ? "repair"
       : "retreat";
   }
   if (ratio > threshold) return "fight";
   if (functioningSeparateBay(context.repairBay)) return "repair";
-  if (finite(context.fieldKits) > 0) return "repair";
   return "retreat";
 }
 

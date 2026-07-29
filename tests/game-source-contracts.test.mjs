@@ -110,7 +110,7 @@ test("loot presentation is shared, pooled, touch-safe, and announced", () => {
     /this\.lootPool\.release\(pickup\.mesh, \(mesh\) => resetLootPickupMesh/,
   );
   assert.match(webglGame, /mesh\.position\.y = 0\.62 \+ Math\.sin/);
-  assert.match(canvasGame, /getLootPresentation\(pickup\.type\)/);
+  assert.match(canvasGame, /getLootPresentation\(pickup\.type, pickup\.value\)/);
   assert.match(canvasGame, /presentation\.worldLabel/);
   assert.match(game, /radius: TOUCH_SAFE_PICKUP_RADIUS/);
   assert.match(game, /aria-live="polite"/);
@@ -253,6 +253,14 @@ test("WebGL engine runs the shared tutorial and checkpoints wave one", () => {
   assert.match(webglGame, /private firstWaveCheckpoint/);
   assert.match(webglGame, /retryWave\(\)/);
   assert.match(webglGame, /onTutorialComplete/);
+});
+
+test("both renderers retry from a complete first-wave state snapshot", () => {
+  assert.match(game, /type FirstWaveCheckpoint = \{[\s\S]*empState: EmpState;[\s\S]*loot: LootCounters;[\s\S]*repairBayHp: number;/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private captureFirstWaveCheckpoint\(\) \{[\s\S]*empState: \{ \.\.\.this\.empState \}[\s\S]*loot: \{ \.\.\.this\.loot \}[\s\S]*repairBayHp: this\.repairBay\.hp/);
+    assert.match(engine, /retryWave\(\) \{[\s\S]*this\.empState = \{ \.\.\.checkpoint\.empState \}[\s\S]*this\.loot = \{ \.\.\.checkpoint\.loot \}[\s\S]*this\.repairBay\.hp = checkpoint\.repairBayHp/);
+  }
 });
 
 test("Canvas fallback matches tutorial and retry behavior", () => {
@@ -513,11 +521,27 @@ test("the Core remains protect-only across upgrades, Covenant, support sub-agent
       engine.indexOf("private updateLootPickups"),
       engine.indexOf("private clearLootPickups"),
     );
-    assert.doesNotMatch(upgrade, /this\.core\.hp/);
+    assert.doesNotMatch(upgrade, /this\.core\.(?:hp|maxHp)\s*[+\-*/]?=/);
     assert.doesNotMatch(subAgents, /this\.core\.hp/);
     assert.doesNotMatch(loot, /this\.core\.hp/);
   }
   assert.doesNotMatch(game, /coreHealing|coreNeedsRepair|coreRepair/);
+});
+
+test("Forge armor break uses magnitude, skills honor action state, and loot labels use values", () => {
+  assert.match(game, /resolveArmoredDamage/);
+  assert.match(game, /armorBreakReduction/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /useAgentSkill\(id: EvolutionAgentId\) \{[\s\S]*const actionState = getAgentActionState\(agent\);[\s\S]*if \(!actionState\.canAct\) return;/);
+    assert.match(engine, /getLootPresentation\(pickup\.type, pickup\.value\)/);
+    assert.match(engine, /armorBreakReduction: 0/);
+    assert.match(engine, /armorBreakReduction = effect\.armorReduction/);
+  }
+  assert.match(game, /available: boolean/);
+  assert.match(game, /disabled=\{[\s\S]*!skill\.available/);
+  assert.doesNotMatch(game, /<kbd>1–4<\/kbd>[\s\S]*Recruit an AI agent/);
+  assert.match(game, /<kbd>1–8<\/kbd>[\s\S]*Recruit an AI agent/);
+  assert.match(catalog, /Protocol Shards fund late warband recruits and the one-shard cost of temporary children/);
 });
 
 test("follow command overrides autonomous roles and Canvas disposal clears sub-agents", () => {

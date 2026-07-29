@@ -13,6 +13,7 @@ import {
   canCompleteWave,
   getActiveEnemyLimit,
   releaseSpawnBatch,
+  resolveArmoredDamage,
   remainingThreats,
 } from "./game/combat-rules.mjs";
 import {
@@ -220,6 +221,7 @@ type AgentSkillEffect = {
   damageMultiplier: number;
   amount: number;
   executes: boolean;
+  armorReduction: number;
   slowMs: number;
   slowMultiplier: number;
   damage: number;
@@ -229,6 +231,7 @@ type AgentSkillHud = {
   label: string;
   cooldownMs: number;
   cooldownLeftMs: number;
+  available: boolean;
 };
 
 type FirstWaveCheckpoint = {
@@ -237,6 +240,9 @@ type FirstWaveCheckpoint = {
   agents: AgentId[];
   defenses: Array<{ x: number; z: number }>;
   command: SquadCommand;
+  empState: EmpState;
+  loot: LootCounters;
+  repairBayHp: number;
 };
 
 const TOTAL_WAVES = 8;
@@ -444,6 +450,7 @@ type EnemyRuntime = {
   markedLeft: number;
   markMultiplier: number;
   armorBrokenLeft: number;
+  armorBreakReduction: number;
   bossState: BossState | null;
   bossVisual: THREE.Group | null;
 };
@@ -679,10 +686,10 @@ const EMPTY_EVOLUTIONS: Evolutions = {
 };
 const EMPTY_COMPONENT_UPGRADE_RANKS: ComponentUpgradeRanks = {};
 const createInitialSkillHud = (): Record<EvolutionAgentId, AgentSkillHud> => ({
-  kairos: { ...AGENT_SKILLS.kairos, cooldownLeftMs: 0 },
-  kira: { ...AGENT_SKILLS.kira, cooldownLeftMs: 0 },
-  forge: { ...AGENT_SKILLS.forge, cooldownLeftMs: 0 },
-  covenant: { ...AGENT_SKILLS.covenant, cooldownLeftMs: 0 },
+  kairos: { ...AGENT_SKILLS.kairos, cooldownLeftMs: 0, available: false },
+  kira: { ...AGENT_SKILLS.kira, cooldownLeftMs: 0, available: false },
+  forge: { ...AGENT_SKILLS.forge, cooldownLeftMs: 0, available: false },
+  covenant: { ...AGENT_SKILLS.covenant, cooldownLeftMs: 0, available: false },
 });
 const getArmorBonuses = (armorId: PlayerArmorId | null): ArmorBonuses =>
   armorId ? PLAYER_ARMORS[armorId].bonuses : {};
@@ -1470,6 +1477,8 @@ class FreemanEngine {
     const agent = this.agents.find((candidate) => candidate.id === id);
     const skill = AGENT_SKILLS[id];
     if (!agent || !skill) return;
+    const actionState = getAgentActionState(agent);
+    if (!actionState.canAct) return;
     const enemyTarget = id === "covenant" ? null : this.getPriorityEnemy();
     const supportTarget = id === "covenant"
       ? [
@@ -1547,6 +1556,7 @@ class FreemanEngine {
       }
       if (effect.type === "armor-break" && enemyTarget) {
         enemyTarget.armorBrokenLeft = effect.durationMs / 1_000;
+        enemyTarget.armorBreakReduction = effect.armorReduction;
       }
       if (effect.type === "suppressive-burst" && enemyTarget) {
         for (const threat of this.enemyGrid.query(
@@ -1562,7 +1572,6 @@ class FreemanEngine {
             threat,
             effect.damage,
             enemyTarget.group.position,
-            true,
           );
         }
         this.addRing(
@@ -1888,7 +1897,6 @@ class FreemanEngine {
     if (id === "bastion") {
       this.player.maxHp += 25;
       this.player.hp = this.player.maxHp;
-      this.core.maxHp += 20;
     }
     if (id === "bandwidth") {
       this.data += 70;
@@ -3248,6 +3256,7 @@ class FreemanEngine {
       markedLeft: 0,
       markMultiplier: 1,
       armorBrokenLeft: 0,
+      armorBreakReduction: 0,
       bossState,
       bossVisual,
     };
@@ -3343,6 +3352,9 @@ class FreemanEngine {
         z: defense.group.position.z,
       })),
       command: this.squadCommand,
+      empState: { ...this.empState },
+      loot: { ...this.loot },
+      repairBayHp: this.repairBay.hp,
     };
   }
 
@@ -3361,6 +3373,9 @@ class FreemanEngine {
     this.data = checkpoint.data;
     this.score = checkpoint.score;
     this.squadCommand = checkpoint.command;
+    this.empState = { ...checkpoint.empState };
+    this.loot = { ...checkpoint.loot };
+    this.repairBay.hp = checkpoint.repairBayHp;
     this.player.hp = this.player.maxHp;
     this.core.hp = this.core.maxHp;
     for (const id of checkpoint.agents) this.restoreAgent(id);
@@ -4528,6 +4543,7 @@ class FreemanEngine {
       if (enemy.slow === 0) enemy.slowMultiplier = 0.48;
       enemy.markedLeft = Math.max(0, enemy.markedLeft - delta);
       enemy.armorBrokenLeft = Math.max(0, enemy.armorBrokenLeft - delta);
+      if (enemy.armorBrokenLeft === 0) enemy.armorBreakReduction = 0;
       enemy.hitFlash = Math.max(0, enemy.hitFlash - delta);
       if (enemy.decoyOwnerId !== null) {
         enemy.decoyLeft -= delta;
@@ -4915,7 +4931,7 @@ class FreemanEngine {
       this.loot.repairs = next.repairKits ?? 0;
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
-      const presentation = getLootPresentation(pickup.type);
+      const presentation = getLootPresentation(pickup.type, pickup.value);
       this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: presentation.toastText, detail: "Recovered from a destroyed threat." });
       this.releaseLootPickup(pickup);
       this.pickups.splice(index, 1);
@@ -5171,15 +5187,18 @@ class FreemanEngine {
       enemy.markedLeft > 0 ? damage * enemy.markMultiplier : damage;
     const armoured =
       !bypassArmor &&
-      enemy.armorBrokenLeft <= 0 &&
       enemy.resistanceFlags.includes("armor") &&
       (enemy.bossState !== null || enemy.hp > enemy.maxHp * 0.45);
     const armorMultiplier = enemy.bossState
-      ? getBossArmorMultiplier(enemy.bossState, enemy.armorBrokenLeft > 0)
+      ? getBossArmorMultiplier(enemy.bossState)
       : 0.42;
-    const appliedDamage = armoured
-      ? markedDamage * armorMultiplier
-      : markedDamage;
+    const appliedDamage = resolveArmoredDamage(markedDamage, {
+      armored: armoured,
+      armorMultiplier,
+      armorBreakReduction: enemy.armorBrokenLeft > 0
+        ? enemy.armorBreakReduction
+        : 0,
+    });
     enemy.hp -= appliedDamage;
     if (enemy.bossState) enemy.bossState.hp = enemy.hp;
     enemy.hitFlash = 0.11;
@@ -5275,7 +5294,7 @@ class FreemanEngine {
         );
     for (const drop of drops) {
       const mesh = this.lootPool.acquire(() => createLootPickupMesh(drop.type));
-      resetLootPickupMesh(mesh, drop.type);
+      resetLootPickupMesh(mesh, drop.type, drop.value);
       const pickup: LootRuntime = {
         ...drop,
         x: deathPosition.x + drop.x * 0.35,
@@ -5986,6 +6005,7 @@ class FreemanEngine {
     for (const id of Object.keys(skills) as EvolutionAgentId[]) {
       const agent = this.agents.find((candidate) => candidate.id === id);
       skills[id].cooldownLeftMs = agent?.skillCooldownLeftMs ?? 0;
+      skills[id].available = Boolean(agent && getAgentActionState(agent).canAct);
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
     this.callbacks.onHud({
@@ -6089,6 +6109,7 @@ type FlatEnemy = {
   markedLeft: number;
   markMultiplier: number;
   armorBrokenLeft: number;
+  armorBreakReduction: number;
   bossState: BossState | null;
 };
 
@@ -6588,6 +6609,8 @@ class FreemanCanvasEngine implements GameController {
     const agent = this.agents.find((candidate) => candidate.id === id);
     const skill = AGENT_SKILLS[id];
     if (!agent || !skill) return;
+    const actionState = getAgentActionState(agent);
+    if (!actionState.canAct) return;
     const enemyTarget = id === "covenant" ? null : this.getFlatPriorityEnemy();
     const supportTarget = id === "covenant"
       ? [
@@ -6665,6 +6688,7 @@ class FreemanCanvasEngine implements GameController {
       }
       if (effect.type === "armor-break" && enemyTarget) {
         enemyTarget.armorBrokenLeft = effect.durationMs / 1_000;
+        enemyTarget.armorBreakReduction = effect.armorReduction;
       }
       if (effect.type === "suppressive-burst" && enemyTarget) {
         for (const threat of [...this.enemies].filter(
@@ -6681,7 +6705,7 @@ class FreemanCanvasEngine implements GameController {
             threat.slowMultiplier,
             effect.slowMultiplier,
           );
-          this.damageEnemy(threat, effect.damage, true);
+          this.damageEnemy(threat, effect.damage);
         }
         this.addRing(
           enemyTarget.x,
@@ -7005,7 +7029,6 @@ class FreemanCanvasEngine implements GameController {
     if (id === "bastion") {
       this.player.maxHp += 25;
       this.player.hp = this.player.maxHp;
-      this.core.maxHp += 20;
     }
     if (id === "bandwidth") {
       this.data += 70;
@@ -8035,6 +8058,7 @@ class FreemanCanvasEngine implements GameController {
       if (enemy.slow === 0) enemy.slowMultiplier = 0.48;
       enemy.markedLeft = Math.max(0, enemy.markedLeft - delta);
       enemy.armorBrokenLeft = Math.max(0, enemy.armorBrokenLeft - delta);
+      if (enemy.armorBrokenLeft === 0) enemy.armorBreakReduction = 0;
       if (enemy.decoyOwnerId !== null) {
         enemy.decoyLeft -= delta;
         const ownerActive = this.enemies.some(
@@ -8498,6 +8522,7 @@ class FreemanCanvasEngine implements GameController {
         | "markedLeft"
         | "markMultiplier"
         | "armorBrokenLeft"
+        | "armorBreakReduction"
         | "bossState"
       >
     > = {
@@ -8607,6 +8632,7 @@ class FreemanCanvasEngine implements GameController {
       markedLeft: 0,
       markMultiplier: 1,
       armorBrokenLeft: 0,
+      armorBreakReduction: 0,
       bossState,
     };
     this.enemies.push(enemy);
@@ -8671,6 +8697,9 @@ class FreemanCanvasEngine implements GameController {
         z: defense.z,
       })),
       command: this.squadCommand,
+      empState: { ...this.empState },
+      loot: { ...this.loot },
+      repairBayHp: this.repairBay.hp,
     };
   }
 
@@ -8688,6 +8717,9 @@ class FreemanCanvasEngine implements GameController {
     this.data = checkpoint.data;
     this.score = checkpoint.score;
     this.squadCommand = checkpoint.command;
+    this.empState = { ...checkpoint.empState };
+    this.loot = { ...checkpoint.loot };
+    this.repairBay.hp = checkpoint.repairBayHp;
     this.player.hp = this.player.maxHp;
     this.core.hp = this.core.maxHp;
     for (const id of checkpoint.agents) this.restoreAgent(id);
@@ -8831,15 +8863,18 @@ class FreemanCanvasEngine implements GameController {
       enemy.markedLeft > 0 ? damage * enemy.markMultiplier : damage;
     const armoured =
       !bypassArmor &&
-      enemy.armorBrokenLeft <= 0 &&
       enemy.resistanceFlags.includes("armor") &&
       (enemy.bossState !== null || enemy.hp > enemy.maxHp * 0.45);
     const armorMultiplier = enemy.bossState
-      ? getBossArmorMultiplier(enemy.bossState, enemy.armorBrokenLeft > 0)
+      ? getBossArmorMultiplier(enemy.bossState)
       : 0.42;
-    const appliedDamage = armoured
-      ? markedDamage * armorMultiplier
-      : markedDamage;
+    const appliedDamage = resolveArmoredDamage(markedDamage, {
+      armored: armoured,
+      armorMultiplier,
+      armorBreakReduction: enemy.armorBrokenLeft > 0
+        ? enemy.armorBreakReduction
+        : 0,
+    });
     enemy.hp -= appliedDamage;
     if (enemy.bossState) enemy.bossState.hp = enemy.hp;
     this.addBurst(enemy.x, enemy.z, 0xe77d44, 5);
@@ -8941,7 +8976,7 @@ class FreemanCanvasEngine implements GameController {
       this.loot.repairs = next.repairKits ?? 0;
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
-      const presentation = getLootPresentation(pickup.type);
+      const presentation = getLootPresentation(pickup.type, pickup.value);
       this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: presentation.toastText, detail: "Recovered from a destroyed threat." });
       this.pickups.splice(index, 1);
       this.emitHud(true);
@@ -9298,7 +9333,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private drawLootPickup(pickup: FlatLootRuntime) {
-    const presentation = getLootPresentation(pickup.type);
+      const presentation = getLootPresentation(pickup.type, pickup.value);
     const point = this.project(
       pickup.x,
       pickup.y,
@@ -10347,6 +10382,7 @@ class FreemanCanvasEngine implements GameController {
     for (const id of Object.keys(skills) as EvolutionAgentId[]) {
       const agent = this.agents.find((candidate) => candidate.id === id);
       skills[id].cooldownLeftMs = agent?.skillCooldownLeftMs ?? 0;
+      skills[id].available = Boolean(agent && getAgentActionState(agent).canAct);
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
     this.callbacks.onHud({
@@ -11043,6 +11079,7 @@ export default function FreemanProtocol() {
                   disabled={
                     mode !== "playing" ||
                     !hud.agents[id] ||
+                    !skill.available ||
                     skill.cooldownLeftMs > 0
                   }
                   aria-label={`${AGENT_SKILLS[id].label} skill`}
@@ -11529,7 +11566,7 @@ export default function FreemanProtocol() {
               <b>EMP pulse</b>
             </span>
             <span>
-              <kbd>1–4</kbd>
+              <kbd>1–8</kbd>
               <b>Recruit an AI agent</b>
             </span>
             <span>

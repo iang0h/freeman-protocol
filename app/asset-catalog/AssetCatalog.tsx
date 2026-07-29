@@ -174,8 +174,8 @@ const lootEntries: LootEntry[] = [
     name: "Protocol Shard",
     type: "UPGRADE DATA",
     tone: "violet",
-    quantity: "+1 DRAFT",
-    detail: "Compressed intelligence used to evolve the squad.",
+    quantity: "VARIABLE SHARDS",
+    detail: "Protocol Shards fund late warband recruits and the one-shard cost of temporary children.",
   },
 ];
 
@@ -291,7 +291,7 @@ const disciplineEntries: ProgressionEntry[] = [
     name: "Rare Loot",
     signal: "BOSS CACHE · COMPONENTS · SHARDS",
     tone: "amber",
-    detail: "Pooled enemy and loot cleanup keeps recovery stable between waves; pending boss drops are credited before the arena resets.",
+    detail: "Boss caches announce their actual Component and Shard quantities; pending drops are credited before the arena resets.",
   },
 ];
 
