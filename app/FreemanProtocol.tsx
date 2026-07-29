@@ -3184,7 +3184,7 @@ class FreemanEngine {
       let target: EnemyRuntime | null = null;
       if (intent === "assault" || intent === "improvise") {
         target = priority;
-      } else if (intent === "support") {
+      } else if (intent === "follow" || intent === "support") {
         target = this.getNearestEnemy(agent.group.position, agent.range);
       } else if (intent === "defend") {
         const coreThreat = this.getNearestEnemy(this.core.group.position, 9.5);
@@ -5692,7 +5692,7 @@ class FreemanCanvasEngine implements GameController {
       let target: FlatEnemy | null = null;
       if (intent === "assault" || intent === "improvise") {
         target = priority;
-      } else if (intent === "support") {
+      } else if (intent === "follow" || intent === "support") {
         target = this.getNearestEnemy(agent.x, agent.z, agent.range);
       } else if (intent === "defend") {
         const coreThreat = this.getNearestEnemy(this.core.x, this.core.z, 9.5);
