@@ -192,7 +192,12 @@ export function getRootkitRebootUpdates(source, threats) {
     }));
 }
 
-export function resolveEmpDamage(baseDamage, target, modifiers) {
+export function resolveEmpDamage(
+  baseDamage,
+  target,
+  modifiers,
+  resistanceBypass = 0,
+) {
   const damage = Math.max(0, Number(baseDamage) || 0);
   if (!modifiers || modifiers.wave <= 1) return damage;
 
@@ -213,7 +218,8 @@ export function resolveEmpDamage(baseDamage, target, modifiers) {
   if (flags.has("jammer")) {
     resolved *= 1 - (resistance.jammerReduction ?? 0);
   }
-  return Math.round(Math.max(0, resolved));
+  const bypass = Math.min(1, Math.max(0, Number(resistanceBypass) || 0));
+  return Math.round(Math.max(0, resolved + (damage - resolved) * bypass));
 }
 
 export function getMaxEmpResistancePercent(modifiers) {

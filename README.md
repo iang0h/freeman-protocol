@@ -1,4 +1,20 @@
-# vinext-starter
+# Freeman Protocol
+
+Freeman Protocol is a browser-based cyber-defense action game. The player loop
+is:
+
+**gather → recruit/upgrade → repair → deploy skills → survive boss waves**
+
+Destroy threats and collect their materials, then recruit the persistent
+eight-slot warband and install upgrades between waves. Keep agents and sentries
+operational through the separate repair bay and field kits, deploy each
+specialist’s cooldown skill at the right moment, and use the visible EMP charge
+to disrupt encounters. From wave three onward, armored warbosses telegraph
+their strikes and drop rare Components and Shards that fund the final recruits.
+The Covenant Core is protect-only: defend it, but do not treat it as a repair
+target.
+
+## Runtime and Sites Notes
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and

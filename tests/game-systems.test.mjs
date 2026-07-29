@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import * as autonomyRules from "../app/game/autonomy-rules.mjs";
 
 import {
   canCompleteWave,
   getActiveEnemyLimit,
   releaseSpawnBatch,
+  resolveArmoredDamage,
   remainingThreats,
 } from "../app/game/combat-rules.mjs";
 import {
@@ -35,10 +38,12 @@ import {
   LOOT_TYPES,
   applyLootPickup,
   canCollectLoot,
+  creditPendingMaterialLoot,
   rollLootDrop,
 } from "../app/game/loot-rules.mjs";
 import {
   AGENT_ROLES,
+  SUB_AGENT_MATERIAL_COST,
   clearSubAgents,
   decideAgentIntent,
   shouldImprovise,
@@ -56,6 +61,484 @@ import {
   getWaveModifiers,
   resolveEmpDamage,
 } from "../app/game/encounter-rules.mjs";
+import {
+  EMP_BASE_DAMAGE,
+  EMP_BASE_RADIUS,
+  canFireEmp,
+  createEmpState,
+  fireEmp,
+  getEmpRuntimeProfile,
+  getEmpUpgrade,
+  tickEmp,
+  updateEmpCooldown,
+} from "../app/game/emp-rules.mjs";
+import {
+  WARBAND_SLOTS,
+  advanceWarbandWorkshopMode,
+  canRecruitWarbandSlot,
+  canRecruitPersistentWarband,
+  collectMaterials,
+  getRecruitCost,
+  getReservedWarbandMaterials,
+  getSpendableWarbandMaterials,
+  recruitWarbandSlot,
+  tickAgentGathering,
+} from "../app/game/warband-rules.mjs";
+import {
+  AGENT_SKILLS,
+  canUseSkill,
+  getSlowMovementMultiplier,
+  useSkill as activateAgentSkill,
+} from "../app/game/skill-rules.mjs";
+import {
+  BOSS_CAPS,
+  BOSS_REWARD_RATIONALE,
+  getBossArmorMultiplier,
+  getBossEncounter,
+  getNearestBossTarget,
+  getPendingBossTarget,
+  tickBoss,
+} from "../app/game/boss-rules.mjs";
+
+async function loadRepairRules() {
+  return import("../app/game/repair-rules.mjs");
+}
+
+test("repair lifecycle persists at the bay until the configured return ratio", async () => {
+  const { getRepairDecision, tickRepairBay } = await loadRepairRules();
+  const agent = {
+    id: "relay",
+    hp: 28,
+    maxHp: 100,
+    repairThreshold: 0.4,
+    returnHealthRatio: 0.75,
+    repairDecision: "repair",
+    disabledLeftMs: 0,
+  };
+  const destroyedBay = { hp: 0, maxHp: 70, isSeparate: true, repairPerSecond: 20 };
+  const sharedCore = { hp: 70, maxHp: 70, isSeparate: false, repairPerSecond: 20 };
+  const functioningBay = { hp: 70, maxHp: 70, isSeparate: true, repairPerSecond: 20 };
+
+  assert.equal(getRepairDecision(agent, { repairBay: destroyedBay }), "retreat");
+  assert.equal(getRepairDecision(agent, { repairBay: sharedCore }), "retreat");
+  assert.equal(getRepairDecision(agent, { repairBay: functioningBay }), "repair");
+
+  const offBay = tickRepairBay(functioningBay, [agent], 1_000).units[0];
+  assert.equal(offBay.hp, 28, "repair intent cannot heal before reaching the bay");
+  const firstTick = tickRepairBay(functioningBay, [{ ...agent, atRepairBay: true, repairing: true }], 1_000).units[0];
+  assert.equal(firstTick.hp, 48);
+  assert.equal(
+    getRepairDecision(firstTick, { repairBay: functioningBay }),
+    "repair",
+  );
+
+  const secondTick = tickRepairBay(
+    functioningBay,
+    [{ ...firstTick, repairDecision: getRepairDecision(firstTick, { repairBay: functioningBay }), atRepairBay: true, repairing: true }],
+    1_000,
+  ).units[0];
+  assert.equal(secondTick.hp, 68);
+  assert.equal(
+    getRepairDecision(secondTick, { repairBay: functioningBay }),
+    "repair",
+  );
+
+  const returnTick = tickRepairBay(
+    functioningBay,
+    [{ ...secondTick, repairDecision: getRepairDecision(secondTick, { repairBay: functioningBay }), atRepairBay: true, repairing: true }],
+    1_000,
+  ).units[0];
+  assert.equal(returnTick.hp, 88);
+  assert.equal(
+    getRepairDecision(returnTick, { repairBay: functioningBay }),
+    "return",
+  );
+});
+
+test("field-kit inventory cannot manufacture a repair decision", async () => {
+  const { getRepairDecision } = await loadRepairRules();
+  const agent = {
+    id: "kairos",
+    hp: 20,
+    maxHp: 100,
+    repairThreshold: 0.4,
+    repairDecision: "fight",
+  };
+  assert.equal(
+    getRepairDecision(agent, {
+      repairBay: { hp: 0, maxHp: 70, isSeparate: true },
+      fieldKits: 3,
+    }),
+    "retreat",
+  );
+});
+
+test("unit damage and repair timers clamp without mutating Core health", async () => {
+  const { applyUnitDamage, tickRepairBay } = await loadRepairRules();
+  const damaged = applyUnitDamage(
+    { id: "warden", hp: 12, maxHp: 100, disabledLeftMs: 300, coreHealth: 137 },
+    99,
+  );
+  assert.deepEqual(damaged, {
+    id: "warden",
+    hp: 0,
+    maxHp: 100,
+    disabledLeftMs: 3_000,
+    coreHealth: 137,
+  });
+
+  const repaired = tickRepairBay(
+    { hp: 60, maxHp: 60, isSeparate: true, repairPerSecond: 50 },
+    [{ ...damaged, repairDecision: "repair" }],
+    1_000,
+  );
+  assert.equal(repaired.units[0].disabledLeftMs, 2_000);
+  assert.equal(repaired.units[0].hp, 0);
+  assert.equal(repaired.units[0].coreHealth, 137);
+  assert.equal(damaged.coreHealth, 137);
+});
+
+test("destroyed bays remain a withdrawal fallback while turrets repair with Components", async () => {
+  const { applyUnitDamage, getRepairDecision, repairTurret, tickRepairBay } = await loadRepairRules();
+  const turret = applyUnitDamage({ id: "sentry-1", hp: 55, maxHp: 100 }, 80);
+  assert.equal(turret.hp, 0);
+
+  const repairedTurret = repairTurret(
+    { ...turret, repairCost: 2, repairAmount: 45 },
+    3,
+  );
+  assert.equal(repairedTurret.turret.hp, 45);
+  assert.equal(repairedTurret.components, 1);
+
+  const fieldKit = repairTurret({ hp: 25, maxHp: 100, repairAmount: 20 }, 1);
+  assert.equal(fieldKit.turret.hp, 45);
+  const destroyedBay = applyUnitDamage(
+    { hp: 60, maxHp: 60, isSeparate: true, repairPerSecond: 40 },
+    60,
+  );
+  assert.equal(destroyedBay.hp, 0);
+  const withdrawnUnit = { hp: 25, maxHp: 100, repairThreshold: 0.4, repairDecision: "repair" };
+  const noBayRepair = tickRepairBay(
+    destroyedBay,
+    [withdrawnUnit],
+    5_000,
+  );
+  assert.equal(noBayRepair.units[0].hp, 25);
+  assert.equal(
+    getRepairDecision(
+      withdrawnUnit,
+      { repairBay: destroyedBay, fieldKits: 0 },
+    ),
+    "retreat",
+  );
+});
+
+test("hostile projectile collisions cover agents, turrets, and repair bays", async () => {
+  const { findHostileProjectileHit } = await loadRepairRules();
+  const projectile = { x: 0, z: 0, radius: 0.2 };
+  const targets = [
+    { id: "kairos", kind: "agent", x: 0.35, z: 0, radius: 0.3, hp: 75 },
+    { id: "sentry-1", kind: "turret", x: 1.1, z: 0, radius: 0.35, hp: 100 },
+    { id: "repair-bay", kind: "repair-bay", x: 1.9, z: 0, radius: 0.55, hp: 70 },
+  ];
+
+  assert.deepEqual(findHostileProjectileHit(projectile, targets), targets[0]);
+  assert.deepEqual(
+    findHostileProjectileHit({ ...projectile, x: 1.1 }, targets.slice(1)),
+    targets[1],
+  );
+  assert.deepEqual(
+    findHostileProjectileHit({ ...projectile, x: 1.9 }, targets.slice(2)),
+    targets[2],
+  );
+});
+
+test("warband recruitment keeps starter costs and escalates material costs after slot four", () => {
+  assert.equal(WARBAND_SLOTS.length, 8);
+  assert.deepEqual(
+    WARBAND_SLOTS.slice(0, 4).map((slot) => getRecruitCost(slot)),
+    [
+      { compute: 45, components: 0, shards: 0 },
+      { compute: 75, components: 0, shards: 0 },
+      { compute: 105, components: 0, shards: 0 },
+      { compute: 135, components: 0, shards: 0 },
+    ],
+  );
+  const lateCosts = WARBAND_SLOTS.slice(4).map((slot) => getRecruitCost(slot));
+  for (let index = 1; index < lateCosts.length; index += 1) {
+    assert.ok(lateCosts[index].compute > lateCosts[index - 1].compute);
+    assert.ok(lateCosts[index].components > lateCosts[index - 1].components);
+    assert.ok(lateCosts[index].shards > lateCosts[index - 1].shards);
+  }
+});
+
+test("renderer workshop lifecycle recruits slots five through eight before wave eight", () => {
+  assert.equal(canRecruitPersistentWarband("upgrade"), true);
+  assert.equal(canRecruitPersistentWarband("evolution"), true);
+  assert.equal(advanceWarbandWorkshopMode("playing", "wave-complete"), "upgrade");
+  assert.equal(advanceWarbandWorkshopMode("upgrade", "start-next-wave"), "playing");
+  assert.equal(advanceWarbandWorkshopMode("evolution", "start-next-wave"), "playing");
+  for (const mode of ["intro", "paused", "defeat", "victory"]) {
+    assert.equal(canRecruitPersistentWarband(mode), false);
+  }
+
+  const rendererCampaigns = {
+    webgl: {
+      mode: "playing",
+      compute: 10_000,
+      components: 21,
+      shards: 13,
+      warband: WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id),
+    },
+    canvas: {
+      mode: "playing",
+      compute: 10_000,
+      components: 21,
+      shards: 13,
+      warband: WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id),
+    },
+  };
+
+  for (const campaign of Object.values(rendererCampaigns)) {
+    campaign.mode = advanceWarbandWorkshopMode(campaign.mode, "wave-complete");
+    assert.equal(campaign.mode, "upgrade");
+    for (const slot of WARBAND_SLOTS.slice(4)) {
+      assert.equal(campaign.mode, "upgrade");
+      assert.equal(canRecruitPersistentWarband(campaign.mode), true);
+      assert.equal(canRecruitWarbandSlot(campaign, slot), true);
+      Object.assign(campaign, recruitWarbandSlot(campaign, slot));
+    }
+    assert.deepEqual(campaign.warband, WARBAND_SLOTS.map((slot) => slot.id));
+    campaign.mode = advanceWarbandWorkshopMode(campaign.mode, "start-next-wave");
+    assert.equal(canRecruitPersistentWarband(campaign.mode), true);
+  }
+
+  assert.deepEqual(rendererCampaigns.canvas, rendererCampaigns.webgl);
+});
+
+test("warband recruitment is atomic and rejects an unavailable ninth slot", () => {
+  const state = {
+    compute: 500,
+    components: 10,
+    shards: 5,
+    warband: WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id),
+    untouched: { keep: true },
+  };
+  const insufficient = { ...state, components: 1 };
+  assert.equal(canRecruitWarbandSlot(insufficient, WARBAND_SLOTS[4]), false);
+  assert.strictEqual(recruitWarbandSlot(insufficient, WARBAND_SLOTS[4]), insufficient);
+
+  const recruited = recruitWarbandSlot(state, WARBAND_SLOTS[4]);
+  assert.deepEqual(recruited.warband, [
+    "kairos", "kira", "forge", "covenant", "relay",
+  ]);
+  assert.deepEqual(recruited.untouched, { keep: true });
+  assert.equal(recruited.compute, 325);
+  assert.equal(recruited.components, 8);
+  assert.equal(recruited.shards, 4);
+
+  const full = { ...state, warband: WARBAND_SLOTS.map((slot) => slot.id) };
+  assert.equal(canRecruitWarbandSlot(full, 9), false);
+  assert.strictEqual(recruitWarbandSlot(full, 9), full);
+});
+
+test("agents deterministically collect visible materials and respect gathering cooldown", () => {
+  const agent = { id: "relay", x: 0, y: 0, gatheringCooldownMs: 0 };
+  const nearbyLoot = [
+    { id: "shard-b", type: "upgrade-shard", x: 0.1, y: 0, value: 2 },
+    { id: "component-a", type: "component", x: 0.1, y: 0, value: 3 },
+    { id: "repair-c", type: "repair", x: 0, y: 0, value: 25 },
+  ];
+  const collection = collectMaterials(agent, nearbyLoot);
+  assert.deepEqual(collection.collected, { components: 3, shards: 0 });
+  assert.equal(collection.agent.gatheringCooldownMs, 750);
+  assert.equal(collection.agent.gatheredLootId, "component-a");
+
+  const cooling = collectMaterials(collection.agent, nearbyLoot);
+  assert.deepEqual(cooling.collected, { components: 0, shards: 0 });
+  assert.equal(cooling.agent.gatheringCooldownMs, 750);
+
+  const ready = tickAgentGathering(collection.agent, {
+    hostileTargetInRange: false,
+    retreating: false,
+    nearbyLoot,
+  }, 750);
+  assert.equal(ready.gatheringCooldownMs, 0);
+  assert.equal(ready.gatheringTargetId, "component-a");
+  assert.equal(
+    tickAgentGathering(ready, { hostileTargetInRange: true, nearbyLoot }, 0)
+      .gatheringTargetId,
+    null,
+  );
+});
+
+test("EMP starts charged, fires once, and completes its deterministic cooldown", () => {
+  const fresh = createEmpState({ cooldownMs: 12000, maxCharge: 100 });
+
+  assert.deepEqual(fresh, {
+    charge: 100,
+    maxCharge: 100,
+    cooldownLeftMs: 0,
+    cooldownMs: 12000,
+  });
+  assert.equal(canFireEmp(fresh), true);
+
+  const fired = fireEmp(fresh, {
+    baseDamage: EMP_BASE_DAMAGE,
+    damageMultiplier: 1.5,
+    terrainMultiplier: 0.9,
+  });
+  assert.equal(
+    fired.damage,
+    EMP_BASE_DAMAGE,
+    "legacy damage and terrain multipliers must be ignored",
+  );
+  assert.deepEqual(fired.state, {
+    charge: 0,
+    maxCharge: 100,
+    cooldownLeftMs: 12000,
+    cooldownMs: 12000,
+  });
+
+  const ticking = tickEmp(fired.state, 4500);
+  assert.deepEqual(ticking, {
+    charge: 37.5,
+    maxCharge: 100,
+    cooldownLeftMs: 7500,
+    cooldownMs: 12000,
+  });
+  assert.deepEqual(tickEmp(ticking, 7500), fresh);
+});
+
+test("EMP rejects a second pulse until its cooldown completes", () => {
+  const fired = fireEmp(createEmpState({ cooldownMs: 6000, maxCharge: 1 }), {
+    baseDamage: EMP_BASE_DAMAGE,
+    damageMultiplier: 1,
+    terrainMultiplier: 1,
+  });
+
+  const rejected = fireEmp(fired.state, {
+    baseDamage: EMP_BASE_DAMAGE,
+    damageMultiplier: 1,
+    terrainMultiplier: 1,
+  });
+  assert.equal(canFireEmp(fired.state), false);
+  assert.equal(rejected.damage, 0);
+  assert.deepEqual(rejected.state, fired.state);
+});
+
+test("EMP damage is restrained and upgrades change only their documented dimension", () => {
+  assert.ok(EMP_BASE_DAMAGE < 44);
+  assert.equal(EMP_BASE_RADIUS, 10.5);
+  assert.deepEqual(getEmpUpgrade("efficiency"), {
+    id: "efficiency",
+    label: "PULSE EFFICIENCY",
+    cost: 90,
+    cooldownMultiplier: 0.75,
+  });
+  assert.deepEqual(getEmpUpgrade("radius"), {
+    id: "radius",
+    label: "PULSE RADIUS",
+    cost: 80,
+    radiusMultiplier: 1.25,
+  });
+  assert.deepEqual(getEmpUpgrade("bypass"), {
+    id: "bypass",
+    label: "RESISTANCE BYPASS",
+    cost: 110,
+    resistanceBypass: 0.25,
+  });
+  assert.equal(getEmpUpgrade("missing"), null);
+
+  assert.equal(
+    resolveEmpDamage(
+      100,
+      { resistanceFlags: ["shield", "decoy", "armor", "jammer"] },
+      getWaveModifiers(1),
+    ),
+    100,
+  );
+});
+
+test("live EMP profile converts progression into cadence, radius, and bypass only", () => {
+  assert.deepEqual(getEmpRuntimeProfile(), {
+    cooldownMs: 16_000,
+    radius: 10.5,
+    resistanceBypass: 0,
+  });
+  assert.deepEqual(getEmpRuntimeProfile({ voltageRank: 1 }), {
+    cooldownMs: 12_000,
+    radius: 10.5,
+    resistanceBypass: 0,
+  });
+  assert.deepEqual(
+    getEmpRuntimeProfile({
+      voltageRank: 2,
+      radiusMultiplier: 1.25,
+      terrainRadiusMultiplier: 0.9,
+    }),
+    {
+      cooldownMs: 12_000,
+      radius: 11.813,
+      resistanceBypass: 0.25,
+    },
+  );
+
+  const fired = fireEmp(createEmpState(), { baseDamage: EMP_BASE_DAMAGE });
+  assert.equal(fired.damage, EMP_BASE_DAMAGE);
+  assert.deepEqual(
+    updateEmpCooldown(tickEmp(fired.state, 4_000), 12_000),
+    {
+      charge: 25,
+      maxCharge: 100,
+      cooldownLeftMs: 9_000,
+      cooldownMs: 12_000,
+    },
+  );
+});
+
+test("renderer parity gate suppresses retreat, disabled-parent children, and Covenant support", async () => {
+  const { getAgentActionState } = await loadRepairRules();
+  const scenarios = [
+    {
+      name: "repairing Covenant",
+      unit: {
+        hp: 32,
+        maxHp: 100,
+        disabledLeftMs: 0,
+        repairDecision: "repair",
+      },
+      expected: { withdrawing: true, canAct: false },
+    },
+    {
+      name: "disabled Forge",
+      unit: {
+        hp: 70,
+        maxHp: 100,
+        disabledLeftMs: 500,
+        repairDecision: "fight",
+      },
+      expected: { withdrawing: false, canAct: false },
+    },
+    {
+      name: "active Kairos",
+      unit: {
+        hp: 70,
+        maxHp: 100,
+        disabledLeftMs: 0,
+        repairDecision: "fight",
+      },
+      expected: { withdrawing: false, canAct: true },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const webgl = getAgentActionState({ ...scenario.unit });
+    const canvas = getAgentActionState({ ...scenario.unit });
+    assert.deepEqual(webgl, scenario.expected, scenario.name);
+    assert.deepEqual(canvas, webgl, scenario.name);
+  }
+});
 
 test("wave one preserves the unmodified encounter and EMP", () => {
   const modifiers = getWaveModifiers(1);
@@ -297,7 +780,7 @@ test("an agent can buy exactly one evolution", () => {
   assert.equal(EVOLUTIONS.kairos[0].chainTargets, 2);
   assert.equal(EVOLUTIONS.kira[1].pierceMultipliers[1], 0.45);
   assert.equal(EVOLUTIONS.forge[0].splashDamageMultiplier, 0.45);
-  assert.equal(EVOLUTIONS.covenant[0].coreShield, 30);
+  assert.equal(EVOLUTIONS.covenant[0].playerShield, 20);
 });
 
 test("evolution purchase validates recruitment and Compute", () => {
@@ -375,18 +858,26 @@ test("armor profiles expose mutually exclusive concrete player bonuses", () => {
   assert.deepEqual(Object.keys(PLAYER_ARMORS), ["vanguard", "striker", "relay"]);
   assert.equal(PLAYER_ARMORS.vanguard.bonuses.maxHealth, 35);
   assert.equal(PLAYER_ARMORS.striker.bonuses.damageMultiplier, 1.2);
-  assert.equal(PLAYER_ARMORS.relay.bonuses.empMultiplier, 1.4);
+  assert.equal(PLAYER_ARMORS.relay.bonuses.empRadiusMultiplier, 1.25);
   assert.equal(PLAYER_ARMORS.relay.bonuses.healingMultiplier, 1.25);
 });
 
-test("each agent has a component-funded identity upgrade", () => {
+test("each agent has a component-funded identity and lifetime upgrade", () => {
   assert.equal(AGENT_COMPONENT_UPGRADES.kairos[0].id, "stasis-array");
   assert.equal(AGENT_COMPONENT_UPGRADES.kira[0].id, "hunter-core");
   assert.equal(AGENT_COMPONENT_UPGRADES.forge[0].id, "breach-ammo");
   assert.equal(AGENT_COMPONENT_UPGRADES.covenant[0].id, "nanite-reserve");
+  assert.deepEqual(
+    Object.keys(AGENT_COMPONENT_UPGRADES),
+    ["kairos", "kira", "forge", "covenant", "relay", "scout", "warden", "nova"],
+  );
   for (const upgrades of Object.values(AGENT_COMPONENT_UPGRADES)) {
     assert.ok(upgrades[0].cost > 0);
     assert.ok(Object.keys(upgrades[0].bonuses).length > 0);
+    assert.equal(
+      upgrades.find((upgrade) => upgrade.id === "sub-agent-lifetime")?.maxRank,
+      2,
+    );
   }
 });
 
@@ -533,6 +1024,27 @@ test("tutorial protection and first-wave retry are explicit", () => {
   assert.equal(FIRST_WAVE.damageMultiplier, 0.72);
 });
 
+test("first-wave retry restores EMP, loot, and repair-bay state without farming", () => {
+  const checkpoint = {
+    empState: { charge: 100, maxCharge: 100, cooldownLeftMs: 0, cooldownMs: 16_000 },
+    loot: { repairs: 1, components: 2, shards: 3 },
+    repairBayHp: 70,
+  };
+  const failedRun = {
+    empState: { charge: 0, maxCharge: 100, cooldownLeftMs: 8_000, cooldownMs: 16_000 },
+    loot: { repairs: 4, components: 9, shards: 11 },
+    repairBayHp: 0,
+  };
+  const restored = {
+    ...failedRun,
+    empState: { ...checkpoint.empState },
+    loot: { ...checkpoint.loot },
+    repairBayHp: checkpoint.repairBayHp,
+  };
+  assert.deepEqual(restored, checkpoint);
+  assert.deepEqual(creditPendingMaterialLoot(restored.loot, []), checkpoint.loot);
+});
+
 test("virtual stick applies a dead zone and preserves direction", () => {
   assert.deepEqual(normalizeStickInput(0.05, -0.04), { x: 0, y: 0 });
   assert.deepEqual(normalizeStickInput(2, 0), { x: 1, y: 0 });
@@ -602,24 +1114,26 @@ test("loot requires player overlap before it can be collected", () => {
   assert.equal(canCollectLoot({ x: 1.2, y: 0, radius: 0.5 }, loot), true);
 });
 
-test("repair loot clamps player and core health at their maxima", () => {
+test("repair loot restores the player without healing the protected Core", () => {
   const state = {
     health: 92,
     maxHealth: 100,
     coreHealth: 174,
     maxCoreHealth: 180,
+    repairKits: 0,
     components: 0,
     upgradeShards: 0,
   };
   assert.deepEqual(
     applyLootPickup(state, { type: LOOT_TYPES.repair.id, value: 25 }),
-    { ...state, health: 100, coreHealth: 180 },
+    { ...state, health: 100, repairKits: 1 },
   );
   assert.deepEqual(state, {
     health: 92,
     maxHealth: 100,
     coreHealth: 174,
     maxCoreHealth: 180,
+    repairKits: 0,
     components: 0,
     upgradeShards: 0,
   });
@@ -640,6 +1154,34 @@ test("component loot increments the component inventory", () => {
   });
   assert.equal(result.components, 5);
   assert.equal(state.components, 3);
+});
+
+test("pending material credit preserves shard wallet aliases", () => {
+  const pending = [
+    { type: LOOT_TYPES.component.id, value: 2 },
+    { type: LOOT_TYPES.upgradeShard.id, value: 1 },
+  ];
+  assert.deepEqual(
+    creditPendingMaterialLoot(
+      { repairs: 0, components: 3, shards: 2 },
+      pending,
+    ),
+    { repairs: 0, components: 5, shards: 3 },
+  );
+  assert.deepEqual(
+    creditPendingMaterialLoot(
+      { components: 3, upgradeShards: 2 },
+      pending,
+    ),
+    { components: 5, upgradeShards: 3 },
+  );
+  assert.deepEqual(
+    creditPendingMaterialLoot(
+      { components: 3, shards: 2, upgradeShards: 2 },
+      pending,
+    ),
+    { components: 5, shards: 3, upgradeShards: 3 },
+  );
 });
 
 test("invalid loot is rejected", () => {
@@ -689,38 +1231,52 @@ test("each role has a deterministic improvisation threshold", () => {
   );
 });
 
-test("temporary sub-agents are capped and cannot spawn recursively", () => {
+test("temporary sub-agents are capped at four children per parent and inherit the parent role", () => {
   const agent = { id: "kairos", role: "assault" };
   const context = {
     enemyDensity: 6,
-    activeSubAgents: 2,
-    maxSubAgents: 3,
-    subAgentLifetimeMs: 5_000,
+    subAgents: [
+      { id: "subagent-kairos-1", parentId: "kairos" },
+      { id: "subagent-kairos-2", parentId: "kairos" },
+      { id: "subagent-kira-1", parentId: "kira" },
+    ],
+    maxSubAgents: 4,
+    materials: { components: 5, shards: 5 },
   };
-  assert.deepEqual(spawnTemporarySubAgent(agent, context), {
+  const spawned = spawnTemporarySubAgent(agent, context);
+  assert.deepEqual(spawned, {
     id: "subagent-kairos-3",
     parentId: "kairos",
     role: "assault",
-    remainingMs: 5_000,
+    remainingMs: 10_000,
     canSpawn: false,
   });
+  assert.deepEqual(context.materials, { components: 4, shards: 4 });
   assert.equal(
-    spawnTemporarySubAgent(agent, { ...context, activeSubAgents: 3 }),
+    spawnTemporarySubAgent(agent, {
+      ...context,
+      subAgents: [...context.subAgents, spawned, { id: "subagent-kairos-4", parentId: "kairos" }],
+    }),
     null,
   );
   assert.equal(
     spawnTemporarySubAgent({ ...agent, canSpawn: false }, context),
     null,
   );
+  assert.equal(autonomyRules.canSpendTemporarySubAgent(), false);
+  assert.equal(autonomyRules.canSpendTemporarySubAgent(null), false);
 });
 
 test("temporary sub-agent bounds normalize invalid context values", () => {
   const agent = { id: "kairos", role: "assault" };
-  const improvisingContext = { enemyDensity: 6 };
+  const improvisingContext = {
+    enemyDensity: 6,
+    materials: { components: 10, shards: 10 },
+  };
   assert.equal(
     spawnTemporarySubAgent(agent, {
       ...improvisingContext,
-      activeSubAgents: 3,
+      activeSubAgents: 4,
       maxSubAgents: Infinity,
     }),
     null,
@@ -731,7 +1287,7 @@ test("temporary sub-agent bounds normalize invalid context values", () => {
       maxSubAgents: NaN,
       subAgentLifetimeMs: Infinity,
     }).remainingMs,
-    5_000,
+    10_000,
   );
   assert.equal(
     spawnTemporarySubAgent(agent, {
@@ -739,14 +1295,14 @@ test("temporary sub-agent bounds normalize invalid context values", () => {
       maxSubAgents: -1,
       subAgentLifetimeMs: 0,
     }).remainingMs,
-    5_000,
+    10_000,
   );
   assert.equal(
     spawnTemporarySubAgent(agent, {
       ...improvisingContext,
       maxSubAgents: 1.5,
     }).remainingMs,
-    5_000,
+    10_000,
   );
 });
 
@@ -754,7 +1310,8 @@ test("temporary sub-agent IDs remain unique after prior agents expire", () => {
   const agent = { id: "kairos", role: "assault" };
   const context = {
     enemyDensity: 6,
-    maxSubAgents: 3,
+    maxSubAgents: 4,
+    materials: { components: 3, shards: 3 },
     subAgents: [
       { id: "subagent-kairos-1", remainingMs: 4_000 },
       { id: "subagent-kairos-3", remainingMs: 4_000 },
@@ -764,6 +1321,106 @@ test("temporary sub-agent IDs remain unique after prior agents expire", () => {
     spawnTemporarySubAgent(agent, context).id,
     "subagent-kairos-4",
   );
+});
+
+test("temporary sub-agent lifetimes advance only through the documented upgrade tiers", () => {
+  const agent = { id: "relay", role: "support" };
+  assert.equal(typeof autonomyRules.getSubAgentLifetime, "function");
+  if (typeof autonomyRules.getSubAgentLifetime !== "function") return;
+  assert.equal(autonomyRules.getSubAgentLifetime(agent, {}), 10_000);
+  assert.equal(autonomyRules.getSubAgentLifetime(agent, { subAgentLifetime: 1 }), 15_000);
+  assert.equal(autonomyRules.getSubAgentLifetime(agent, { subAgentLifetime: 2 }), 20_000);
+  assert.equal(autonomyRules.getSubAgentLifetime(agent, { subAgentLifetime: 99 }), 20_000);
+
+  for (const [upgrades, lifetime] of [
+    [{}, 10_000],
+    [{ subAgentLifetime: 1 }, 15_000],
+    [{ subAgentLifetime: 2 }, 20_000],
+  ]) {
+    const spawned = spawnTemporarySubAgent(agent, {
+      playerHealthRatio: 0.45,
+      upgrades,
+      materials: { components: 1, shards: 1 },
+    });
+    assert.equal(spawned.remainingMs, lifetime);
+    assert.deepEqual(
+      tickSubAgents([{ ...spawned }], lifetime),
+      [],
+    );
+  }
+});
+
+test("purchased lifetime matrix ranks drive 10, 15, and 20 second children in both renderer paths", () => {
+  const agent = { id: "relay", role: "support" };
+  let progression = {
+    components: 4,
+    armorId: null,
+    recruited: { relay: true },
+    componentUpgradeRanks: {},
+  };
+
+  for (const [renderer, expectedLifetime] of [
+    ["WebGL", 10_000],
+    ["Canvas", 10_000],
+  ]) {
+    const spawned = spawnTemporarySubAgent(agent, {
+      playerHealthRatio: 0.45,
+      upgrades: {
+        componentUpgradeRanks: progression.componentUpgradeRanks,
+      },
+      materials: { components: 1, shards: 1 },
+    });
+    assert.equal(spawned.remainingMs, expectedLifetime, renderer);
+  }
+
+  for (const expectedLifetime of [15_000, 20_000]) {
+    progression = purchaseComponentUpgrade(
+      progression,
+      "relay",
+      "sub-agent-lifetime",
+    );
+    for (const renderer of ["WebGL", "Canvas"]) {
+      const spawned = spawnTemporarySubAgent(agent, {
+        playerHealthRatio: 0.45,
+        upgrades: {
+          componentUpgradeRanks: progression.componentUpgradeRanks,
+        },
+        materials: { components: 1, shards: 1 },
+      });
+      assert.equal(spawned.remainingMs, expectedLifetime, renderer);
+    }
+  }
+});
+
+test("sub-agent construction spends gathered Components and Shards atomically", () => {
+  const componentCollection = collectMaterials(
+    { id: "forge", x: 0, y: 0, gatheringCooldownMs: 0 },
+    [{ id: "component", type: "component", x: 0, y: 0, value: 1 }],
+  );
+  const shardCollection = collectMaterials(
+    { ...componentCollection.agent, gatheringCooldownMs: 0 },
+    [{ id: "shard", type: "upgrade-shard", x: 0, y: 0, value: 1 }],
+  );
+  const materials = {
+    components: componentCollection.collected.components,
+    shards: shardCollection.collected.shards,
+  };
+  const spawned = spawnTemporarySubAgent(
+    { id: "forge", role: "assault" },
+    { enemyDensity: 6, materials },
+  );
+  assert.equal(spawned.parentId, "forge");
+  assert.deepEqual(materials, { components: 0, shards: 0 });
+
+  const insufficient = { components: 0, shards: 1 };
+  assert.equal(
+    spawnTemporarySubAgent(
+      { id: "forge", role: "assault" },
+      { enemyDensity: 6, materials: insufficient },
+    ),
+    null,
+  );
+  assert.deepEqual(insufficient, { components: 0, shards: 1 });
 });
 
 test("temporary sub-agents expire and are cleared between waves", () => {
@@ -799,8 +1456,8 @@ test("assault sub-agents deterministically damage nearby threats", () => {
       id: "subagent-kira-1",
       parentId: "kira",
       role: "assault",
-      remainingMs: 5_000,
-      maxLifetimeMs: 5_000,
+      remainingMs: 10_000,
+      maxLifetimeMs: 10_000,
       cooldownLeftMs: 0,
       canSpawn: false,
     },
@@ -809,18 +1466,18 @@ test("assault sub-agents deterministically damage nearby threats", () => {
   );
 
   assert.deepEqual(result.action, { type: "attack", damage: 8 });
-  assert.equal(result.state.remainingMs, 4_900);
+  assert.equal(result.state.remainingMs, 9_900);
   assert.equal(result.state.cooldownLeftMs, 1_400);
-  assert.equal(result.state.healthRatio, 0.98);
+  assert.equal(result.state.healthRatio, 0.99);
   assert.equal(result.expired, false);
 });
 
-test("support sub-agents recover the player and Core while buffing allies", () => {
+test("support sub-agents recover the player without healing the protected Core", () => {
   const result = tickTemporarySubAgent(
     {
       role: "support",
       remainingMs: 4_000,
-      maxLifetimeMs: 5_000,
+      maxLifetimeMs: 10_000,
       cooldownLeftMs: 0,
       canSpawn: false,
     },
@@ -831,7 +1488,6 @@ test("support sub-agents recover the player and Core while buffing allies", () =
   assert.deepEqual(result.action, {
     type: "repair",
     playerHealing: 2,
-    coreHealing: 2,
     allyCooldownReductionMs: 250,
   });
 });
@@ -841,7 +1497,7 @@ test("defense sub-agents intercept threats near the Core", () => {
     {
       role: "defend",
       remainingMs: 3_000,
-      maxLifetimeMs: 5_000,
+      maxLifetimeMs: 10_000,
       cooldownLeftMs: 0,
       canSpawn: false,
     },
@@ -880,8 +1536,8 @@ test("temporary sub-agent cooldowns prevent repeated role actions", () => {
   const result = tickTemporarySubAgent(
     {
       role: "assault",
-      remainingMs: 5_000,
-      maxLifetimeMs: 5_000,
+      remainingMs: 10_000,
+      maxLifetimeMs: 10_000,
       cooldownLeftMs: 900,
       canSpawn: false,
     },
@@ -891,6 +1547,530 @@ test("temporary sub-agent cooldowns prevent repeated role actions", () => {
 
   assert.deepEqual(result.action, { type: "idle" });
   assert.equal(result.state.cooldownLeftMs, 800);
+});
+
+test("four named agents expose distinct deterministic role skills", () => {
+  assert.deepEqual(Object.keys(AGENT_SKILLS), [
+    "kairos",
+    "kira",
+    "forge",
+    "covenant",
+  ]);
+
+  const fixtures = [
+    {
+      agent: { id: "kairos", hp: 75, maxHp: 75, skillCooldowns: {} },
+      target: { id: "warboss", kind: "enemy", hp: 800, maxHp: 800, armored: true },
+      skillId: "time-fracture",
+      effects: [
+        {
+          type: "time-fracture",
+          targetId: "warboss",
+          radius: 3.5,
+          slowMultiplier: 0.35,
+          durationMs: 4_000,
+        },
+      ],
+    },
+    {
+      agent: { id: "kira", hp: 75, maxHp: 75, skillCooldowns: {} },
+      target: { id: "warboss", kind: "enemy", hp: 160, maxHp: 800, armored: true },
+      skillId: "mark-execution",
+      effects: [
+        {
+          type: "mark",
+          targetId: "warboss",
+          durationMs: 5_000,
+          damageMultiplier: 1.5,
+        },
+        {
+          type: "damage",
+          targetId: "warboss",
+          amount: 96,
+          executes: true,
+        },
+      ],
+    },
+    {
+      agent: { id: "forge", hp: 75, maxHp: 75, skillCooldowns: {} },
+      target: { id: "warboss", kind: "enemy", hp: 800, maxHp: 800, armored: true },
+      skillId: "armor-break-burst",
+      effects: [
+        {
+          type: "armor-break",
+          targetId: "warboss",
+          armorReduction: 0.55,
+          durationMs: 6_000,
+        },
+        {
+          type: "suppressive-burst",
+          targetId: "warboss",
+          radius: 2.75,
+          damage: 24,
+          slowMs: 2_000,
+          slowMultiplier: 0.62,
+        },
+      ],
+    },
+    {
+      agent: { id: "covenant", hp: 75, maxHp: 75, skillCooldowns: {} },
+      target: { id: "sentry-1", kind: "turret", hp: 30, maxHp: 100 },
+      skillId: "repair-barrier",
+      effects: [
+        { type: "repair", targetId: "sentry-1", amount: 30 },
+        {
+          type: "barrier",
+          targetId: "sentry-1",
+          amount: 36,
+          durationMs: 5_000,
+        },
+      ],
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    const context = { target: fixture.target };
+    const snapshot = structuredClone({ agent: fixture.agent, context });
+    assert.equal(canUseSkill(fixture.agent, fixture.skillId, context), true);
+    const first = activateAgentSkill(fixture.agent, fixture.skillId, context);
+    const second = activateAgentSkill(fixture.agent, fixture.skillId, context);
+    assert.deepEqual(first.effects, fixture.effects);
+    assert.deepEqual(second, first);
+    assert.deepEqual({ agent: fixture.agent, context }, snapshot);
+    assert.equal(
+      first.agent.skillCooldowns[fixture.skillId],
+      AGENT_SKILLS[fixture.agent.id].cooldownMs,
+    );
+  }
+});
+
+test("skill slow strength stays deterministic for normal threats and warbosses", () => {
+  assert.equal(getSlowMovementMultiplier(4_000, 0.35), 0.35);
+  assert.equal(getSlowMovementMultiplier(2_000, 0.62), 0.62);
+  assert.equal(getSlowMovementMultiplier(0, 0.35), 1);
+  assert.equal(getSlowMovementMultiplier(1_000, Number.NaN), 0.48);
+});
+
+test("agent skills enforce ownership, cooldown, live-agent, and target constraints", () => {
+  const target = { id: "trojan", kind: "enemy", hp: 100, maxHp: 100 };
+  assert.equal(
+    canUseSkill(
+      { id: "kairos", hp: 75, skillCooldowns: { "time-fracture": 1 } },
+      "time-fracture",
+      { target },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "kairos", hp: 0, skillCooldowns: {} },
+      "time-fracture",
+      { target },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "kairos", hp: 75, disabledLeftMs: 1, skillCooldowns: {} },
+      "time-fracture",
+      { target },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "kira", hp: 75, skillCooldowns: {} },
+      "time-fracture",
+      { target },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "covenant", hp: 75, skillCooldowns: {} },
+      "repair-barrier",
+      { target: { id: "core", kind: "core", hp: 90, maxHp: 180 } },
+    ),
+    false,
+  );
+  assert.equal(
+    canUseSkill(
+      { id: "forge", hp: 75, skillCooldowns: {} },
+      "armor-break-burst",
+      { target: { ...target, hp: 0 } },
+    ),
+    false,
+  );
+
+  const agent = { id: "kairos", hp: 75, skillCooldowns: {} };
+  assert.deepEqual(activateAgentSkill(agent, "repair-barrier", { target }), {
+    agent,
+    effects: [],
+  });
+});
+
+test("Forge armor break consumes its declared magnitude in live damage", () => {
+  const armoredDamage = resolveArmoredDamage(100, {
+    armored: true,
+    armorMultiplier: 0.42,
+    armorBreakReduction: 0,
+  });
+  const brokenDamage = resolveArmoredDamage(100, {
+    armored: true,
+    armorMultiplier: 0.42,
+    armorBreakReduction: 0.55,
+  });
+  assert.equal(armoredDamage, 42);
+  assert.equal(brokenDamage, 73.9);
+  assert.ok(brokenDamage < 100, "Forge must not become a full armor bypass");
+  assert.ok(brokenDamage > armoredDamage, "Forge must improve damage against armor");
+});
+
+test("waves three and later schedule exactly one bounded slow armored warboss", () => {
+  const early = getBossEncounter(2, "alpha");
+  assert.equal(early.scheduled, false);
+  assert.equal(early.count, 0);
+
+  const first = getBossEncounter(3, "alpha");
+  const repeated = getBossEncounter(3, "alpha");
+  assert.deepEqual(repeated, first);
+  assert.equal(first.scheduled, true);
+  assert.equal(first.count, 1);
+  assert.equal(first.maxActive, 1);
+  assert.equal(first.armored, true);
+  assert.ok(first.maxHp <= BOSS_CAPS.maxHealth);
+  assert.ok(first.movementSpeed <= BOSS_CAPS.maxMovementSpeed);
+  assert.ok(first.attacksPerSecond <= BOSS_CAPS.maxAttacksPerSecond);
+  assert.ok(first.rewardQuantity <= BOSS_CAPS.maxRewardQuantity);
+  assert.ok(first.reinforcementCap <= BOSS_CAPS.maxReinforcements);
+  assert.ok(first.rewards.shards >= 1);
+
+  const escalated = getBossEncounter(99, Number.MAX_SAFE_INTEGER);
+  assert.equal(escalated.count, 1);
+  assert.ok(escalated.maxHp <= BOSS_CAPS.maxHealth);
+  assert.ok(escalated.movementSpeed <= BOSS_CAPS.maxMovementSpeed);
+  assert.ok(escalated.attacksPerSecond <= BOSS_CAPS.maxAttacksPerSecond);
+  assert.ok(escalated.rewardQuantity <= BOSS_CAPS.maxRewardQuantity);
+});
+
+test("warboss armor scaling and guaranteed rewards cover warband slots five through eight", () => {
+  const waveThree = getBossEncounter(3, "armor");
+  const waveEight = getBossEncounter(8, "armor");
+  assert.equal(
+    getBossArmorMultiplier(waveThree),
+    1 - waveThree.armorReduction,
+  );
+  assert.equal(getBossArmorMultiplier(waveEight, true), 1);
+
+  const required = WARBAND_SLOTS.slice(4)
+    .map((slot) => getRecruitCost(slot))
+    .reduce(
+      (total, cost) => ({
+        components: total.components + cost.components,
+        shards: total.shards + cost.shards,
+      }),
+      { components: 0, shards: 0 },
+    );
+  const guaranteed = Array.from(
+    { length: 6 },
+    (_, index) => getBossEncounter(index + 3, `mission-wave-${index + 3}`),
+  ).reduce(
+    (total, boss) => ({
+      components: total.components + boss.rewards.components,
+      shards: total.shards + boss.rewards.shards,
+    }),
+    { components: 0, shards: 0 },
+  );
+  assert.ok(guaranteed.components >= required.components);
+  assert.ok(guaranteed.shards >= required.shards);
+});
+
+test("persistent warband slots expose serializable armor and roster strength", async () => {
+  const { getWarbandStrength } = await import("../app/game/warband-rules.mjs");
+  assert.equal(WARBAND_SLOTS.every((slot) =>
+    slot.armorProfile && typeof slot.armorProfile.id === "string" &&
+    slot.armorProfile.damageMultiplier > 0 && slot.armorProfile.damageMultiplier <= 1
+  ), true);
+  assert.ok(getWarbandStrength(WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id)) > 0);
+  assert.ok(getWarbandStrength(WARBAND_SLOTS) <= 8);
+});
+
+test("warboss intensity deterministically scales with capped warband strength", () => {
+  const empty = getBossEncounter(5, "strength-seed", 0);
+  const full = getBossEncounter(5, "strength-seed", 8);
+  assert.ok(full.maxHp >= empty.maxHp);
+  assert.ok(full.attackIntervalMs <= empty.attackIntervalMs);
+  assert.deepEqual(getBossEncounter(5, "strength-seed", 99), getBossEncounter(5, "strength-seed", 8));
+});
+
+test("clean WebGL and Canvas campaigns fund one automatic child and recruit Nova before final victory", () => {
+  assert.match(BOSS_REWARD_RATIONALE, /autonomous agents can improvise/i);
+  assert.match(BOSS_REWARD_RATIONALE, /warband keeps growing/i);
+  const cleanCampaign = {
+    compute: 10_000,
+    components: 0,
+    shards: 0,
+    warband: [],
+  };
+
+  let starterCampaign = cleanCampaign;
+  for (const slot of WARBAND_SLOTS.slice(0, 4)) {
+    starterCampaign = recruitWarbandSlot(starterCampaign, slot);
+  }
+  assert.deepEqual(
+    starterCampaign.warband,
+    WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id),
+  );
+  assert.equal(starterCampaign.components, 0);
+  assert.equal(starterCampaign.shards, 0);
+  assert.deepEqual(
+    getReservedWarbandMaterials(starterCampaign),
+    { components: 21, shards: 13 },
+  );
+
+  const applyRendererTransition = (state, wave, children) => {
+    const boss = getBossEncounter(wave, `mission-wave-${wave}`);
+    assert.ok(
+      boss.rewards.components + boss.rewards.shards <=
+        BOSS_CAPS.maxRewardQuantity,
+    );
+    let next = creditPendingMaterialLoot(state, [
+      { type: LOOT_TYPES.component.id, value: boss.rewards.components },
+      { type: LOOT_TYPES.upgradeShard.id, value: boss.rewards.shards },
+    ]);
+    const parent = { id: "forge", role: "assault" };
+    const context = {
+      enemyDensity: 6,
+      materials: getSpendableWarbandMaterials(next),
+      subAgents: children,
+    };
+    assert.equal(decideAgentIntent(parent, context), "improvise");
+    const child = spawnTemporarySubAgent(parent, context);
+    if (child) {
+      children.push(child);
+      next = {
+        ...next,
+        components: next.components - SUB_AGENT_MATERIAL_COST.components,
+        shards: next.shards - SUB_AGENT_MATERIAL_COST.shards,
+      };
+    }
+    let nextSlot = WARBAND_SLOTS[state.warband.length];
+    while (nextSlot && canRecruitWarbandSlot(next, nextSlot)) {
+      next = recruitWarbandSlot(next, nextSlot);
+      nextSlot = WARBAND_SLOTS[next.warband.length];
+    }
+    return next;
+  };
+
+  const children = { webgl: [], canvas: [] };
+  let webglCampaign = structuredClone(starterCampaign);
+  let canvasCampaign = structuredClone(starterCampaign);
+  for (let wave = 3; wave <= 7; wave += 1) {
+    webglCampaign = applyRendererTransition(
+      webglCampaign,
+      wave,
+      children.webgl,
+    );
+    canvasCampaign = applyRendererTransition(
+      canvasCampaign,
+      wave,
+      children.canvas,
+    );
+    assert.deepEqual(canvasCampaign, webglCampaign);
+  }
+
+  assert.equal(children.webgl.length, 1);
+  assert.deepEqual(children.canvas, children.webgl);
+  assert.deepEqual(
+    webglCampaign.warband,
+    WARBAND_SLOTS.map((slot) => slot.id),
+  );
+  assert.deepEqual(getReservedWarbandMaterials(webglCampaign), {
+    components: 0,
+    shards: 0,
+  });
+  assert.deepEqual(
+    {
+      components: webglCampaign.components,
+      shards: webglCampaign.shards,
+    },
+    { components: 0, shards: 1 },
+  );
+});
+
+test("both renderers consume skill slow strength, boss armor, and accurate final-wave copy", () => {
+  const source = readFileSync(
+    new URL("../app/FreemanProtocol.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(source.match(/getSlowMovementMultiplier\(/g).length >= 4);
+  assert.ok(source.match(/effect\.slowMultiplier/g).length >= 4);
+  assert.equal(source.match(/getBossArmorMultiplier\(/g).length, 2);
+  assert.equal(
+    source.match(
+      /Break its armor, evade telegraphed strikes, and protect the Core\./g,
+    ).length,
+    2,
+  );
+  assert.doesNotMatch(source, /all three boss phases/);
+});
+
+test("warboss telegraphs a fixed evadable area and damages its current occupants", () => {
+  const targets = [
+    { id: "kairos", kind: "agent", hp: 75, maxHp: 75, x: 1, z: 0 },
+    { id: "sentry-1", kind: "turret", hp: 100, maxHp: 100, x: 10, z: 0 },
+  ];
+  const encounter = getBossEncounter(3, "attacks");
+  const telegraph = tickBoss(
+    { ...encounter, attackCooldownLeftMs: 0 },
+    0,
+    { targets },
+  );
+  assert.deepEqual(telegraph.events, [
+    {
+      type: "telegraph",
+      bossId: encounter.id,
+      targetId: "kairos",
+      targetKind: "agent",
+      x: 1,
+      z: 0,
+      durationMs: encounter.telegraphMs,
+      radius: encounter.attackRadius,
+    },
+  ]);
+  assert.equal(telegraph.boss.pendingTargetX, 1);
+  assert.equal(telegraph.boss.pendingTargetZ, 0);
+
+  const movedTargets = [
+    { ...targets[0], x: 10 },
+    { ...targets[1], x: 1.5 },
+  ];
+  const firstAttack = tickBoss(
+    telegraph.boss,
+    encounter.telegraphMs,
+    { targets: movedTargets },
+  );
+  assert.deepEqual(firstAttack.events, [
+    {
+      type: "damage",
+      bossId: encounter.id,
+      targetId: "sentry-1",
+      targetKind: "turret",
+      amount: encounter.attackDamage,
+    },
+  ]);
+  assert.equal(firstAttack.boss.pendingTargetX, null);
+  assert.equal(firstAttack.boss.pendingTargetZ, null);
+});
+
+test("pending boss targets match both kind and ID", () => {
+  const collision = [
+    { id: "1", kind: "agent", hp: 75, x: 1, z: 0 },
+    { id: "1", kind: "turret", hp: 100, x: 4, z: 0 },
+  ];
+  assert.deepEqual(
+    getPendingBossTarget(
+      { pendingTargetId: "1", pendingTargetKind: "turret" },
+      collision,
+    ),
+    collision[1],
+  );
+});
+
+test("warboss target priority is measured from the boss instead of arena origin", () => {
+  const targets = [
+    { id: "origin-near", kind: "agent", hp: 75, x: 1, z: 0 },
+    { id: "boss-near", kind: "turret", hp: 100, x: 9, z: 0 },
+  ];
+  assert.equal(getNearestBossTarget(targets, 10, 0).id, "boss-near");
+
+  const encounter = getBossEncounter(3, "boss-position");
+  const telegraph = tickBoss(
+    { ...encounter, attackCooldownLeftMs: 0 },
+    0,
+    { targets, bossX: 10, bossZ: 0 },
+  );
+  assert.equal(telegraph.events[0].targetId, "boss-near");
+  assert.equal(telegraph.events[0].targetKind, "turret");
+});
+
+test("warboss timing is invariant across equivalent timestep partitions", () => {
+  const targets = [
+    { id: "kairos", kind: "agent", hp: 75, x: 1, z: 0 },
+    { id: "sentry-1", kind: "turret", hp: 100, x: 2, z: 0 },
+  ];
+  const encounter = getBossEncounter(3, "timing");
+  const started = tickBoss(
+    { ...encounter, attackCooldownLeftMs: 0 },
+    0,
+    { targets, bossX: 0, bossZ: 0 },
+  );
+  const extraTelegraphTime = 250;
+  const combined = tickBoss(
+    started.boss,
+    encounter.telegraphMs + encounter.attackIntervalMs + extraTelegraphTime,
+    { targets, bossX: 0, bossZ: 0 },
+  );
+  const afterStrike = tickBoss(
+    started.boss,
+    encounter.telegraphMs,
+    { targets, bossX: 0, bossZ: 0 },
+  );
+  const afterCooldown = tickBoss(
+    afterStrike.boss,
+    encounter.attackIntervalMs,
+    { targets, bossX: 0, bossZ: 0 },
+  );
+  const partitioned = tickBoss(
+    afterCooldown.boss,
+    extraTelegraphTime,
+    { targets, bossX: 0, bossZ: 0 },
+  );
+
+  assert.deepEqual(combined.boss, partitioned.boss);
+  assert.deepEqual(
+    combined.events,
+    [
+      ...afterStrike.events,
+      ...afterCooldown.events,
+      ...partitioned.events,
+    ],
+  );
+});
+
+test("warboss rewards include bounded rare Shards and reinforcements cannot grow unbounded", () => {
+  const encounter = getBossEncounter(8, "rewards");
+  const death = tickBoss(
+    { ...encounter, hp: 0 },
+    16,
+    { targets: [] },
+  );
+  assert.equal(death.events[0].type, "reward-drop");
+  assert.ok(death.events[0].rewards.shards >= 1);
+  assert.ok(death.events[0].quantity <= BOSS_CAPS.maxRewardQuantity);
+  assert.equal(death.boss.rewardClaimed, true);
+  assert.deepEqual(
+    tickBoss(death.boss, 16, { targets: [] }).events,
+    [],
+  );
+
+  let boss = {
+    ...getBossEncounter(8, "reinforcements"),
+    hp: getBossEncounter(8, "reinforcements").maxHp * 0.45,
+  };
+  let spawned = 0;
+  for (let tick = 0; tick < 100; tick += 1) {
+    const result = tickBoss(boss, 1_000, {
+      targets: [],
+      enemyCapacity: 100,
+    });
+    boss = result.boss;
+    spawned += result.events
+      .filter((event) => event.type === "reinforcement")
+      .reduce((total, event) => total + event.count, 0);
+  }
+  assert.ok(spawned <= encounter.reinforcementCap);
+  assert.ok(spawned <= BOSS_CAPS.maxReinforcements);
 });
 
 function sequence(values) {

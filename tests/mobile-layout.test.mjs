@@ -25,6 +25,29 @@ test("keeps mobile gameplay clear by collapsing secondary controls", () => {
   assert.match(styles, /\.camera-panel\s*\{\s*display:\s*none;/);
 });
 
+test("keeps the recruitment dock interactive above workshop overlays", () => {
+  const overlayZ = Number(
+    styles.match(/\.overlay-screen\s*\{[\s\S]*?z-index:\s*(\d+)/)?.[1],
+  );
+  const workshopZ = Number(
+    styles.match(/\.agent-dock\.is-workshop\s*\{[\s\S]*?z-index:\s*(\d+)/)?.[1],
+  );
+
+  assert.ok(workshopZ > overlayZ);
+  assert.match(
+    styles,
+    /\.agent-dock\.is-workshop\s*\{[\s\S]*?pointer-events:\s*auto/,
+  );
+  assert.match(
+    styles,
+    /\.(?:mobile-squad-toggle|agent-card)[\s\S]*?touch-action:\s*manipulation/,
+  );
+  assert.match(
+    game,
+    /className=\{`agent-dock \$\{workshopActive \? "is-workshop" : ""\}/,
+  );
+});
+
 test("pulls the camera back for portrait play", () => {
   assert.match(game, /const portraitPullback/);
   assert.match(game, /aspect < 0\.58 \? 1\.5/);
@@ -33,6 +56,25 @@ test("pulls the camera back for portrait play", () => {
 test("keeps both sentry deployment actions available on mobile", () => {
   assert.match(game, /base-builder__manual/);
   assert.match(styles, /\.base-builder__manual/);
+});
+
+test("keeps the repair field kit as a large touch-safe action", () => {
+  assert.match(game, /repair-field-kit/);
+  assert.match(game, /REPAIR \/ FIELD KIT/);
+  assert.match(game, /useFieldKit\(\)/);
+  assert.match(
+    styles,
+    /\.repair-field-kit\s*\{[\s\S]*?min-height:\s*48px/,
+  );
+});
+
+test("keeps EMP, agent skills, and repair actions reachable on touch layouts", () => {
+  assert.match(game, /aria-label="EMP pulse"/);
+  assert.match(game, /className="skill-actions"/);
+  assert.match(game, /aria-label="Agent skill controls"/);
+  assert.match(game, /className="repair-field-kit"/);
+  assert.match(styles, /\.skill-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, 42px\)/);
+  assert.match(styles, /\.repair-field-kit\s*\{[\s\S]*?bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 76px\)/);
 });
 
 test("keeps the guided tutorial clear of mobile combat controls", () => {

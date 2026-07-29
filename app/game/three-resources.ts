@@ -203,8 +203,12 @@ export function createLootPickupMesh(type: string) {
   return group;
 }
 
-export function resetLootPickupMesh(mesh: THREE.Group, type: string) {
-  const presentation = getLootPresentation(type);
+export function resetLootPickupMesh(
+  mesh: THREE.Group,
+  type: string,
+  value?: number,
+) {
+  const presentation = getLootPresentation(type, value);
   const color = Number.parseInt(presentation.color.slice(1), 16);
   const body = mesh.getObjectByName("loot-pickup-body") as THREE.Mesh;
   const beam = mesh.getObjectByName("loot-pickup-beam") as THREE.Mesh;

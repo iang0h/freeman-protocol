@@ -75,14 +75,21 @@ export function rollLootDrop(enemyKind, rng) {
   };
 }
 
-export function getLootPresentation(type, value = LOOT_BY_ID[type]?.value) {
+export function getLootPresentation(type, value) {
   const loot = LOOT_BY_ID[type];
   if (!loot) throw new Error(`Unknown loot type ${type}`);
+  const quantity = Number.isFinite(value) ? value : loot.value;
   return {
     ...loot,
-    worldLabel: loot.label.toUpperCase(),
+    worldLabel:
+      type === LOOT_TYPES.repair.id
+        ? `${loot.label.toUpperCase()} +${quantity} HP · +1 KIT`
+        : `${loot.label.toUpperCase()} +${quantity}`,
     beamHeight: loot.eliteOnly ? 1.5 : 1.2,
-    toastText: `${loot.label} +${value}`,
+    toastText:
+      type === LOOT_TYPES.repair.id
+        ? `${loot.label} +${quantity} HP · +1 KIT`
+        : `${loot.label} +${quantity}`,
   };
 }
 
@@ -108,7 +115,7 @@ export function applyLootPickup(state, loot) {
     return {
       ...state,
       health: clampRepair(state.health, state.maxHealth, value),
-      coreHealth: clampRepair(state.coreHealth, state.maxCoreHealth, value),
+      repairKits: (state.repairKits ?? 0) + 1,
     };
   }
 
@@ -120,6 +127,40 @@ export function applyLootPickup(state, loot) {
     ...state,
     upgradeShards: (state.upgradeShards ?? 0) + value,
   };
+}
+
+export function creditPendingMaterialLoot(state = {}, pendingLoot = []) {
+  const usesShards = Object.prototype.hasOwnProperty.call(state, "shards");
+  const usesUpgradeShards = Object.prototype.hasOwnProperty.call(
+    state,
+    "upgradeShards",
+  );
+  let credited = {
+    components: state.components ?? 0,
+    upgradeShards: usesShards
+      ? state.shards
+      : state.upgradeShards ?? 0,
+  };
+  let creditedShard = false;
+  for (const loot of Array.isArray(pendingLoot) ? pendingLoot : []) {
+    if (
+      loot?.type !== LOOT_TYPES.component.id &&
+      loot?.type !== LOOT_TYPES.upgradeShard.id
+    ) {
+      continue;
+    }
+    credited = applyLootPickup(credited, loot);
+    if (loot.type === LOOT_TYPES.upgradeShard.id) creditedShard = true;
+  }
+  const result = {
+    ...state,
+    components: credited.components,
+  };
+  if (usesShards) result.shards = credited.upgradeShards;
+  if (usesUpgradeShards || (!usesShards && creditedShard)) {
+    result.upgradeShards = credited.upgradeShards;
+  }
+  return result;
 }
 
 function clampRepair(health, maximum, value) {

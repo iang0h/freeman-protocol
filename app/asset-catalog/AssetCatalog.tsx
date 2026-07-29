@@ -77,7 +77,43 @@ const agentEntries: AgentEntry[] = [
     signal: "STANDBY · 94%",
     tone: "cyan",
     portrait: "halo",
-    detail: "Restores squad integrity and reinforces the Covenant Core.",
+    detail: "Restores operator and squad integrity without repairing the protected Core.",
+  },
+  {
+    id: "relay",
+    name: "Relay",
+    role: "Resource support",
+    signal: "SALVAGE · READY",
+    tone: "cyan",
+    portrait: "halo",
+    detail: "Secures nearby Components and Protocol Shards when the perimeter is clear.",
+  },
+  {
+    id: "scout",
+    name: "Scout",
+    role: "Fast assault",
+    signal: "FLANK · READY",
+    tone: "amber",
+    portrait: "scope",
+    detail: "Flanks exposed threats and recovers materials between engagements.",
+  },
+  {
+    id: "warden",
+    name: "Warden",
+    role: "Core defender",
+    signal: "PERIMETER · HELD",
+    tone: "violet",
+    portrait: "forge",
+    detail: "Holds the Core perimeter and gathers only when no threat is close.",
+  },
+  {
+    id: "nova",
+    name: "Nova",
+    role: "Heavy assault",
+    signal: "BREACH · LOCKED",
+    tone: "red",
+    portrait: "orbit",
+    detail: "Pressures priority targets with late-mission heavy fire.",
   },
 ];
 
@@ -120,33 +156,33 @@ const lootEntries: LootEntry[] = [
   {
     id: "repair",
     name: "Repair Cache",
-    type: "CORE RESTORE",
+    type: "OPERATOR / FIELD-KIT RECOVERY",
     tone: "cyan",
-    quantity: "+25 HP",
-    detail: "Stabilises a damaged Covenant Core.",
+    quantity: "+25 HP · +1 KIT",
+    detail: "Restores up to 25 operator health and replenishes field-kit supplies by exactly one kit. The Covenant Core remains protect-only.",
   },
   {
     id: "component",
     name: "Sentry Component",
     type: "FIELD BUILD",
     tone: "amber",
-    quantity: "+1 MODULE",
-    detail: "A recoverable build part for automated defenses.",
+    quantity: "+2 COMPONENTS",
+    detail: "Recoverable parts for sentries, armor, and agent upgrades.",
   },
   {
     id: "shard",
     name: "Protocol Shard",
     type: "UPGRADE DATA",
     tone: "violet",
-    quantity: "+1 DRAFT",
-    detail: "Compressed intelligence used to evolve the squad.",
+    quantity: "VARIABLE SHARDS",
+    detail: "Protocol Shards fund late warband recruits and the one-shard cost of temporary children.",
   },
 ];
 
 const armorEntries: ProgressionEntry[] = [
   { id: "vanguard", name: "Vanguard", signal: "SURVIVABILITY", tone: "cyan", detail: "Armor plates raise operator durability and strengthen incoming repairs." },
   { id: "striker", name: "Striker", signal: "WEAPON OUTPUT", tone: "amber", detail: "Weapon cores raise direct damage and shorten the firing cadence." },
-  { id: "relay", name: "Relay", signal: "EMP SUPPORT", tone: "violet", detail: "Relay arrays amplify EMP output and improve support recovery." },
+  { id: "relay", name: "Relay", signal: "EMP SUPPORT", tone: "violet", detail: "Relay arrays increase EMP radius by 25% and improve support recovery." },
 ];
 
 const eliteLootEntries: ProgressionEntry[] = [
@@ -184,13 +220,79 @@ const componentUpgradeEntries: ProgressionEntry[] = [
     tone: "cyan",
     detail: "Strengthens Covenant healing by 30% per rank, up to rank two.",
   },
+  {
+    id: "sub-agent-lifetime",
+    name: "Lifetime Matrix",
+    signal: "ALL AGENTS · 2 COMPONENTS",
+    tone: "violet",
+    detail: "Adds five seconds to temporary-unit lifetime per rank: 10, 15, then 20 seconds.",
+  },
 ];
 
 const terrainSignals: ProgressionEntry[] = [
-  { id: "storm", name: "Relay Storm", signal: "EMP +15%", tone: "cyan", detail: "A charged relay field boosts EMP output while altering breach routes." },
+  { id: "storm", name: "Relay Storm", signal: "EMP RADIUS +15%", tone: "cyan", detail: "A charged relay field extends EMP reach while altering breach routes." },
   { id: "lanes", name: "Firewall Lanes", signal: "ROUTE SHIFT", tone: "amber", detail: "Firewall channels bend hostile paths into predictable defensive lanes." },
-  { id: "fog", name: "Data Fog", signal: "VISIBILITY LOW", tone: "violet", detail: "Fog reduces targeting confidence and lowers reliable EMP output." },
+  { id: "fog", name: "Data Fog", signal: "VISIBILITY LOW", tone: "violet", detail: "Fog reduces targeting confidence and contracts reliable EMP radius." },
   { id: "split", name: "Split Breach", signal: "TWO VECTORS", tone: "red", detail: "A forked intrusion spreads hostile routes across opposing approach angles." },
+];
+
+const disciplineEntries: ProgressionEntry[] = [
+  {
+    id: "emp-discipline",
+    name: "EMP Discipline",
+    signal: "CHARGE · PULSE · RECOVER",
+    tone: "violet",
+    detail: "Fire a fully charged arena pulse, then watch as the EMP cooldown recovers over time. Upgrades improve cadence, radius, or resistance bypass—not damage.",
+  },
+  {
+    id: "warband-slots",
+    name: "Eight Warband Slots",
+    signal: "01–08 · PERSISTENT",
+    tone: "cyan",
+    detail: "Recruit Kairos through Nova in order. Components and Shards recovered from boss caches fund the final four persistent slots.",
+  },
+  {
+    id: "repair-bay",
+    name: "Repair Bay",
+    signal: "AGENT RETREAT ROUTE",
+    tone: "cyan",
+    detail: "Damaged agents withdraw, recover, and return to duty while the bay functions. If destroyed, it stays offline for the rest of the mission. The Core remains protect-only.",
+  },
+  {
+    id: "field-kits",
+    name: "Field Kits",
+    signal: "REPAIR SUPPLIES",
+    tone: "amber",
+    detail: "Spend repair packs on vulnerable agents away from the bay, or Components on damaged sentries. Neither action restores the Core.",
+  },
+  {
+    id: "temporary-children",
+    name: "Temporary Children",
+    signal: "4 PER PARENT · 10–20S",
+    tone: "violet",
+    detail: "Autonomous agents can deploy up to four material-funded children. Their lifetime bars show the 10, 15, or 20 second support window.",
+  },
+  {
+    id: "skill-portraits",
+    name: "Skill Portraits",
+    signal: "4 ROLE SKILLS · COOLDOWN RINGS",
+    tone: "cyan",
+    detail: "Portrait controls show each recruited specialist’s ready state: slow, mark, armor break, or repair and barrier support.",
+  },
+  {
+    id: "boss-telegraphs",
+    name: "Boss Telegraphs",
+    signal: "WAVE 3+ · ONE ACTIVE",
+    tone: "red",
+    detail: "Armored warbosses mark a fixed blast area before it lands. Break armor, move outside the area, and contain the reinforcements.",
+  },
+  {
+    id: "rare-loot",
+    name: "Rare Loot",
+    signal: "BOSS CACHE · COMPONENTS · SHARDS",
+    tone: "amber",
+    detail: "Boss caches announce their actual Component and Shard quantities; pending drops are credited before the arena resets.",
+  },
 ];
 
 function SignalBadge({ label, tone }: { label: string; tone: SignalTone }) {
@@ -293,7 +395,7 @@ export default function AssetCatalog() {
           <i /><i /><i /><i /><i /><i /><i />
         </div>
         <dl className={styles.metrics}>
-          <div><dt>04</dt><dd>LIVE AGENTS</dd></div>
+          <div><dt>08</dt><dd>LIVE AGENTS</dd></div>
           <div><dt>22</dt><dd>THREATS TRACED</dd></div>
           <div><dt>03</dt><dd>FIELD COMPONENTS</dd></div>
         </dl>
@@ -412,6 +514,19 @@ export default function AssetCatalog() {
         </div>
         <div className={styles.progressionGrid}>
           {terrainSignals.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
+        </div>
+      </section>
+
+      <section className={`${styles.section} ${styles.disciplineSection}`} aria-labelledby="warband-discipline-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>PLAYER SYSTEMS</p>
+            <h2 id="warband-discipline-title">Warband Discipline</h2>
+          </div>
+          <p>Every live mission system is cataloged here with the same status language used by the HUD.</p>
+        </div>
+        <div className={styles.disciplineGrid}>
+          {disciplineEntries.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
         </div>
       </section>
 

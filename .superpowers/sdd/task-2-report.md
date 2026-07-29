@@ -1,100 +1,41 @@
-# Task 2 report: hybrid player and agent progression
+# Task 2 Report: Eight-slot warband and material economy
 
-## Status
+## Scope delivered
 
-DONE
+- Added `app/game/warband-rules.mjs` with eight frozen, serializable slot definitions and the requested pure recruitment and gathering interfaces.
+- Kept the existing named agents and their autonomous roles unchanged: Kairos/defend, Kira/assault, Forge/assault, and Covenant/support.
+- Retained starter Compute costs for slots 1–4 (45, 75, 105, 135). Slots 5–8 progressively require Compute, Components, and Shards.
+- Added shared material labels and atomic material-cost helpers to `app/game/progression.mjs`.
+- Integrated all eight slots into both WebGL and Canvas recruitment paths. Recruitment validates sequence and every resource before mutating the wallet.
+- Integrated safe material gathering in both renderers. An agent moves toward visible Components/Shards only without a hostile in range; hostile targeting and disabled/retreat state suppress gathering.
+- Added live HUD and roster copy for `WARband n/8`, Components/Shards, and the exact next-slot cost.
 
-## Implementation
+## TDD evidence
 
-- Added immutable player armor and agent component definitions plus atomic, capped component purchase rules.
-- Made wave drafts produce one player, one agent, and one defense choice.
-- Added mission armor/rank state, reset and HUD serialization to both WebGL and Canvas engines.
-- Applied armor and agent component bonuses to health, weapon output, attack cadence, EMP output, and healing in both renderers.
-- Added a post-wave component workshop with armor profiles, agent ranks, explicit costs, bonuses, and disabled reasons.
-- Preserved the existing Compute-funded evolution choices after component purchases.
+1. Added tests covering starter/escalating costs, atomic rejection, eighth-slot capacity, deterministic loot selection, cooldown, and hostile-priority gathering behavior.
+2. Ran the focused suite before implementation. It failed as intended with `ERR_MODULE_NOT_FOUND` for the new `app/game/warband-rules.mjs` module.
+3. Implemented the minimal pure rules and reran the focused suite successfully.
 
 ## Verification
 
-- RED: focused tests reported 58 passed / 1 failed before the workshop UI integration.
-- GREEN: `node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs` — 60 passed / 0 failed.
-- `git diff --check` — passed with no output.
-- Lint/typecheck could not run in this worktree because dependencies are not installed (`node_modules` is absent).
+Command:
 
-## Concerns
-
-- Run repository lint and typecheck after installing dependencies.
-
-## Review fixes (2026-07-29)
-
-### Implementation
-
-- Kept draft slots selectable after all upgrades in a category cap by falling
-  back to the uncapped Field Repair upgrade while preserving player, agent, and
-  defense category labels.
-- Made repeated fallback cards use category-qualified React keys.
-- Restored mobile draft category labels and component/armor bonus copy with
-  compact type and 136px workshop cards.
-- Aligned the desktop evolution workshop to `flex-start` so overflowing content
-  begins at the top.
-- Added regression coverage for capped-category drafts, mobile progression
-  visibility, and desktop workshop alignment.
-
-### Verification
-
-The host shell did not include Node on `PATH`, so the checks used a checksum-
-verified temporary Node v22.23.1 runtime. Repository dependencies were available
-at `../../node_modules`, superseding the earlier concern above.
-
-RED (production changes temporarily reversed):
-
-```text
-PATH="/tmp/freeman-node.0atkIO/node-v22.23.1-darwin-arm64/bin:$PWD/../../node_modules/.bin:$PATH" node --test tests/game-systems.test.mjs tests/mobile-layout.test.mjs
-...
-# tests 42
-# pass 39
-# fail 3
-EXPECTED_RED_EXIT=1
+```sh
+/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs
 ```
 
-Focused GREEN:
+Result: 86 passing, 0 failing.
 
-```text
-PATH="/tmp/freeman-node.0atkIO/node-v22.23.1-darwin-arm64/bin:$PWD/../../node_modules/.bin:$PATH" node --test tests/game-systems.test.mjs tests/mobile-layout.test.mjs
-...
-# tests 42
-# pass 42
-# fail 0
-EXIT_CODE=0
-```
+Additional checks used the requested Node binary with the workspace's shared dependency tree:
 
-Full Node tests:
+- `tsc --noEmit`: passed.
+- ESLint: passed with no warnings or errors.
+- `vinext build`: passed. Vinext reported its pre-existing informational chunk-size and route-classification notices only.
 
-```text
-PATH="/tmp/freeman-node.0atkIO/node-v22.23.1-darwin-arm64/bin:$PWD/../../node_modules/.bin:$PATH" node --test tests/*.test.mjs
-...
-# tests 74
-# pass 74
-# fail 0
-EXIT_CODE=0
-```
+## Files changed
 
-ESLint:
-
-```text
-PATH="/tmp/freeman-node.0atkIO/node-v22.23.1-darwin-arm64/bin:$PWD/../../node_modules/.bin:$PATH" bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next
-EXIT_CODE=0
-```
-
-TypeScript:
-
-```text
-PATH="/tmp/freeman-node.0atkIO/node-v22.23.1-darwin-arm64/bin:$PWD/../../node_modules/.bin:$PATH" tsc --noEmit
-EXIT_CODE=0
-```
-
-Diff check:
-
-```text
-git diff --check
-EXIT_CODE=0
-```
+- `app/game/warband-rules.mjs`
+- `app/game/progression.mjs`
+- `app/FreemanProtocol.tsx`
+- `tests/game-systems.test.mjs`
+- `.superpowers/sdd/task-2-report.md`
