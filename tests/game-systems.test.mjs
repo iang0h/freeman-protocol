@@ -409,6 +409,58 @@ test("temporary sub-agents are capped and cannot spawn recursively", () => {
   );
 });
 
+test("temporary sub-agent bounds normalize invalid context values", () => {
+  const agent = { id: "kairos", role: "assault" };
+  const improvisingContext = { enemyDensity: 6 };
+  assert.equal(
+    spawnTemporarySubAgent(agent, {
+      ...improvisingContext,
+      activeSubAgents: 3,
+      maxSubAgents: Infinity,
+    }),
+    null,
+  );
+  assert.equal(
+    spawnTemporarySubAgent(agent, {
+      ...improvisingContext,
+      maxSubAgents: NaN,
+      subAgentLifetimeMs: Infinity,
+    }).remainingMs,
+    5_000,
+  );
+  assert.equal(
+    spawnTemporarySubAgent(agent, {
+      ...improvisingContext,
+      maxSubAgents: -1,
+      subAgentLifetimeMs: 0,
+    }).remainingMs,
+    5_000,
+  );
+  assert.equal(
+    spawnTemporarySubAgent(agent, {
+      ...improvisingContext,
+      maxSubAgents: 1.5,
+    }).remainingMs,
+    5_000,
+  );
+});
+
+test("temporary sub-agent IDs remain unique after prior agents expire", () => {
+  const agent = { id: "kairos", role: "assault" };
+  const context = {
+    enemyDensity: 6,
+    maxSubAgents: 3,
+    subAgents: [
+      { id: "subagent-kairos-1", remainingMs: 4_000 },
+      { id: "subagent-kairos-3", remainingMs: 4_000 },
+    ],
+  };
+  assert.equal(
+    spawnTemporarySubAgent(agent, context).id,
+    "subagent-kairos-4",
+  );
+});
+
 test("temporary sub-agents expire and are cleared between waves", () => {
   const subAgents = [
     {

@@ -26,6 +26,28 @@ function activeSubAgentCount(context) {
     : (context.activeSubAgents ?? 0);
 }
 
+function validNonNegativeInteger(value, fallback) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+}
+
+function validLifetime(value) {
+  return Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_SUB_AGENT_LIFETIME_MS;
+}
+
+function nextSubAgentId(parentId, subAgents, active) {
+  const prefix = `subagent-${parentId}-`;
+  const highestSequence = subAgents.reduce((highest, subAgent) => {
+    if (!subAgent.id?.startsWith(prefix)) return highest;
+    const sequence = Number(subAgent.id.slice(prefix.length));
+    return Number.isSafeInteger(sequence) && sequence > highest
+      ? sequence
+      : highest;
+  }, active);
+  return `${prefix}${highestSequence + 1}`;
+}
+
 export function shouldImprovise(agent, context = {}) {
   const role = getRole(agent);
   const threshold = AGENT_ROLES[role].improviseAt;
@@ -49,7 +71,10 @@ export function decideAgentIntent(agent, context = {}) {
 }
 
 export function spawnTemporarySubAgent(agent, context = {}) {
-  const maximum = context.maxSubAgents ?? DEFAULT_MAX_SUB_AGENTS;
+  const maximum = validNonNegativeInteger(
+    context.maxSubAgents,
+    DEFAULT_MAX_SUB_AGENTS,
+  );
   const active = activeSubAgentCount(context);
   if (
     agent.canSpawn === false ||
@@ -60,10 +85,10 @@ export function spawnTemporarySubAgent(agent, context = {}) {
   }
 
   return {
-    id: `subagent-${agent.id}-${active + 1}`,
+    id: nextSubAgentId(agent.id, context.subAgents ?? [], active),
     parentId: agent.id,
     role: getRole(agent),
-    remainingMs: context.subAgentLifetimeMs ?? DEFAULT_SUB_AGENT_LIFETIME_MS,
+    remainingMs: validLifetime(context.subAgentLifetimeMs),
     canSpawn: false,
   };
 }
