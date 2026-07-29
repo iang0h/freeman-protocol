@@ -56,6 +56,97 @@ import {
   getWaveModifiers,
   resolveEmpDamage,
 } from "../app/game/encounter-rules.mjs";
+import {
+  EMP_BASE_DAMAGE,
+  canFireEmp,
+  createEmpState,
+  fireEmp,
+  getEmpUpgrade,
+  tickEmp,
+} from "../app/game/emp-rules.mjs";
+
+test("EMP starts charged, fires once, and completes its deterministic cooldown", () => {
+  const fresh = createEmpState({ cooldownMs: 12000, maxCharge: 100 });
+
+  assert.deepEqual(fresh, {
+    charge: 100,
+    maxCharge: 100,
+    cooldownLeftMs: 0,
+    cooldownMs: 12000,
+  });
+  assert.equal(canFireEmp(fresh), true);
+
+  const fired = fireEmp(fresh, {
+    baseDamage: EMP_BASE_DAMAGE,
+    damageMultiplier: 1.5,
+    terrainMultiplier: 0.9,
+  });
+  assert.equal(fired.damage, 43);
+  assert.deepEqual(fired.state, {
+    charge: 0,
+    maxCharge: 100,
+    cooldownLeftMs: 12000,
+    cooldownMs: 12000,
+  });
+
+  const ticking = tickEmp(fired.state, 4500);
+  assert.deepEqual(ticking, {
+    charge: 0,
+    maxCharge: 100,
+    cooldownLeftMs: 7500,
+    cooldownMs: 12000,
+  });
+  assert.deepEqual(tickEmp(ticking, 7500), fresh);
+});
+
+test("EMP rejects a second pulse until its cooldown completes", () => {
+  const fired = fireEmp(createEmpState({ cooldownMs: 6000, maxCharge: 1 }), {
+    baseDamage: EMP_BASE_DAMAGE,
+    damageMultiplier: 1,
+    terrainMultiplier: 1,
+  });
+
+  const rejected = fireEmp(fired.state, {
+    baseDamage: EMP_BASE_DAMAGE,
+    damageMultiplier: 1,
+    terrainMultiplier: 1,
+  });
+  assert.equal(canFireEmp(fired.state), false);
+  assert.equal(rejected.damage, 0);
+  assert.deepEqual(rejected.state, fired.state);
+});
+
+test("EMP damage is restrained and upgrades change only their documented dimension", () => {
+  assert.ok(EMP_BASE_DAMAGE < 44);
+  assert.deepEqual(getEmpUpgrade("efficiency"), {
+    id: "efficiency",
+    label: "PULSE EFFICIENCY",
+    cost: 90,
+    cooldownMultiplier: 0.75,
+  });
+  assert.deepEqual(getEmpUpgrade("radius"), {
+    id: "radius",
+    label: "PULSE RADIUS",
+    cost: 80,
+    radiusMultiplier: 1.25,
+  });
+  assert.deepEqual(getEmpUpgrade("bypass"), {
+    id: "bypass",
+    label: "RESISTANCE BYPASS",
+    cost: 110,
+    resistanceBypass: 0.25,
+  });
+  assert.equal(getEmpUpgrade("missing"), null);
+
+  assert.equal(
+    resolveEmpDamage(
+      100,
+      { resistanceFlags: ["shield", "decoy", "armor", "jammer"] },
+      getWaveModifiers(1),
+    ),
+    100,
+  );
+});
 
 test("wave one preserves the unmodified encounter and EMP", () => {
   const modifiers = getWaveModifiers(1);
