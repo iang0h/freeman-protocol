@@ -37,11 +37,12 @@ function seedValue(seed) {
   return hash >>> 0;
 }
 
-export function getBossEncounter(wave, seed) {
+export function getBossEncounter(wave, seed, warbandStrength = 0) {
   const normalizedWave = normalizeWave(wave);
   const seeded = seedValue(seed);
   const scheduled = normalizedWave >= 3;
-  const intensity = seeded % 5;
+  const cappedStrength = clamp(finite(Number(warbandStrength)), 0, 8);
+  const intensity = seeded % 5 + Math.floor(cappedStrength * 0.75);
   const maxHp = scheduled
     ? Math.min(
         BOSS_CAPS.maxHealth,

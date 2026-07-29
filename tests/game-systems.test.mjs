@@ -123,7 +123,9 @@ test("repair lifecycle persists at the bay until the configured return ratio", a
   assert.equal(getRepairDecision(agent, { repairBay: sharedCore }), "retreat");
   assert.equal(getRepairDecision(agent, { repairBay: functioningBay }), "repair");
 
-  const firstTick = tickRepairBay(functioningBay, [agent], 1_000).units[0];
+  const offBay = tickRepairBay(functioningBay, [agent], 1_000).units[0];
+  assert.equal(offBay.hp, 28, "repair intent cannot heal before reaching the bay");
+  const firstTick = tickRepairBay(functioningBay, [{ ...agent, atRepairBay: true, repairing: true }], 1_000).units[0];
   assert.equal(firstTick.hp, 48);
   assert.equal(
     getRepairDecision(firstTick, { repairBay: functioningBay }),
@@ -132,7 +134,7 @@ test("repair lifecycle persists at the bay until the configured return ratio", a
 
   const secondTick = tickRepairBay(
     functioningBay,
-    [{ ...firstTick, repairDecision: getRepairDecision(firstTick, { repairBay: functioningBay }) }],
+    [{ ...firstTick, repairDecision: getRepairDecision(firstTick, { repairBay: functioningBay }), atRepairBay: true, repairing: true }],
     1_000,
   ).units[0];
   assert.equal(secondTick.hp, 68);
@@ -143,7 +145,7 @@ test("repair lifecycle persists at the bay until the configured return ratio", a
 
   const returnTick = tickRepairBay(
     functioningBay,
-    [{ ...secondTick, repairDecision: getRepairDecision(secondTick, { repairBay: functioningBay }) }],
+    [{ ...secondTick, repairDecision: getRepairDecision(secondTick, { repairBay: functioningBay }), atRepairBay: true, repairing: true }],
     1_000,
   ).units[0];
   assert.equal(returnTick.hp, 88);
@@ -1781,6 +1783,24 @@ test("warboss armor scaling and guaranteed rewards cover warband slots five thro
   );
   assert.ok(guaranteed.components >= required.components);
   assert.ok(guaranteed.shards >= required.shards);
+});
+
+test("persistent warband slots expose serializable armor and roster strength", async () => {
+  const { getWarbandStrength } = await import("../app/game/warband-rules.mjs");
+  assert.equal(WARBAND_SLOTS.every((slot) =>
+    slot.armorProfile && typeof slot.armorProfile.id === "string" &&
+    slot.armorProfile.damageMultiplier > 0 && slot.armorProfile.damageMultiplier <= 1
+  ), true);
+  assert.ok(getWarbandStrength(WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id)) > 0);
+  assert.ok(getWarbandStrength(WARBAND_SLOTS) <= 8);
+});
+
+test("warboss intensity deterministically scales with capped warband strength", () => {
+  const empty = getBossEncounter(5, "strength-seed", 0);
+  const full = getBossEncounter(5, "strength-seed", 8);
+  assert.ok(full.maxHp >= empty.maxHp);
+  assert.ok(full.attackIntervalMs <= empty.attackIntervalMs);
+  assert.deepEqual(getBossEncounter(5, "strength-seed", 99), getBossEncounter(5, "strength-seed", 8));
 });
 
 test("clean WebGL and Canvas campaigns fund one automatic child and recruit Nova before final victory", () => {

@@ -13,6 +13,8 @@ export const WARBAND_SLOTS = Object.freeze([
     code: "01",
     name: "KAIROS",
     role: "defend",
+    armorProfile: Object.freeze({ id: "bulwark", damageMultiplier: 0.86 }),
+    strength: 1,
     cost: Object.freeze({ compute: 45, components: 0, shards: 0 }),
   }),
   Object.freeze({
@@ -21,6 +23,8 @@ export const WARBAND_SLOTS = Object.freeze([
     code: "02",
     name: "KIRA",
     role: "assault",
+    armorProfile: Object.freeze({ id: "striker", damageMultiplier: 0.94 }),
+    strength: 1.2,
     cost: Object.freeze({ compute: 75, components: 0, shards: 0 }),
   }),
   Object.freeze({
@@ -29,6 +33,8 @@ export const WARBAND_SLOTS = Object.freeze([
     code: "03",
     name: "FORGE",
     role: "assault",
+    armorProfile: Object.freeze({ id: "breacher", damageMultiplier: 0.9 }),
+    strength: 1.25,
     cost: Object.freeze({ compute: 105, components: 0, shards: 0 }),
   }),
   Object.freeze({
@@ -37,6 +43,8 @@ export const WARBAND_SLOTS = Object.freeze([
     code: "04",
     name: "COVENANT",
     role: "support",
+    armorProfile: Object.freeze({ id: "aegis", damageMultiplier: 0.82 }),
+    strength: 1.05,
     cost: Object.freeze({ compute: 135, components: 0, shards: 0 }),
   }),
   Object.freeze({
@@ -45,6 +53,8 @@ export const WARBAND_SLOTS = Object.freeze([
     code: "05",
     name: "RELAY",
     role: "support",
+    armorProfile: Object.freeze({ id: "relay", damageMultiplier: 0.9 }),
+    strength: 1.1,
     cost: Object.freeze({ compute: 175, components: 2, shards: 1 }),
   }),
   Object.freeze({
@@ -53,6 +63,8 @@ export const WARBAND_SLOTS = Object.freeze([
     code: "06",
     name: "SCOUT",
     role: "assault",
+    armorProfile: Object.freeze({ id: "scout", damageMultiplier: 0.96 }),
+    strength: 1.1,
     cost: Object.freeze({ compute: 225, components: 4, shards: 2 }),
   }),
   Object.freeze({
@@ -61,6 +73,8 @@ export const WARBAND_SLOTS = Object.freeze([
     code: "07",
     name: "WARDEN",
     role: "defend",
+    armorProfile: Object.freeze({ id: "warden", damageMultiplier: 0.78 }),
+    strength: 1.35,
     cost: Object.freeze({ compute: 285, components: 6, shards: 4 }),
   }),
   Object.freeze({
@@ -69,9 +83,23 @@ export const WARBAND_SLOTS = Object.freeze([
     code: "08",
     name: "NOVA",
     role: "assault",
+    armorProfile: Object.freeze({ id: "nova", damageMultiplier: 0.88 }),
+    strength: 1.4,
     cost: Object.freeze({ compute: 355, components: 9, shards: 6 }),
   }),
 ]);
+
+export function getWarbandStrength(roster = []) {
+  const ids = Array.isArray(roster) ? roster : [];
+  return Math.min(
+    WARBAND_SLOTS.length,
+    ids.reduce((total, entry) => {
+      const id = typeof entry === "string" ? entry : entry?.id;
+      const slot = WARBAND_SLOTS.find((candidate) => candidate.id === id);
+      return total + (Number.isFinite(slot?.strength) ? slot.strength : 1);
+    }, 0),
+  );
+}
 
 export function canRecruitPersistentWarband(mode) {
   return mode === "playing" || mode === "upgrade" || mode === "evolution";

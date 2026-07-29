@@ -43,6 +43,7 @@ import {
   collectMaterials,
   getRecruitCost,
   getSpendableWarbandMaterials,
+  getWarbandStrength,
   recruitWarbandSlot,
   tickAgentGathering,
 } from "./game/warband-rules.mjs";
@@ -53,6 +54,7 @@ import {
   getRepairDecision,
   repairTurret,
   tickRepairBay,
+  resolveAgentDamage,
 } from "./game/repair-rules.mjs";
 import {
   AGENT_SKILLS,
@@ -363,6 +365,8 @@ type AgentDefinition = {
   damage: number;
   cooldown: number;
   range: number;
+  armorProfile?: { id: string; damageMultiplier: number };
+  strength?: number;
 };
 
 type AgentRuntime = AgentDefinition & {
@@ -1682,6 +1686,8 @@ class FreemanEngine {
     this.scene.add(group);
     const runtime: AgentRuntime = {
       ...definition,
+      armorProfile: WARBAND_SLOTS.find((slot) => slot.id === id)?.armorProfile ?? { id: "standard", damageMultiplier: 1 },
+      strength: WARBAND_SLOTS.find((slot) => slot.id === id)?.strength ?? 1,
       group,
       healthBar: health.group,
       healthFill: health.fill,
@@ -3414,7 +3420,7 @@ class FreemanEngine {
       this.scheduledReinforcementThreats =
         this.reinforcementsRemaining * Math.min(10, 4 + wave);
       this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
-      const boss = getBossEncounter(wave, `mission-wave-${wave}`);
+      const boss = getBossEncounter(wave, `mission-wave-${wave}`, getWarbandStrength(this.agents));
       if (boss.scheduled) {
         const angle = wave * 0.71 + this.terrain.spawnAngleOffset;
         this.createEnemy(
@@ -4143,6 +4149,7 @@ class FreemanEngine {
         [{
           ...agent,
           disabledLeftMs: agent.disabledLeft * 1_000,
+          atRepairBay,
           repairing: atRepairBay && agent.repairDecision === "repair",
         }],
         delta * 1_000,
@@ -5121,7 +5128,7 @@ class FreemanEngine {
     const resolvedDamage = Math.max(0, damage - absorbed);
     const damaged = applyUnitDamage(
       { hp: agent.hp, maxHp: agent.maxHp, disabledLeftMs: agent.disabledLeft * 1_000 },
-      resolvedDamage,
+      resolveAgentDamage(resolvedDamage, agent.armorProfile),
     );
     agent.hp = damaged.hp;
     agent.disabledLeft = damaged.disabledLeftMs / 1_000;
@@ -6808,6 +6815,8 @@ class FreemanCanvasEngine implements GameController {
     }
     this.agents.push({
       ...definition,
+      armorProfile: WARBAND_SLOTS.find((slot) => slot.id === id)?.armorProfile ?? { id: "standard", damageMultiplier: 1 },
+      strength: WARBAND_SLOTS.find((slot) => slot.id === id)?.strength ?? 1,
       x: this.player.x,
       z: this.player.z,
       hp: 75,
@@ -7736,6 +7745,7 @@ class FreemanCanvasEngine implements GameController {
         [{
           ...agent,
           disabledLeftMs: agent.disabledLeft * 1_000,
+          atRepairBay,
           repairing: atRepairBay && agent.repairDecision === "repair",
         }],
         delta * 1_000,
@@ -8427,7 +8437,7 @@ class FreemanCanvasEngine implements GameController {
       this.scheduledReinforcementThreats =
         this.reinforcementsRemaining * Math.min(10, 4 + wave);
       this.reinforcementClock = Math.max(4.5, 7.2 - wave * 0.25);
-      const boss = getBossEncounter(wave, `mission-wave-${wave}`);
+      const boss = getBossEncounter(wave, `mission-wave-${wave}`, getWarbandStrength(this.agents));
       if (boss.scheduled) {
         const angle = wave * 0.71 + this.terrain.spawnAngleOffset;
         this.createEnemy(
@@ -8818,7 +8828,7 @@ class FreemanCanvasEngine implements GameController {
     agent.barrier -= absorbed;
     const damaged = applyUnitDamage(
       { hp: agent.hp, maxHp: agent.maxHp, disabledLeftMs: agent.disabledLeft * 1_000 },
-      Math.max(0, damage - absorbed),
+      resolveAgentDamage(Math.max(0, damage - absorbed), agent.armorProfile),
     );
     agent.hp = damaged.hp;
     agent.disabledLeft = damaged.disabledLeftMs / 1_000;

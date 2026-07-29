@@ -81,7 +81,11 @@ export function tickRepairBay(bay, units, elapsedMs) {
   const repairAmount = canRepair ? repairPerSecond * (elapsed / 1_000) : 0;
   const repairedUnits = (Array.isArray(units) ? units : []).map((unit) => {
     const timer = Math.max(0, disabledMs(unit) - elapsed);
-    const eligible = unit?.repairDecision === "repair" || unit?.repairing === true;
+    // A repair intent alone is not enough: the unit must have reached the
+    // separate bay and explicitly be in its repairing state. This keeps the
+    // autonomous retreat path from healing units while they are still in the
+    // field (and is shared by both renderers).
+    const eligible = unit?.atRepairBay === true && unit?.repairing === true;
     const nextHealth = canRepair && eligible && timer === 0
       ? Math.min(maxHealth(unit), health(unit) + repairAmount)
       : health(unit);
@@ -92,6 +96,17 @@ export function tickRepairBay(bay, units, elapsedMs) {
   });
   return { bay: { ...bay }, units: repairedUnits };
 }
+
+export function resolveMitigatedDamage(damage, armorProfile = {}) {
+  const base = Math.max(0, finite(damage));
+  const multiplier = Number.isFinite(armorProfile?.damageMultiplier)
+    ? Math.min(1, Math.max(0, armorProfile.damageMultiplier))
+    : 1;
+  return base * multiplier;
+}
+
+// Descriptive alias for callers that deal damage specifically to agents.
+export const resolveAgentDamage = resolveMitigatedDamage;
 
 export function repairTurret(turret, components) {
   const available = Math.max(0, Math.floor(finite(components)));
