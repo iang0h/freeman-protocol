@@ -282,11 +282,13 @@ test("auto placement rejects blockers and returns null when covered", () => {
 test("an agent can buy exactly one evolution", () => {
   const state = {
     compute: 200,
+    components: 6,
     recruited: { kairos: true },
     evolutions: {},
   };
   const purchased = purchaseEvolution(state, "kairos", "cryo-mesh");
   assert.equal(purchased.compute, 130);
+  assert.equal(purchased.components, 6);
   assert.equal(purchased.evolutions.kairos, "cryo-mesh");
   assert.throws(
     () => purchaseEvolution(purchased, "kairos", "stasis-lock"),

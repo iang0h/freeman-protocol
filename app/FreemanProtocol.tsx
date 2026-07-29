@@ -1403,7 +1403,7 @@ class FreemanEngine {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
-        compute: this.data + this.loot.components * 20,
+        compute: this.data,
         recruited: Object.fromEntries(
           (Object.keys(this.evolutions) as AgentId[]).map((id) => [
             id,
@@ -1413,7 +1413,6 @@ class FreemanEngine {
         evolutions: this.evolutions,
       }, agentId, evolutionId);
       this.data = next.compute;
-      this.loot.components = Math.max(0, this.loot.components - 1);
       this.evolutions = next.evolutions;
       const evolution = EVOLUTIONS[agentId].find(
         (item: { id: string }) => item.id === evolutionId,
@@ -3980,7 +3979,6 @@ class FreemanEngine {
       if (pickup.type === "repair") this.loot.repairs += pickup.value;
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
-      if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
       const presentation = getLootPresentation(pickup.type);
       this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: presentation.toastText, detail: "Recovered from a destroyed threat." });
       this.releaseLootPickup(pickup);
@@ -5708,7 +5706,7 @@ class FreemanCanvasEngine implements GameController {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
-        compute: this.data + this.loot.components * 20,
+        compute: this.data,
         recruited: Object.fromEntries(
           (Object.keys(this.evolutions) as AgentId[]).map((id) => [
             id,
@@ -5718,7 +5716,6 @@ class FreemanCanvasEngine implements GameController {
         evolutions: this.evolutions,
       }, agentId, evolutionId);
       this.data = next.compute;
-      this.loot.components = Math.max(0, this.loot.components - 1);
       this.evolutions = next.evolutions;
       const evolution = EVOLUTIONS[agentId].find(
         (item: { id: string }) => item.id === evolutionId,
@@ -7203,7 +7200,6 @@ class FreemanCanvasEngine implements GameController {
       if (pickup.type === "repair") this.loot.repairs += pickup.value;
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
-      if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
       const presentation = getLootPresentation(pickup.type);
       this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: presentation.toastText, detail: "Recovered from a destroyed threat." });
       this.pickups.splice(index, 1);
@@ -8919,7 +8915,7 @@ export default function FreemanProtocol() {
               <div>
                 <small>LOOT INVENTORY</small>
                 <strong>R {hud.loot.repairs} · C {hud.loot.components} · S {hud.loot.shards}</strong>
-                <span>REPAIRS · MODULES · SHARDS</span>
+                <span>REPAIRS · MODULES · SHARD INVENTORY</span>
               </div>
               <div>
                 <small>ARMOR PROFILE</small>

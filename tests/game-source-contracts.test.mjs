@@ -139,6 +139,23 @@ test("player upgrades are capped and recruited agents can evolve", () => {
   }
 });
 
+test("both engines charge evolution Compute without changing component inventory", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const evolve = engine.slice(
+      engine.indexOf("evolveAgent("),
+      engine.indexOf("purchaseComponentUpgrade("),
+    );
+    assert.match(evolve, /compute: this\.data/);
+    assert.doesNotMatch(evolve, /compute: this\.data \+ this\.loot\.components/);
+    assert.doesNotMatch(evolve, /this\.loot\.components\s*=/);
+    assert.doesNotMatch(
+      engine,
+      /pickup\.type === "upgrade-shard"\) this\.data \+=/,
+    );
+  }
+  assert.match(game, /SHARD INVENTORY/);
+});
+
 test("hybrid progression exposes armor, component ranks, and categorized drafts", () => {
   assert.match(game, /PLAYER_ARMORS/);
   assert.match(game, /AGENT_COMPONENT_UPGRADES/);
