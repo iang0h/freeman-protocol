@@ -141,10 +141,8 @@ test("player upgrades are capped and recruited agents can evolve", () => {
 
 test("both engines charge evolution Compute without changing component inventory", () => {
   for (const engine of [webglGame, canvasGame]) {
-    const evolve = engine.slice(
-      engine.indexOf("evolveAgent("),
-      engine.indexOf("  purchaseComponentUpgrade(", engine.indexOf("evolveAgent(")),
-    );
+    const evolveStart = engine.indexOf("evolveAgent(");
+    const evolve = engine.slice(evolveStart, evolveStart + 1800);
     assert.match(evolve, /compute: this\.data/);
     assert.doesNotMatch(evolve, /compute: this\.data \+ this\.loot\.components/);
     assert.doesNotMatch(evolve, /this\.loot\.components\s*=/);
