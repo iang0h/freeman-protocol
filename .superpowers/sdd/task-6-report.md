@@ -49,3 +49,18 @@ this environment. Equivalent checks ran through the already installed project
 binaries with the bundled Node runtime. No archive deployment was attempted:
 this task has no final-workflow authorization to publish externally, and the
 required commit must exist before any such deployment.
+
+## Follow-up: Repair Cache protect-only correction
+
+- Corrected the Repair Cache catalog card from Core restoration to operator and
+  field-kit recovery. Its visible copy now explicitly states that the Covenant
+  Core remains protect-only.
+- Added a source-contract regression that requires the operator/field-kit copy
+  and rejects Core-restore or Core-stabilization wording within that card.
+- TDD evidence: the new contract failed against the former `CORE RESTORE` /
+  “Stabilises a damaged Covenant Core” copy, then passed after the scoped copy
+  correction.
+- Verification: bundled `node --test tests/*.test.mjs` passed (128 tests);
+  bundled TypeScript `tsc --noEmit` and ESLint passed; `git diff --check`
+  passed. The `pnpm exec` wrapper remains unavailable because it triggers the
+  workspace's guarded install and fails on unapproved native dependency builds.

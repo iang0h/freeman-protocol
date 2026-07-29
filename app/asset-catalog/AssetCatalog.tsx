@@ -120,10 +120,10 @@ const lootEntries: LootEntry[] = [
   {
     id: "repair",
     name: "Repair Cache",
-    type: "CORE RESTORE",
+    type: "OPERATOR / FIELD-KIT RECOVERY",
     tone: "cyan",
     quantity: "+25 HP",
-    detail: "Stabilises a damaged Covenant Core.",
+    detail: "Restores operator health and replenishes field-kit supplies. The Covenant Core remains protect-only.",
   },
   {
     id: "component",

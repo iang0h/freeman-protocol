@@ -537,6 +537,18 @@ test("documents the complete warband and EMP discipline catalog", () => {
   }
 });
 
+test("Repair Cache documents operator and field-kit recovery without restoring the Core", () => {
+  const repairCache = catalog.slice(
+    catalog.indexOf('id: "repair"'),
+    catalog.indexOf('id: "component"'),
+  );
+  assert.match(repairCache, /type: "OPERATOR \/ FIELD-KIT RECOVERY"/);
+  assert.match(repairCache, /operator health/);
+  assert.match(repairCache, /field-kit supplies/);
+  assert.match(repairCache, /Covenant Core remains protect-only/);
+  assert.doesNotMatch(repairCache, /CORE RESTORE|[Rr]estores? (?:a )?(?:damaged )?Covenant Core|[Ss]tabilis(?:es|zes) (?:a )?(?:damaged )?Covenant Core/);
+});
+
 test("the player-facing HUD preserves EMP, Core, roster, touch, and pooled-cleanup contracts", () => {
   assert.match(game, /EMP CHARGING/);
   assert.match(game, /CORE HEALTH · PROTECT-ONLY/);
