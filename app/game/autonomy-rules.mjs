@@ -13,28 +13,66 @@ export const AGENT_ROLES = Object.freeze({
   }),
 });
 
-const DEFAULT_MAX_SUB_AGENTS = 3;
-const DEFAULT_SUB_AGENT_LIFETIME_MS = 5_000;
+const DEFAULT_MAX_SUB_AGENTS = 4;
+const MAX_SUB_AGENT_LIFETIME_TIER = 2;
+const SUB_AGENT_LIFETIME_MS = Object.freeze([10_000, 15_000, 20_000]);
 const SUB_AGENT_ACTION_COOLDOWN_MS = 1_400;
+export const SUB_AGENT_MATERIAL_COST = Object.freeze({
+  components: 1,
+  shards: 1,
+});
 
 function getRole(agent) {
   return AGENT_ROLES[agent.role] ? agent.role : "defend";
 }
 
-function activeSubAgentCount(context) {
-  return Array.isArray(context.subAgents)
-    ? context.subAgents.length
-    : (context.activeSubAgents ?? 0);
+function activeSubAgentCount(agent, context) {
+  if (Array.isArray(context.subAgents)) {
+    return context.subAgents.filter(
+      (subAgent) => subAgent.parentId === agent.id,
+    ).length;
+  }
+  return validNonNegativeInteger(context.activeSubAgents, 0);
 }
 
 function validNonNegativeInteger(value, fallback) {
   return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
 }
 
-function validLifetime(value) {
-  return Number.isFinite(value) && value > 0
-    ? value
-    : DEFAULT_SUB_AGENT_LIFETIME_MS;
+function getLifetimeUpgradeRank(agent, upgrades) {
+  const agentUpgrades = upgrades?.[agent?.id];
+  const candidates = [
+    upgrades?.subAgentLifetime,
+    upgrades?.subAgentLifetimeRank,
+    upgrades?.subAgents?.lifetime,
+    upgrades?.componentUpgradeRanks?.[`${agent?.id}:sub-agent-lifetime`],
+    agentUpgrades?.subAgentLifetime,
+    agentUpgrades?.subAgentLifetimeRank,
+  ];
+  const rank = candidates.find((value) => Number.isFinite(value));
+  return Math.min(
+    MAX_SUB_AGENT_LIFETIME_TIER,
+    Math.max(0, Math.floor(rank ?? 0)),
+  );
+}
+
+export function getSubAgentLifetime(agent, upgrades = {}) {
+  return SUB_AGENT_LIFETIME_MS[getLifetimeUpgradeRank(agent, upgrades)];
+}
+
+function canAffordSubAgent(materials) {
+  return (
+    materials &&
+    Number.isFinite(materials.components) &&
+    Number.isFinite(materials.shards) &&
+    materials.components >= SUB_AGENT_MATERIAL_COST.components &&
+    materials.shards >= SUB_AGENT_MATERIAL_COST.shards
+  );
+}
+
+function spendSubAgentMaterials(materials) {
+  materials.components -= SUB_AGENT_MATERIAL_COST.components;
+  materials.shards -= SUB_AGENT_MATERIAL_COST.shards;
 }
 
 function nextSubAgentId(parentId, subAgents, active) {
@@ -72,26 +110,31 @@ export function decideAgentIntent(agent, context = {}) {
 }
 
 export function spawnTemporarySubAgent(agent, context = {}) {
-  const maximum = validNonNegativeInteger(
+  const requestedMaximum = validNonNegativeInteger(
     context.maxSubAgents,
     DEFAULT_MAX_SUB_AGENTS,
   );
-  const active = activeSubAgentCount(context);
+  const maximum = Math.min(DEFAULT_MAX_SUB_AGENTS, requestedMaximum);
+  const active = activeSubAgentCount(agent, context);
   if (
     agent.canSpawn === false ||
+    agent.parentId ||
     !shouldImprovise(agent, context) ||
-    active >= maximum
+    active >= maximum ||
+    !canAffordSubAgent(context.materials)
   ) {
     return null;
   }
 
-  return {
+  const subAgent = {
     id: nextSubAgentId(agent.id, context.subAgents ?? [], active),
     parentId: agent.id,
     role: getRole(agent),
-    remainingMs: validLifetime(context.subAgentLifetimeMs),
+    remainingMs: getSubAgentLifetime(agent, context.upgrades),
     canSpawn: false,
   };
+  spendSubAgentMaterials(context.materials);
+  return subAgent;
 }
 
 export function tickSubAgents(subAgents, elapsedMs) {
@@ -121,6 +164,7 @@ export function tickTemporarySubAgent(state, context = {}, elapsedMs = 0) {
     maxLifetimeMs,
     cooldownLeftMs,
     healthRatio: Math.min(1, remainingMs / maxLifetimeMs),
+    lifetimeRatio: Math.min(1, remainingMs / maxLifetimeMs),
   };
 
   if (remainingMs <= 0) {

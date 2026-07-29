@@ -271,14 +271,15 @@ test("both engines drive recruited agents from shared autonomous role intents", 
 });
 
 test("temporary autonomous sub-agents are bounded, rendered, expired, and reset", () => {
-  assert.match(game, /const MAX_TEMPORARY_SUB_AGENTS_PER_WAVE = 3/);
+  assert.match(game, /const MAX_TEMPORARY_SUB_AGENTS_PER_PARENT = 4/);
   assert.match(game, /spawnTemporarySubAgent/);
   assert.match(game, /tickTemporarySubAgent/);
   assert.match(game, /clearSubAgents/);
   assert.match(webglGame, /temporary-sub-agent/);
   assert.match(canvasGame, /private drawTemporarySubAgent/);
   for (const engine of [webglGame, canvasGame]) {
-    assert.match(engine, /subAgentsSpawnedThisWave/);
+    assert.match(engine, /maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT/);
+    assert.match(engine, /materials: this\.loot/);
     assert.match(engine, /private clearTemporarySubAgents\(\)/);
     assert.match(
       engine,
@@ -313,6 +314,7 @@ test("both engines consume shared temporary role actions and health cues", () =>
     assert.match(engine, /action\.type === "repair"[\s\S]*?playerHealing/);
     assert.match(engine, /action\.type === "guard"[\s\S]*?slowMs/);
     assert.match(engine, /healthRatio/);
+    assert.match(engine, /lifetimeRatio/);
   }
   assert.match(webglGame, /this\.temporarySubAgentPool\.clear/);
 });

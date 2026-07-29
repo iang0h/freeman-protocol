@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as autonomyRules from "../app/game/autonomy-rules.mjs";
 
 import {
   canCompleteWave,
@@ -996,23 +997,32 @@ test("each role has a deterministic improvisation threshold", () => {
   );
 });
 
-test("temporary sub-agents are capped and cannot spawn recursively", () => {
+test("temporary sub-agents are capped at four children per parent and inherit the parent role", () => {
   const agent = { id: "kairos", role: "assault" };
   const context = {
     enemyDensity: 6,
-    activeSubAgents: 2,
-    maxSubAgents: 3,
-    subAgentLifetimeMs: 5_000,
+    subAgents: [
+      { id: "subagent-kairos-1", parentId: "kairos" },
+      { id: "subagent-kairos-2", parentId: "kairos" },
+      { id: "subagent-kira-1", parentId: "kira" },
+    ],
+    maxSubAgents: 4,
+    materials: { components: 5, shards: 5 },
   };
-  assert.deepEqual(spawnTemporarySubAgent(agent, context), {
+  const spawned = spawnTemporarySubAgent(agent, context);
+  assert.deepEqual(spawned, {
     id: "subagent-kairos-3",
     parentId: "kairos",
     role: "assault",
-    remainingMs: 5_000,
+    remainingMs: 10_000,
     canSpawn: false,
   });
+  assert.deepEqual(context.materials, { components: 4, shards: 4 });
   assert.equal(
-    spawnTemporarySubAgent(agent, { ...context, activeSubAgents: 3 }),
+    spawnTemporarySubAgent(agent, {
+      ...context,
+      subAgents: [...context.subAgents, spawned, { id: "subagent-kairos-4", parentId: "kairos" }],
+    }),
     null,
   );
   assert.equal(
@@ -1023,11 +1033,14 @@ test("temporary sub-agents are capped and cannot spawn recursively", () => {
 
 test("temporary sub-agent bounds normalize invalid context values", () => {
   const agent = { id: "kairos", role: "assault" };
-  const improvisingContext = { enemyDensity: 6 };
+  const improvisingContext = {
+    enemyDensity: 6,
+    materials: { components: 10, shards: 10 },
+  };
   assert.equal(
     spawnTemporarySubAgent(agent, {
       ...improvisingContext,
-      activeSubAgents: 3,
+      activeSubAgents: 4,
       maxSubAgents: Infinity,
     }),
     null,
@@ -1038,7 +1051,7 @@ test("temporary sub-agent bounds normalize invalid context values", () => {
       maxSubAgents: NaN,
       subAgentLifetimeMs: Infinity,
     }).remainingMs,
-    5_000,
+    10_000,
   );
   assert.equal(
     spawnTemporarySubAgent(agent, {
@@ -1046,14 +1059,14 @@ test("temporary sub-agent bounds normalize invalid context values", () => {
       maxSubAgents: -1,
       subAgentLifetimeMs: 0,
     }).remainingMs,
-    5_000,
+    10_000,
   );
   assert.equal(
     spawnTemporarySubAgent(agent, {
       ...improvisingContext,
       maxSubAgents: 1.5,
     }).remainingMs,
-    5_000,
+    10_000,
   );
 });
 
@@ -1061,7 +1074,8 @@ test("temporary sub-agent IDs remain unique after prior agents expire", () => {
   const agent = { id: "kairos", role: "assault" };
   const context = {
     enemyDensity: 6,
-    maxSubAgents: 3,
+    maxSubAgents: 4,
+    materials: { components: 3, shards: 3 },
     subAgents: [
       { id: "subagent-kairos-1", remainingMs: 4_000 },
       { id: "subagent-kairos-3", remainingMs: 4_000 },
@@ -1071,6 +1085,64 @@ test("temporary sub-agent IDs remain unique after prior agents expire", () => {
     spawnTemporarySubAgent(agent, context).id,
     "subagent-kairos-4",
   );
+});
+
+test("temporary sub-agent lifetimes advance only through the documented upgrade tiers", () => {
+  const agent = { id: "relay", role: "support" };
+  assert.equal(typeof autonomyRules.getSubAgentLifetime, "function");
+  if (typeof autonomyRules.getSubAgentLifetime !== "function") return;
+  assert.equal(autonomyRules.getSubAgentLifetime(agent, {}), 10_000);
+  assert.equal(autonomyRules.getSubAgentLifetime(agent, { subAgentLifetime: 1 }), 15_000);
+  assert.equal(autonomyRules.getSubAgentLifetime(agent, { subAgentLifetime: 2 }), 20_000);
+  assert.equal(autonomyRules.getSubAgentLifetime(agent, { subAgentLifetime: 99 }), 20_000);
+
+  for (const [upgrades, lifetime] of [
+    [{}, 10_000],
+    [{ subAgentLifetime: 1 }, 15_000],
+    [{ subAgentLifetime: 2 }, 20_000],
+  ]) {
+    const spawned = spawnTemporarySubAgent(agent, {
+      playerHealthRatio: 0.45,
+      upgrades,
+      materials: { components: 1, shards: 1 },
+    });
+    assert.equal(spawned.remainingMs, lifetime);
+    assert.deepEqual(
+      tickSubAgents([{ ...spawned }], lifetime),
+      [],
+    );
+  }
+});
+
+test("sub-agent construction spends gathered Components and Shards atomically", () => {
+  const componentCollection = collectMaterials(
+    { id: "forge", x: 0, y: 0, gatheringCooldownMs: 0 },
+    [{ id: "component", type: "component", x: 0, y: 0, value: 1 }],
+  );
+  const shardCollection = collectMaterials(
+    { ...componentCollection.agent, gatheringCooldownMs: 0 },
+    [{ id: "shard", type: "upgrade-shard", x: 0, y: 0, value: 1 }],
+  );
+  const materials = {
+    components: componentCollection.collected.components,
+    shards: shardCollection.collected.shards,
+  };
+  const spawned = spawnTemporarySubAgent(
+    { id: "forge", role: "assault" },
+    { enemyDensity: 6, materials },
+  );
+  assert.equal(spawned.parentId, "forge");
+  assert.deepEqual(materials, { components: 0, shards: 0 });
+
+  const insufficient = { components: 0, shards: 1 };
+  assert.equal(
+    spawnTemporarySubAgent(
+      { id: "forge", role: "assault" },
+      { enemyDensity: 6, materials: insufficient },
+    ),
+    null,
+  );
+  assert.deepEqual(insufficient, { components: 0, shards: 1 });
 });
 
 test("temporary sub-agents expire and are cleared between waves", () => {
@@ -1106,8 +1178,8 @@ test("assault sub-agents deterministically damage nearby threats", () => {
       id: "subagent-kira-1",
       parentId: "kira",
       role: "assault",
-      remainingMs: 5_000,
-      maxLifetimeMs: 5_000,
+      remainingMs: 10_000,
+      maxLifetimeMs: 10_000,
       cooldownLeftMs: 0,
       canSpawn: false,
     },
@@ -1116,9 +1188,9 @@ test("assault sub-agents deterministically damage nearby threats", () => {
   );
 
   assert.deepEqual(result.action, { type: "attack", damage: 8 });
-  assert.equal(result.state.remainingMs, 4_900);
+  assert.equal(result.state.remainingMs, 9_900);
   assert.equal(result.state.cooldownLeftMs, 1_400);
-  assert.equal(result.state.healthRatio, 0.98);
+  assert.equal(result.state.healthRatio, 0.99);
   assert.equal(result.expired, false);
 });
 
@@ -1127,7 +1199,7 @@ test("support sub-agents recover the player without healing the protected Core",
     {
       role: "support",
       remainingMs: 4_000,
-      maxLifetimeMs: 5_000,
+      maxLifetimeMs: 10_000,
       cooldownLeftMs: 0,
       canSpawn: false,
     },
@@ -1147,7 +1219,7 @@ test("defense sub-agents intercept threats near the Core", () => {
     {
       role: "defend",
       remainingMs: 3_000,
-      maxLifetimeMs: 5_000,
+      maxLifetimeMs: 10_000,
       cooldownLeftMs: 0,
       canSpawn: false,
     },
@@ -1186,8 +1258,8 @@ test("temporary sub-agent cooldowns prevent repeated role actions", () => {
   const result = tickTemporarySubAgent(
     {
       role: "assault",
-      remainingMs: 5_000,
-      maxLifetimeMs: 5_000,
+      remainingMs: 10_000,
+      maxLifetimeMs: 10_000,
       cooldownLeftMs: 900,
       canSpawn: false,
     },
