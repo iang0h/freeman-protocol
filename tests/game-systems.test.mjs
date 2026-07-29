@@ -49,6 +49,7 @@ import {
 import {
   applyTerrainRouteBias,
   getEffectiveResistanceFlags,
+  getMaxEmpResistancePercent,
   getPhisherDecoyOffsets,
   getRootkitRebootUpdates,
   getTerrainModifier,
@@ -117,6 +118,12 @@ test("EMP resolution composes only resistance flags visible on the target", () =
     resolveEmpDamage(100, { resistanceFlags: [] }, modifiers),
     100,
   );
+});
+
+test("HUD resistance reports the strongest combined hostile EMP reduction", () => {
+  assert.equal(getMaxEmpResistancePercent(getWaveModifiers(1)), 0);
+  assert.equal(getMaxEmpResistancePercent(getWaveModifiers(4)), 39);
+  assert.equal(getMaxEmpResistancePercent(getWaveModifiers(8)), 79);
 });
 
 test("terrain modifiers are deterministic, serializable, and cycle after wave one", () => {

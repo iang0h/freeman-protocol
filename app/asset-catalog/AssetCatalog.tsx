@@ -155,6 +155,37 @@ const eliteLootEntries: ProgressionEntry[] = [
   { id: "memory", name: "Agent Memory Chip", signal: "ELITE DROP", tone: "violet", detail: "Memory chips unlock component ranks for the recruited agent who uses them." },
 ];
 
+const componentUpgradeEntries: ProgressionEntry[] = [
+  {
+    id: "stasis-array",
+    name: "Stasis Array",
+    signal: "KAIROS · 2 COMPONENTS",
+    tone: "cyan",
+    detail: "Accelerates Kairos attack cycles by 12% per rank, up to rank two.",
+  },
+  {
+    id: "hunter-core",
+    name: "Hunter Core",
+    signal: "KIRA · 3 COMPONENTS",
+    tone: "violet",
+    detail: "Raises Kira's precision damage by 22% per rank, up to rank two.",
+  },
+  {
+    id: "breach-ammo",
+    name: "Breach Ammo",
+    signal: "FORGE · 3 COMPONENTS",
+    tone: "amber",
+    detail: "Adds 16% damage and 10% faster attacks per rank, up to rank two.",
+  },
+  {
+    id: "nanite-reserve",
+    name: "Nanite Reserve",
+    signal: "COVENANT · 2 COMPONENTS",
+    tone: "cyan",
+    detail: "Strengthens Covenant healing by 30% per rank, up to rank two.",
+  },
+];
+
 const terrainSignals: ProgressionEntry[] = [
   { id: "storm", name: "Relay Storm", signal: "EMP +15%", tone: "cyan", detail: "A charged relay field boosts EMP output while altering breach routes." },
   { id: "lanes", name: "Firewall Lanes", signal: "ROUTE SHIFT", tone: "amber", detail: "Firewall channels bend hostile paths into predictable defensive lanes." },
@@ -355,6 +386,19 @@ export default function AssetCatalog() {
         </div>
         <div className={styles.progressionGrid}>
           {eliteLootEntries.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
+        </div>
+      </section>
+
+      <section className={styles.section} aria-labelledby="agent-components-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>SPECIALIST HARDWARE</p>
+            <h2 id="agent-components-title">Agent Component Upgrades</h2>
+          </div>
+          <p>Install up to two ranks on recruited agents using recovered components.</p>
+        </div>
+        <div className={styles.progressionGrid}>
+          {componentUpgradeEntries.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
         </div>
       </section>
 

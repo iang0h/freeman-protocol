@@ -352,6 +352,20 @@ test("both renderers show resistance cues and deterministic terrain overlays", (
   }
 });
 
+test("both renderers emit complete encounter telemetry in their HUD payloads", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /temporarySubAgents: this\.temporarySubAgents\.length/,
+    );
+    assert.match(engine, /terrainLabel: this\.terrain\.label/);
+    assert.match(
+      engine,
+      /empResistance: getMaxEmpResistancePercent\(this\.encounterModifiers\)/,
+    );
+  }
+});
+
 test("game persistence always goes through safe in-memory-backed helpers", () => {
   assert.match(storage, /const memoryStorage = new Map\(\)/);
   assert.match(storage, /export function readStoredNumber/);

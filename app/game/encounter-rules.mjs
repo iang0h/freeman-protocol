@@ -215,3 +215,15 @@ export function resolveEmpDamage(baseDamage, target, modifiers) {
   }
   return Math.round(Math.max(0, resolved));
 }
+
+export function getMaxEmpResistancePercent(modifiers) {
+  const flagSets = Object.values(modifiers?.flagsByType ?? {});
+  if (flagSets.length === 0) return 0;
+  return Math.max(
+    0,
+    ...flagSets.map(
+      (resistanceFlags) =>
+        100 - resolveEmpDamage(100, { resistanceFlags }, modifiers),
+    ),
+  );
+}

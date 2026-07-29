@@ -46,6 +46,7 @@ test("catalog source defines the living network sections and reusable cards", as
   assert.match(catalog, /const threatEntries/);
   assert.match(catalog, /const lootEntries/);
   assert.match(catalog, /const armorEntries/);
+  assert.match(catalog, /const componentUpgradeEntries/);
   assert.match(catalog, /const terrainSignals/);
   assert.match(catalog, /function SignalBadge/);
   assert.match(catalog, /function AgentPortraitCard/);
@@ -55,7 +56,16 @@ test("catalog source defines the living network sections and reusable cards", as
   assert.match(catalog, />Field Components</);
   assert.match(catalog, />Armor Profiles</);
   assert.match(catalog, />Elite Recovery</);
+  assert.match(catalog, />Agent Component Upgrades</);
   assert.match(catalog, />Terrain Signals</);
+  for (const upgrade of [
+    "Stasis Array",
+    "Hunter Core",
+    "Breach Ammo",
+    "Nanite Reserve",
+  ]) {
+    assert.match(catalog, new RegExp(upgrade));
+  }
   assert.match(styles, /--loot-cyan:\s*#83d7df/);
   assert.match(styles, /--loot-amber:\s*#d8a14b/);
   assert.match(styles, /--loot-violet:\s*#a78bfa/);
@@ -112,5 +122,10 @@ test("renders the living network catalog route", async () => {
   assert.match(html, /Field Components/);
   assert.match(html, /Armor Profiles/);
   assert.match(html, /Elite Recovery/);
+  assert.match(html, /Agent Component Upgrades/);
+  assert.match(html, /Stasis Array/);
+  assert.match(html, /Hunter Core/);
+  assert.match(html, /Breach Ammo/);
+  assert.match(html, /Nanite Reserve/);
   assert.match(html, /Terrain Signals/);
 });

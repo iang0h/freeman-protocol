@@ -42,6 +42,7 @@ import {
   JAMMER_ZONE_RADIUS,
   applyTerrainRouteBias,
   getEffectiveResistanceFlags,
+  getMaxEmpResistancePercent,
   getPhisherDecoyOffsets,
   getRootkitRebootUpdates,
   getTerrainModifier,
@@ -492,15 +493,6 @@ const COMPONENT_COPY: Record<string, string> = {
   "breach-ammo": "+16% damage and 10% faster attacks per rank",
   "nanite-reserve": "+30% healing per rank",
 };
-const getEmpResistancePercent = (modifiers: {
-  resistance: Record<string, number>;
-}) =>
-  Math.round(
-    Math.max(
-      0,
-      ...Object.values(modifiers.resistance).map((reduction) => reduction * 100),
-    ),
-  );
 const UPGRADE_CATEGORY_LABELS: Record<string, string> = {
   player: "PLAYER DRAFT",
   agent: "AGENT DRAFT",
@@ -4980,7 +4972,7 @@ class FreemanEngine {
       componentUpgradeRanks: { ...this.componentUpgradeRanks },
       temporarySubAgents: this.temporarySubAgents.length,
       terrainLabel: this.terrain.label,
-      empResistance: getEmpResistancePercent(this.encounterModifiers),
+      empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
@@ -8574,7 +8566,7 @@ class FreemanCanvasEngine implements GameController {
       componentUpgradeRanks: { ...this.componentUpgradeRanks },
       temporarySubAgents: this.temporarySubAgents.length,
       terrainLabel: this.terrain.label,
-      empResistance: getEmpResistancePercent(this.encounterModifiers),
+      empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
