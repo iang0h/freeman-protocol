@@ -1,287 +1,201 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import styles from "./AssetCatalog.module.css";
 
-type AssetStatus = "concept-ready" | "prototype" | "runtime" | "queued";
+type SignalTone = "cyan" | "amber" | "violet" | "red";
 
-type Asset = {
+type AgentEntry = {
   id: string;
   name: string;
-  category: string;
   role: string;
-  description: string;
-  source: string;
-  runtime: string;
-  model: string;
-  status: AssetStatus;
-  image?: string;
-  accent: string;
-  target?: string;
-  textures?: string;
-  animations?: string[];
-  next: string;
+  signal: string;
+  tone: SignalTone;
+  portrait: string;
+  detail: string;
 };
 
-const assets: Asset[] = [
+type ThreatEntry = {
+  id: string;
+  name: string;
+  role: string;
+  threat: string;
+  tone: SignalTone;
+  protocol: string;
+};
+
+type LootEntry = {
+  id: string;
+  name: string;
+  type: string;
+  tone: "cyan" | "amber" | "violet";
+  quantity: string;
+  detail: string;
+};
+
+const agentEntries: AgentEntry[] = [
   {
-    id: "operator-freeman",
-    name: "Operator Freeman",
-    category: "Characters",
-    role: "Playable cyber operator",
-    description:
-      "Animated cyber operator with a readable combat silhouette, rifle-ready motion set, graphite armour, burnt-orange hardware and a cyan tactical visor.",
-    source: "Quaternius CC0 Cyberpunk Game Kit · Freeman material pass",
-    runtime: "Animated production candidate active",
-    model: "Embedded glTF · 1.5 MB",
-    status: "runtime",
-    image: "/asset-catalog/ian-freeman.webp",
-    accent: "#dc7540",
-    target: "Meshy multi-view GLB · 20–30K polygons · 2K PBR",
-    textures: "Graphite metal · burnt-orange armour · cyan optics",
-    animations: ["Idle", "Run", "Shoot", "Hit", "Death", "Victory"],
-    next: "Use this coherent production candidate until the custom Meshy multi-view Freeman model passes the same gameplay-camera test.",
-  },
-  {
-    id: "agent-kairos",
+    id: "kairos",
     name: "Kairos",
-    category: "AI Agents",
-    role: "Time-control support AI",
-    description:
-      "Floating temporal intelligence with a pulsing core, three independent orbital rings and four stabiliser blades.",
-    source: "Custom Freeman runtime mesh",
-    runtime: "Playable prototype active",
-    model: "Procedural orbital AI",
-    status: "prototype",
-    image: "/asset-catalog/kairos-agent.webp",
-    accent: "#83d7df",
-    target: "Rigid-body GLB · segmented rings · 10–15K polygons",
-    textures: "Blackened metal · cyan temporal core",
-    animations: ["Hover", "Orbit", "Slow field", "Hit", "Shutdown", "Victory"],
-    next: "Convert this approved orbital silhouette into a segmented hard-surface GLB.",
+    role: "Temporal support",
+    signal: "SYNCED · 98%",
+    tone: "cyan",
+    portrait: "orbit",
+    detail: "Slows breach vectors and keeps the squad's timing window open.",
   },
   {
-    id: "enemy-virus",
-    name: "Virus",
-    category: "Enemies",
-    role: "Basic melee hunter",
-    description:
-      "Corrupted quadruped machine with a strong infected core, grounded limbs and a silhouette readable from above.",
-    source: "Generated 3D reference",
-    runtime: "Procedural enemy active",
-    model: "Meshy GLB pending",
-    status: "concept-ready",
-    image: "/asset-catalog/virus-enemy.webp",
-    accent: "#d34f3d",
-    target: "Quadruped · 15–22K triangles · ≤ 5 MB GLB",
-    textures: "2K PBR · blackened metal and controlled red corruption",
-    animations: ["Idle", "Run", "Lunge", "Hit", "Stagger", "Death"],
-    next: "Convert with clean limb separation, rig as a quadruped and preserve the exposed core.",
-  },
-  {
-    id: "agent-kira",
+    id: "kira",
     name: "Kira",
-    category: "AI Agents",
-    role: "Heavy-damage sniper AI",
-    description:
-      "Angular sniper drone with a long under-slung rail rifle, narrow targeting eye and swept stabiliser wings.",
-    source: "Custom Freeman runtime mesh",
-    runtime: "Playable prototype active",
-    model: "Procedural sniper AI",
-    status: "prototype",
-    accent: "#9ebfc0",
-    animations: ["Idle", "Run", "Precision shot", "Hit", "Shutdown", "Victory"],
-    next: "Add a purpose-built rail rifle and a sharper targeting silhouette.",
+    role: "Precision sniper",
+    signal: "LOCKED · 91%",
+    tone: "violet",
+    portrait: "scope",
+    detail: "Marks priority targets before they cross the core perimeter.",
   },
   {
-    id: "agent-forge",
+    id: "forge",
     name: "Forge",
-    category: "AI Agents",
-    role: "Rapid-fire assault AI",
-    description:
-      "Heavy gunship AI with broad armour, twin rotary weapon pods and a visible amber power core.",
-    source: "Custom Freeman runtime mesh",
-    runtime: "Playable prototype active",
-    model: "Procedural assault AI",
-    status: "prototype",
-    accent: "#d8a14b",
-    animations: ["Idle", "Run", "Rapid fire", "Hit", "Shutdown", "Victory"],
-    next: "Replace the melee prop with a compact rotary cannon and ammo backpack.",
+    role: "Assault platform",
+    signal: "ENGAGED · 86%",
+    tone: "amber",
+    portrait: "forge",
+    detail: "Builds pressure with rotary fire when the network is overwhelmed.",
   },
   {
-    id: "agent-covenant",
+    id: "covenant",
     name: "Covenant",
-    category: "AI Agents",
-    role: "Healing and shield AI",
-    description:
-      "Shield intelligence built around a luminous restoration core, four rotating protection plates and a vertical halo.",
-    source: "Custom Freeman runtime mesh",
-    runtime: "Playable prototype active",
-    model: "Procedural shield AI",
-    status: "prototype",
-    accent: "#d2ddd7",
-    animations: ["Idle", "Run", "Repair cast", "Hit", "Shutdown", "Victory"],
-    next: "Add folding shield emitters so the support role reads instantly from the isometric camera.",
+    role: "Shield intelligence",
+    signal: "STANDBY · 94%",
+    tone: "cyan",
+    portrait: "halo",
+    detail: "Restores squad integrity and reinforces the Covenant Core.",
+  },
+];
+
+const threatEntries: ThreatEntry[] = [
+  {
+    id: "virus",
+    name: "Virus",
+    role: "Melee hunter",
+    threat: "TRACE: 12 ACTIVE",
+    tone: "red",
+    protocol: "Close-range corruption packet",
   },
   {
-    id: "enemy-phisher",
+    id: "phisher",
     name: "Phisher",
-    category: "Enemies",
-    role: "Ranged deception unit",
-    description:
-      "Keeps distance and launches hostile packets. The future model needs a clear ranged telegraph.",
-    source: "Procedural Three.js",
-    runtime: "Active",
-    model: "Concept queued",
-    status: "runtime",
-    accent: "#bf693e",
-    next: "Build an antenna-led silhouette with a visible charge state before each projectile.",
+    role: "Ranged deception",
+    threat: "TRACE: 04 ACTIVE",
+    tone: "violet",
+    protocol: "Spoofs positions and launches hostile packets",
   },
   {
-    id: "enemy-trojan",
+    id: "trojan",
     name: "Trojan",
-    category: "Enemies",
     role: "Armoured breach unit",
-    description:
-      "Slow heavy attacker designed to absorb fire and pressure the Core at close range.",
-    source: "Procedural Three.js",
-    runtime: "Active",
-    model: "Concept queued",
-    status: "runtime",
-    accent: "#9f4638",
-    next: "Create a siege-machine body with broad armour and an obvious breakable front plate.",
+    threat: "TRACE: 02 ACTIVE",
+    tone: "amber",
+    protocol: "Absorbs fire while advancing on the Core",
   },
   {
-    id: "enemy-rootkit",
-    name: "Rootkit",
-    category: "Enemies",
-    role: "Multi-stage boss",
-    description:
-      "Final breach organism that splits into hostile processes after its shell is damaged.",
-    source: "Procedural Three.js",
-    runtime: "Active",
-    model: "Concept queued",
-    status: "runtime",
-    accent: "#e05a42",
-    next: "Design the boss around a shell that can visibly open during its second phase.",
-  },
-  {
-    id: "world-core",
-    name: "Covenant Core",
-    category: "World",
-    role: "Primary defense objective",
-    description:
-      "Central network reactor whose light, shield and structural damage communicate mission health.",
-    source: "Procedural Three.js",
-    runtime: "Active",
-    model: "Art pass queued",
-    status: "runtime",
-    accent: "#ffc29a",
-    next: "Replace the floating crystal with a layered reactor and three visible damage states.",
-  },
-  {
-    id: "world-arena",
-    name: "Network District 01",
-    category: "World",
-    role: "Cyber-defense arena kit",
-    description:
-      "Isometric combat floor, server towers, perimeter structures, grid and camera-safe collision space.",
-    source: "Procedural Three.js",
-    runtime: "Active",
-    model: "Modular kit queued",
-    status: "runtime",
-    accent: "#688c93",
-    next: "Build reusable floor, wall, server, gate and hologram modules before adding another district.",
-  },
-  {
-    id: "vfx-combat",
-    name: "Combat VFX Pool",
-    category: "VFX & Audio",
-    role: "Hits, beams, bursts and telegraphs",
-    description:
-      "Runtime pool for projectiles, impact bursts, recruitment rings, boss portals and ability feedback.",
-    source: "Runtime-generated",
-    runtime: "Active",
-    model: "No mesh import required",
-    status: "runtime",
-    accent: "#e28b58",
-    next: "Add directional hit sparks, enemy death signatures and stronger boss-phase transitions.",
-  },
-  {
-    id: "audio-combat",
-    name: "Combat Audio System",
-    category: "VFX & Audio",
-    role: "Action and state feedback",
-    description:
-      "Procedural cues for firing, recruitment, damage, wave transitions, victory and defeat.",
-    source: "Web Audio",
-    runtime: "Active",
-    model: "Authored sound pack queued",
-    status: "runtime",
-    accent: "#9ebfc0",
-    next: "Replace shared tones with distinct weapon, agent, enemy and impact families.",
-  },
-  {
-    id: "world-district-02",
-    name: "Network District 02",
-    category: "World",
-    role: "Future mission environment",
-    description:
-      "A second combat district reserved for a different objective and environmental hazard.",
-    source: "Not produced",
-    runtime: "Inactive",
-    model: "Queued after core loop",
-    status: "queued",
-    accent: "#59666a",
-    next: "Do not produce until the first arena, squad commands and boss encounter are proven fun.",
+    id: "rootkit",
+    name: "Rootkit Prime",
+    role: "Multi-stage intrusion",
+    threat: "TRACE: BOSS SIGNAL",
+    tone: "red",
+    protocol: "Splits into hostile processes after shell failure",
   },
 ];
 
-const categories = [
-  "All",
-  "Characters",
-  "AI Agents",
-  "Enemies",
-  "World",
-  "VFX & Audio",
+const lootEntries: LootEntry[] = [
+  {
+    id: "repair",
+    name: "Repair Cache",
+    type: "CORE RESTORE",
+    tone: "cyan",
+    quantity: "+25 HP",
+    detail: "Stabilises a damaged Covenant Core.",
+  },
+  {
+    id: "component",
+    name: "Sentry Component",
+    type: "FIELD BUILD",
+    tone: "amber",
+    quantity: "+1 MODULE",
+    detail: "A recoverable build part for automated defenses.",
+  },
+  {
+    id: "shard",
+    name: "Protocol Shard",
+    type: "UPGRADE DATA",
+    tone: "violet",
+    quantity: "+1 DRAFT",
+    detail: "Compressed intelligence used to evolve the squad.",
+  },
 ];
 
-const statusLabel: Record<AssetStatus, string> = {
-  "concept-ready": "CONCEPT READY",
-  prototype: "PLAYABLE PROTOTYPE",
-  runtime: "RUNTIME",
-  queued: "QUEUED",
-};
+function SignalBadge({ label, tone }: { label: string; tone: SignalTone }) {
+  return (
+    <span className={`${styles.signalBadge} ${styles[`tone${tone}`]}`}>
+      <i aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
+
+function AgentPortraitCard({
+  agent,
+  selected,
+  onSelect,
+}: {
+  agent: AgentEntry;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`${styles.agentCard} ${selected ? styles.agentCardSelected : ""}`}
+      data-tone={agent.tone}
+      onClick={onSelect}
+    >
+      <span className={`${styles.portrait} ${styles[agent.portrait]}`} aria-hidden="true">
+        <i />
+        <b />
+        <em />
+      </span>
+      <span className={styles.cardMeta}>
+        <SignalBadge label={agent.signal} tone={agent.tone} />
+        <strong>{agent.name}</strong>
+        <small>{agent.role}</small>
+      </span>
+    </button>
+  );
+}
+
+function LootCard({ loot }: { loot: LootEntry }) {
+  return (
+    <article className={styles.lootCard} data-tone={loot.tone}>
+      <div className={styles.lootVisual} aria-hidden="true">
+        <i />
+        <b />
+        <em />
+      </div>
+      <div>
+        <SignalBadge label={loot.type} tone={loot.tone} />
+        <h3>{loot.name}</h3>
+        <p>{loot.detail}</p>
+      </div>
+      <strong>{loot.quantity}</strong>
+    </article>
+  );
+}
 
 export default function AssetCatalog() {
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("All");
-  const [selectedId, setSelectedId] = useState(assets[0].id);
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return assets.filter((asset) => {
-      const inCategory = category === "All" || asset.category === category;
-      const inSearch =
-        !needle ||
-        `${asset.name} ${asset.category} ${asset.role} ${asset.source} ${asset.status}`
-          .toLowerCase()
-          .includes(needle);
-      return inCategory && inSearch;
-    });
-  }, [category, query]);
-
-  const selected = assets.find((asset) => asset.id === selectedId) ?? assets[0];
-  const conceptCount = assets.filter(
-    (asset) => asset.status === "concept-ready",
-  ).length;
-  const runtimeCount = assets.filter((asset) =>
-    asset.runtime.toLowerCase().includes("active"),
-  ).length;
-  const prototypeCount = assets.filter(
-    (asset) => asset.status === "prototype",
-  ).length;
+  const [selectedAgentId, setSelectedAgentId] = useState(agentEntries[0].id);
+  const selectedAgent =
+    agentEntries.find((agent) => agent.id === selectedAgentId) ?? agentEntries[0];
 
   return (
     <main className={styles.shell}>
@@ -296,169 +210,94 @@ export default function AssetCatalog() {
       </header>
 
       <section className={styles.hero}>
-        <div>
-          <p className={styles.eyebrow}>PRODUCTION INVENTORY · BUILD 008</p>
+        <div className={styles.heroCopy}>
+          <p className={styles.eyebrow}>NETWORK OBSERVATORY · LIVE TELEMETRY</p>
           <h1>
-            Asset
-            <em> Ledger</em>
+            Living
+            <em> Network</em>
           </h1>
-          <p className={styles.lede}>
-            Concept art, playable prototypes and final production models are
-            tracked separately. Nothing is labelled final until the in-game
-            model matches the visual target.
+          <p>
+            A field catalog for the agents, intrusions and recovered components
+            currently shaping the Freeman Protocol defense grid.
           </p>
         </div>
-        <div className={styles.metrics} aria-label="Asset totals">
-          <span>
-            <strong>{String(assets.length).padStart(2, "0")}</strong>
-            <small>TRACKED ASSETS</small>
-          </span>
-          <span>
-            <strong>{String(conceptCount).padStart(2, "0")}</strong>
-            <small>3D REFERENCES READY</small>
-          </span>
-          <span>
-            <strong>{String(prototypeCount).padStart(2, "0")}</strong>
-            <small>PLAYABLE PROTOTYPES</small>
-          </span>
-          <span>
-            <strong>{String(runtimeCount).padStart(2, "0")}</strong>
-            <small>ACTIVE SYSTEMS</small>
-          </span>
+        <div className={styles.networkMap} aria-hidden="true">
+          <i /><i /><i /><i /><i /><i /><i />
+        </div>
+        <dl className={styles.metrics}>
+          <div><dt>04</dt><dd>LIVE AGENTS</dd></div>
+          <div><dt>22</dt><dd>THREATS TRACED</dd></div>
+          <div><dt>03</dt><dd>FIELD COMPONENTS</dd></div>
+        </dl>
+      </section>
+
+      <section className={styles.section} aria-labelledby="live-agents-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>SQUAD SIGNALS</p>
+            <h2 id="live-agents-title">Live Agents</h2>
+          </div>
+          <p>Click a signal card to inspect its current combat directive.</p>
+        </div>
+        <div className={styles.agentLayout}>
+          <div className={styles.agentGrid}>
+            {agentEntries.map((agent) => (
+              <AgentPortraitCard
+                agent={agent}
+                key={agent.id}
+                selected={selectedAgent.id === agent.id}
+                onSelect={() => setSelectedAgentId(agent.id)}
+              />
+            ))}
+          </div>
+          <aside className={styles.agentReadout} data-tone={selectedAgent.tone}>
+            <SignalBadge label="ACTIVE DIRECTIVE" tone={selectedAgent.tone} />
+            <h3>{selectedAgent.name}</h3>
+            <strong>{selectedAgent.role}</strong>
+            <p>{selectedAgent.detail}</p>
+            <span>LINK STATUS // {selectedAgent.signal}</span>
+          </aside>
         </div>
       </section>
 
-      <section className={styles.toolbar} aria-label="Asset filters">
-        <label>
-          <span>SEARCH ASSETS</span>
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Name, role, source…"
-          />
-        </label>
-        <div className={styles.filters}>
-          {categories.map((item) => (
-            <button
-              type="button"
-              key={item}
-              className={category === item ? styles.activeFilter : ""}
-              onClick={() => setCategory(item)}
-            >
-              {item}
-            </button>
+      <section className={`${styles.section} ${styles.threatSection}`} aria-labelledby="threat-archive-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>INTRUSION INDEX</p>
+            <h2 id="threat-archive-title">Threat Archive</h2>
+          </div>
+          <p>Signatures are prioritised by their ability to reach the Core.</p>
+        </div>
+        <div className={styles.threatGrid}>
+          {threatEntries.map((threat, index) => (
+            <article className={styles.threatCard} data-tone={threat.tone} key={threat.id}>
+              <span className={styles.threatIndex}>{String(index + 1).padStart(2, "0")}</span>
+              <div className={styles.threatGlyph} aria-hidden="true"><i /><b /></div>
+              <SignalBadge label={threat.threat} tone={threat.tone} />
+              <h3>{threat.name}</h3>
+              <strong>{threat.role}</strong>
+              <p>{threat.protocol}</p>
+            </article>
           ))}
         </div>
       </section>
 
-      <div className={styles.workspace}>
-        <section className={styles.catalog} aria-label="Asset catalog">
-          <div className={styles.catalogHeading}>
-            <span>{filtered.length} ENTRIES</span>
-            <span>SELECT AN ASSET FOR PRODUCTION DETAILS</span>
+      <section className={`${styles.section} ${styles.lootSection}`} aria-labelledby="field-components-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>RECOVERED AFTER ACTION</p>
+            <h2 id="field-components-title">Field Components</h2>
           </div>
-          <div className={styles.grid}>
-            {filtered.map((asset) => (
-              <button
-                type="button"
-                key={asset.id}
-                className={`${styles.card} ${selected.id === asset.id ? styles.selectedCard : ""}`}
-                style={
-                  { "--asset-accent": asset.accent } as React.CSSProperties
-                }
-                onClick={() => setSelectedId(asset.id)}
-              >
-                <span className={styles.visual}>
-                  {asset.image ? (
-                    <img src={asset.image} alt={`${asset.name} 3D reference`} />
-                  ) : (
-                    <span className={styles.placeholder} aria-hidden="true">
-                      <i />
-                      <b>{asset.name.slice(0, 2).toUpperCase()}</b>
-                    </span>
-                  )}
-                  <small className={`${styles.status} ${styles[asset.status]}`}>
-                    {statusLabel[asset.status]}
-                  </small>
-                </span>
-                <span className={styles.cardCopy}>
-                  <small>{asset.category}</small>
-                  <strong>{asset.name}</strong>
-                  <span>{asset.role}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <aside
-          className={styles.inspector}
-          style={{ "--asset-accent": selected.accent } as React.CSSProperties}
-        >
-          <p className={styles.eyebrow}>PRODUCTION RECORD</p>
-          <h2>{selected.name}</h2>
-          <p className={styles.role}>{selected.role}</p>
-
-          {selected.image && (
-            <div className={styles.inspectorImage}>
-              <img
-                src={selected.image}
-                alt={`${selected.name} production reference`}
-              />
-            </div>
-          )}
-
-          <p className={styles.description}>{selected.description}</p>
-
-          <dl className={styles.facts}>
-            <div>
-              <dt>SOURCE</dt>
-              <dd>{selected.source}</dd>
-            </div>
-            <div>
-              <dt>GAME RUNTIME</dt>
-              <dd>{selected.runtime}</dd>
-            </div>
-            <div>
-              <dt>3D MODEL</dt>
-              <dd>{selected.model}</dd>
-            </div>
-            {selected.target && (
-              <div>
-                <dt>MESH TARGET</dt>
-                <dd>{selected.target}</dd>
-              </div>
-            )}
-            {selected.textures && (
-              <div>
-                <dt>TEXTURES</dt>
-                <dd>{selected.textures}</dd>
-              </div>
-            )}
-          </dl>
-
-          {selected.animations && (
-            <div className={styles.animationBlock}>
-              <small>REQUIRED ANIMATIONS</small>
-              <div>
-                {selected.animations.map((animation) => (
-                  <span key={animation}>{animation}</span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className={styles.nextAction}>
-            <small>NEXT PRODUCTION ACTION</small>
-            <p>{selected.next}</p>
-          </div>
-        </aside>
-      </div>
+          <p>Portable loot cards use the same colors visible in mission feedback.</p>
+        </div>
+        <div className={styles.lootGrid}>
+          {lootEntries.map((loot) => <LootCard key={loot.id} loot={loot} />)}
+        </div>
+      </section>
 
       <footer className={styles.footer}>
-        <span>FREEMAN PROTOCOL · IAN GOH</span>
-        <span>CONCEPT ≠ MODEL ≠ RUNTIME</span>
+        <span>FREEMAN PROTOCOL · SIGNALS UPDATE IN REAL TIME</span>
+        <span>CYAN / AMBER / VIOLET FIELD PALETTE</span>
       </footer>
     </main>
   );

@@ -8239,6 +8239,9 @@ export default function FreemanProtocol() {
 
       {mode === "intro" && (
         <section className="intro-screen">
+          <div className="intro-network" aria-hidden="true">
+            <i /><i /><i /><i /><i /><i /><i />
+          </div>
           <div className="intro-copy">
             <span className="eyebrow">ISOMETRIC CYBER DEFENSE ACTION RPG</span>
             <div className="intro-mark">
