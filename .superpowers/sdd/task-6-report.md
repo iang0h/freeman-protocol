@@ -41,6 +41,28 @@
   `audio/mpeg`.
 - `git diff --check`: passed.
 
+## V3 renderer-parity remediation (2026-07-29)
+
+- Canvas boss telegraphs and jammer fields now trace projected polygon rings
+  from world-space circle samples. This preserves the arena's camera
+  y-compression and keeps visual warnings/evasion areas aligned with WebGL;
+  the old single projected-radius `context.arc` path was removed.
+- Skill HUD state now distinguishes `READY`, `DISABLED`, `REPAIR`, `RETREAT`,
+  and `OFFLINE`. Availability is derived from the same live agent action state,
+  while skill validation continues to pass each agent's `disabledLeftMs` into
+  `canUseSkill`.
+- Added source contracts covering projected Canvas rings and every unavailable
+  skill label, alongside the existing behavior and parity suite.
+
+### V3 verification
+
+- Bundled Node suite: 150 passed, 0 failed.
+- TypeScript `tsc --noEmit --incremental false`: passed.
+- ESLint for the repository, excluding generated output: passed.
+- Production `vinext build`: passed; routes `/` and `/asset-catalog` emitted.
+- `scripts/validate-artifact.sh`: passed.
+- `git diff --check`: passed.
+
 ## Environment and deployment note
 
 The requested `pnpm exec` wrapper attempted the workspace's guarded install and

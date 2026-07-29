@@ -127,6 +127,7 @@ type AgentSkillId =
   | "mark-execution"
   | "armor-break-burst"
   | "repair-barrier";
+type AgentSkillAvailability = "ready" | "disabled" | "repair" | "retreat" | "offline";
 type SquadCommand = "auto" | "follow" | "defend" | "focus";
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type UpgradeId =
@@ -232,6 +233,7 @@ type AgentSkillHud = {
   cooldownMs: number;
   cooldownLeftMs: number;
   available: boolean;
+  status: AgentSkillAvailability;
 };
 
 type FirstWaveCheckpoint = {
@@ -685,11 +687,20 @@ const EMPTY_EVOLUTIONS: Evolutions = {
   kairos: null, kira: null, forge: null, covenant: null,
 };
 const EMPTY_COMPONENT_UPGRADE_RANKS: ComponentUpgradeRanks = {};
+const getAgentSkillAvailability = (
+  agent: Pick<AgentRuntime, "hp" | "disabledLeft" | "repairDecision"> | null,
+): AgentSkillAvailability => {
+  if (!agent) return "offline";
+  if (agent.disabledLeft > 0 || agent.hp <= 0) return "disabled";
+  if (agent.repairDecision === "repair") return "repair";
+  if (agent.repairDecision === "retreat") return "retreat";
+  return "ready";
+};
 const createInitialSkillHud = (): Record<EvolutionAgentId, AgentSkillHud> => ({
-  kairos: { ...AGENT_SKILLS.kairos, cooldownLeftMs: 0, available: false },
-  kira: { ...AGENT_SKILLS.kira, cooldownLeftMs: 0, available: false },
-  forge: { ...AGENT_SKILLS.forge, cooldownLeftMs: 0, available: false },
-  covenant: { ...AGENT_SKILLS.covenant, cooldownLeftMs: 0, available: false },
+  kairos: { ...AGENT_SKILLS.kairos, cooldownLeftMs: 0, available: false, status: "offline" },
+  kira: { ...AGENT_SKILLS.kira, cooldownLeftMs: 0, available: false, status: "offline" },
+  forge: { ...AGENT_SKILLS.forge, cooldownLeftMs: 0, available: false, status: "offline" },
+  covenant: { ...AGENT_SKILLS.covenant, cooldownLeftMs: 0, available: false, status: "offline" },
 });
 const getArmorBonuses = (armorId: PlayerArmorId | null): ArmorBonuses =>
   armorId ? PLAYER_ARMORS[armorId].bonuses : {};
@@ -6005,7 +6016,8 @@ class FreemanEngine {
     for (const id of Object.keys(skills) as EvolutionAgentId[]) {
       const agent = this.agents.find((candidate) => candidate.id === id);
       skills[id].cooldownLeftMs = agent?.skillCooldownLeftMs ?? 0;
-      skills[id].available = Boolean(agent && getAgentActionState(agent).canAct);
+      skills[id].status = getAgentSkillAvailability(agent ?? null);
+      skills[id].available = skills[id].status === "ready";
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
     this.callbacks.onHud({
@@ -10093,6 +10105,27 @@ class FreemanCanvasEngine implements GameController {
     );
   }
 
+  private traceProjectedRing(
+    x: number,
+    z: number,
+    radius: number,
+    segments = 48,
+  ) {
+    const points = Array.from({ length: segments }, (_, index) => {
+      const angle = (index / segments) * Math.PI * 2;
+      return this.project(
+        x + Math.cos(angle) * radius,
+        z + Math.sin(angle) * radius,
+        0.03,
+      );
+    });
+    points.forEach((point, index) => {
+      if (index === 0) this.context.moveTo(point.x, point.y);
+      else this.context.lineTo(point.x, point.y);
+    });
+    this.context.closePath();
+  }
+
   private drawEnemy(enemy: FlatEnemy) {
     const context = this.context;
     const bossState = enemy.bossState;
@@ -10100,13 +10133,6 @@ class FreemanCanvasEngine implements GameController {
       const targetX = bossState.pendingTargetX;
       const targetZ = bossState.pendingTargetZ;
       if (targetX !== null && targetZ !== null) {
-        const center = this.project(targetX, targetZ, 0.03);
-        const edge = this.project(
-          targetX + bossState.attackRadius,
-          targetZ,
-          0.03,
-        );
-        const radius = Math.hypot(edge.x - center.x, edge.y - center.y);
         const progress =
           bossState.telegraphLeftMs / bossState.telegraphMs;
         context.save();
@@ -10115,7 +10141,7 @@ class FreemanCanvasEngine implements GameController {
         context.lineWidth = 2 + (1 - progress) * 2;
         context.setLineDash([7, 5]);
         context.beginPath();
-        context.arc(center.x, center.y, radius, 0, Math.PI * 2);
+        this.traceProjectedRing(targetX, targetZ, bossState.attackRadius);
         context.fill();
         context.stroke();
         context.restore();
@@ -10123,20 +10149,12 @@ class FreemanCanvasEngine implements GameController {
     }
     if (enemy.resistanceFlags.includes("jammer")) {
       const jammerZoneName = "enemy-jammer-zone";
-      const center = this.project(enemy.x, enemy.z);
-      const edge = this.project(enemy.x + JAMMER_ZONE_RADIUS, enemy.z);
       context.save();
       context.strokeStyle = "rgba(232,107,100,.28)";
       context.lineWidth = 2;
       context.setLineDash([5, 7]);
       context.beginPath();
-      context.arc(
-        center.x,
-        center.y,
-        Math.hypot(edge.x - center.x, edge.y - center.y),
-        0,
-        Math.PI * 2,
-      );
+      this.traceProjectedRing(enemy.x, enemy.z, JAMMER_ZONE_RADIUS);
       context.stroke();
       context.restore();
       void jammerZoneName;
@@ -10382,7 +10400,8 @@ class FreemanCanvasEngine implements GameController {
     for (const id of Object.keys(skills) as EvolutionAgentId[]) {
       const agent = this.agents.find((candidate) => candidate.id === id);
       skills[id].cooldownLeftMs = agent?.skillCooldownLeftMs ?? 0;
-      skills[id].available = Boolean(agent && getAgentActionState(agent).canAct);
+      skills[id].status = getAgentSkillAvailability(agent ?? null);
+      skills[id].available = skills[id].status === "ready";
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
     this.callbacks.onHud({
@@ -11096,9 +11115,15 @@ export default function FreemanProtocol() {
                   <span>
                     {skill.cooldownLeftMs > 0
                       ? `${Math.ceil(skill.cooldownLeftMs / 1_000)}S`
-                      : hud.agents[id]
-                        ? "READY"
-                        : "OFFLINE"}
+                      : skill.status === "disabled"
+                        ? "DISABLED"
+                        : skill.status === "repair"
+                          ? "REPAIR"
+                          : skill.status === "retreat"
+                            ? "RETREAT"
+                            : skill.status === "ready"
+                              ? "READY"
+                              : "OFFLINE"}
                   </span>
                 </button>
               );

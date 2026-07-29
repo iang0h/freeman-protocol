@@ -408,6 +408,11 @@ test("boss telegraphs stay fixed and resolve strict kind-aware area damage", () 
     canvasGame,
     /bossState\.pendingTargetX[\s\S]*?bossState\.pendingTargetZ/,
   );
+  assert.match(canvasGame, /private traceProjectedRing\([\s\S]*?this\.project\([\s\S]*?Math\.cos\([\s\S]*?Math\.sin/);
+  const canvasEnemyDrawing = canvasGame.slice(canvasGame.indexOf("private drawEnemy("));
+  assert.doesNotMatch(canvasEnemyDrawing, /context\.arc\(center\.x, center\.y/);
+  assert.match(canvasEnemyDrawing, /this\.traceProjectedRing\(targetX, targetZ, bossState\.attackRadius\)/);
+  assert.match(canvasEnemyDrawing, /this\.traceProjectedRing\(enemy\.x, enemy\.z, JAMMER_ZONE_RADIUS\)/);
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /getPendingBossTarget\(result\.boss, bossTargets\)/);
     assert.match(
@@ -419,6 +424,15 @@ test("boss telegraphs stay fixed and resolve strict kind-aware area damage", () 
       /bossX: enemy\.(?:group\.position\.)?x[\s\S]*?bossZ: enemy\.(?:group\.position\.)?z/,
     );
   }
+});
+
+test("skill HUD distinguishes unavailable agent states", () => {
+  assert.match(game, /type AgentSkillAvailability = "ready" \| "disabled" \| "repair" \| "retreat" \| "offline"/);
+  assert.match(game, /status: AgentSkillAvailability/);
+  assert.match(game, /disabledLeftMs: agent\.disabledLeft \* 1_000/);
+  assert.match(game, /skill\.status === "disabled"\s*\?\s*"DISABLED"/);
+  assert.match(game, /skill\.status === "repair"\s*\?\s*"REPAIR"/);
+  assert.match(game, /skill\.status === "retreat"\s*\?\s*"RETREAT"/);
 });
 
 test("both renderers emit pooled visual feedback when a temporary sub-agent spawns", () => {
