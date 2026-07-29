@@ -193,6 +193,65 @@ const terrainSignals: ProgressionEntry[] = [
   { id: "split", name: "Split Breach", signal: "TWO VECTORS", tone: "red", detail: "A forked intrusion spreads hostile routes across opposing approach angles." },
 ];
 
+const disciplineEntries: ProgressionEntry[] = [
+  {
+    id: "emp-discipline",
+    name: "EMP Discipline",
+    signal: "CHARGE · PULSE · RECOVER",
+    tone: "violet",
+    detail: "Build the visible EMP charge through combat, then disrupt the arena with a full pulse before the next cooldown cycle.",
+  },
+  {
+    id: "warband-slots",
+    name: "Eight Warband Slots",
+    signal: "01–08 · PERSISTENT",
+    tone: "cyan",
+    detail: "Recruit Kairos through Nova in order. Components and Shards recovered from boss caches fund the final four persistent slots.",
+  },
+  {
+    id: "repair-bay",
+    name: "Repair Bay",
+    signal: "AGENT RETREAT ROUTE",
+    tone: "cyan",
+    detail: "Damaged agents withdraw to the separate bay, recover when it is functioning, and return to their autonomous role. The Core remains protect-only.",
+  },
+  {
+    id: "field-kits",
+    name: "Field Kits",
+    signal: "REPAIR SUPPLIES",
+    tone: "amber",
+    detail: "Spend repair packs on vulnerable agents away from the bay, or Components on damaged sentries. Neither action restores the Core.",
+  },
+  {
+    id: "temporary-children",
+    name: "Temporary Children",
+    signal: "4 PER PARENT · 10–20S",
+    tone: "violet",
+    detail: "Autonomous agents can deploy up to four material-funded children. Their lifetime bars show the 10, 15, or 20 second support window.",
+  },
+  {
+    id: "skill-portraits",
+    name: "Skill Portraits",
+    signal: "4 ROLE SKILLS · COOLDOWN RINGS",
+    tone: "cyan",
+    detail: "Portrait controls show each recruited specialist’s ready state: slow, mark, armor break, or repair and barrier support.",
+  },
+  {
+    id: "boss-telegraphs",
+    name: "Boss Telegraphs",
+    signal: "WAVE 3+ · ONE ACTIVE",
+    tone: "red",
+    detail: "Armored warbosses announce a targeted strike before it lands. Break armor, move out of the telegraph, and contain the reinforcements.",
+  },
+  {
+    id: "rare-loot",
+    name: "Rare Loot",
+    signal: "BOSS CACHE · COMPONENTS · SHARDS",
+    tone: "amber",
+    detail: "Pooled enemy and loot cleanup keeps recovery stable between waves; pending boss drops are credited before the arena resets.",
+  },
+];
+
 function SignalBadge({ label, tone }: { label: string; tone: SignalTone }) {
   return (
     <span className={`${styles.signalBadge} ${styles[`tone${tone}`]}`}>
@@ -412,6 +471,19 @@ export default function AssetCatalog() {
         </div>
         <div className={styles.progressionGrid}>
           {terrainSignals.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
+        </div>
+      </section>
+
+      <section className={`${styles.section} ${styles.disciplineSection}`} aria-labelledby="warband-discipline-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>PLAYER SYSTEMS</p>
+            <h2 id="warband-discipline-title">Warband Discipline</h2>
+          </div>
+          <p>Every live mission system is cataloged here with the same status language used by the HUD.</p>
+        </div>
+        <div className={styles.disciplineGrid}>
+          {disciplineEntries.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
         </div>
       </section>
 

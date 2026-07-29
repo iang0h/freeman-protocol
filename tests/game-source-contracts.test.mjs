@@ -6,6 +6,10 @@ const game = await readFile(
   new URL("../app/FreemanProtocol.tsx", import.meta.url),
   "utf8",
 );
+const catalog = await readFile(
+  new URL("../app/asset-catalog/AssetCatalog.tsx", import.meta.url),
+  "utf8",
+);
 const audioManager = await readFile(
   new URL("../app/game/AudioManager.ts", import.meta.url),
   "utf8",
@@ -516,4 +520,34 @@ test("persists completion and offers a first-wave retry", () => {
   assert.match(game, /freeman-tutorial-complete/);
   assert.match(game, /RETRY WAVE/);
   assert.match(game, /engineRef\.current\?\.retryWave\(\)/);
+});
+
+test("documents the complete warband and EMP discipline catalog", () => {
+  for (const label of [
+    "EMP Discipline",
+    "Eight Warband Slots",
+    "Repair Bay",
+    "Field Kits",
+    "Temporary Children",
+    "Skill Portraits",
+    "Boss Telegraphs",
+    "Rare Loot",
+  ]) {
+    assert.match(catalog, new RegExp(label));
+  }
+});
+
+test("the player-facing HUD preserves EMP, Core, roster, touch, and pooled-cleanup contracts", () => {
+  assert.match(game, /EMP CHARGING/);
+  assert.match(game, /CORE HEALTH · PROTECT-ONLY/);
+  assert.match(game, /WARBAND <b>\{hud\.warbandCount\}\/\{hud\.maxWarband\}<\/b>/);
+  assert.match(game, /className="skill-actions"/);
+  assert.match(game, /className="repair-field-kit"/);
+
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private clearLootPickups\(\)/);
+    assert.match(engine, /private clearDynamic\(\)[\s\S]*?this\.enemies\.length = 0;/);
+  }
+  assert.match(webglGame, /private readonly lootPool = new BoundedPool<THREE\.Group>\(48\)/);
+  assert.match(webglGame, /this\.lootPool\.release\(/);
 });

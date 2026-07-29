@@ -45,6 +45,15 @@ test("keeps the repair field kit as a large touch-safe action", () => {
   );
 });
 
+test("keeps EMP, agent skills, and repair actions reachable on touch layouts", () => {
+  assert.match(game, /aria-label="EMP pulse"/);
+  assert.match(game, /className="skill-actions"/);
+  assert.match(game, /aria-label="Agent skill controls"/);
+  assert.match(game, /className="repair-field-kit"/);
+  assert.match(styles, /\.skill-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, 42px\)/);
+  assert.match(styles, /\.repair-field-kit\s*\{[\s\S]*?bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 76px\)/);
+});
+
 test("keeps the guided tutorial clear of mobile combat controls", () => {
   assert.match(game, /tutorial-card/);
   assert.match(game, /SKIP TUTORIAL/);

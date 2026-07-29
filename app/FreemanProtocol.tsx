@@ -10609,7 +10609,7 @@ export default function FreemanProtocol() {
               <i style={{ width: `${clamp01(hud.hp / hud.maxHp) * 100}%` }} />
             </div>
             <div className="vital-row core-row">
-              <span>CORE HEALTH</span>
+              <span>CORE HEALTH · PROTECT-ONLY</span>
               <strong>
                 {hud.core}
                 <small>/{hud.maxCore}</small>
@@ -10778,7 +10778,7 @@ export default function FreemanProtocol() {
               <span>
                 <small>YOUR WARBAND</small>
                 <strong>
-                  WARband <b>{hud.warbandCount}/{hud.maxWarband}</b>
+                  WARBAND <b>{hud.warbandCount}/{hud.maxWarband}</b>
                 </strong>
               </span>
               <span className="desktop-only">CLICK A CARD OR PRESS 1–4</span>
@@ -10960,7 +10960,11 @@ export default function FreemanProtocol() {
               aria-label="EMP pulse"
             >
               <i style={{ "--charge": hud.ultimate } as React.CSSProperties} />
-              <small>R</small>
+              <small>
+                {hud.ultimate >= 1
+                  ? "R / READY"
+                  : `R / EMP CHARGING ${Math.round(hud.ultimate * 100)}%`}
+              </small>
               <strong>EMP PULSE</strong>
             </button>
           </div>
