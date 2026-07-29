@@ -189,16 +189,13 @@ test("tutorial events are phase-gated instead of queued", () => {
   assert.match(webglGame, /this\.tutorialResolved = true;/);
 });
 
-test("both engines keep 79 Compute unchanged when KIRA is attempted during the KAIROS step", () => {
+test("both engines gate tutorial recruitment without blocking optional squad commands", () => {
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
       engine,
       /recruit\(id: AgentId\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, `recruit-\$\{id\}`\)\) return;\s*if \(this\.mode !== "playing"\) return;[\s\S]*?this\.addAgent/,
     );
-    assert.match(
-      engine,
-      /setSquadCommand\(command: SquadCommand\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, "guard-core"\) && command === "defend"\) return;/,
-    );
+    assert.doesNotMatch(engine, /canPerformTutorialAction\(this\.tutorialStep, "guard-core"\)/);
   }
 });
 
@@ -209,6 +206,59 @@ test("both engines consume the shared observe breach and clear replay placement"
     webglGame,
     /retryWave\(\) \{[\s\S]*?this\.resetInput\(\);[\s\S]*?this\.cancelDefensePlacement\(false\);/,
   );
+});
+
+test("both engines drive recruited agents from shared autonomous role intents", () => {
+  assert.match(game, /decideAgentIntent/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private autonomyState/);
+    assert.match(engine, /private temporarySubAgents/);
+    assert.match(
+      engine,
+      /private updateAgents\([\s\S]*?decideAgentIntent\([\s\S]*?intent === "assault"[\s\S]*?intent === "support"[\s\S]*?intent === "defend"/,
+    );
+  }
+});
+
+test("temporary autonomous sub-agents are bounded, rendered, expired, and reset", () => {
+  assert.match(game, /const MAX_TEMPORARY_SUB_AGENTS_PER_WAVE = 3/);
+  assert.match(game, /spawnTemporarySubAgent/);
+  assert.match(game, /tickSubAgents/);
+  assert.match(game, /clearSubAgents/);
+  assert.match(webglGame, /temporary-sub-agent/);
+  assert.match(canvasGame, /private drawTemporarySubAgent/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /subAgentsSpawnedThisWave/);
+    assert.match(engine, /private clearTemporarySubAgents\(\)/);
+    assert.match(
+      engine,
+      /private startNextWave\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
+    );
+    assert.match(
+      engine,
+      /retryWave\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
+    );
+    assert.match(
+      engine,
+      /private completeWave\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
+    );
+    assert.match(
+      engine,
+      /private defeat\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
+    );
+  }
+});
+
+test("recruitment advances directly to passive autonomous observation", () => {
+  assert.doesNotMatch(game, /ORDER: GUARD CORE/);
+  assert.match(game, /AUTONOMOUS ROLE ACTIVE/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.doesNotMatch(engine, /emitTutorialEvent\("guard-selected"\)/);
+    assert.match(
+      engine,
+      /this\.emitTutorialEvent\("kairos-recruited"\)/,
+    );
+  }
 });
 
 test("game persistence always goes through safe in-memory-backed helpers", () => {

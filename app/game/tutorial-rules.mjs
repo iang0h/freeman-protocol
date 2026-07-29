@@ -2,7 +2,6 @@ export const TUTORIAL_STEPS = Object.freeze([
   "move",
   "shoot",
   "recruit",
-  "command",
   "observe",
   "complete",
   "skipped",
@@ -11,15 +10,10 @@ export const TUTORIAL_STEPS = Object.freeze([
 const TRANSITIONS = Object.freeze({
   move: { "movement-complete": "shoot" },
   shoot: { "training-cleared": "recruit" },
-  recruit: { "kairos-recruited": "command" },
-  command: { "guard-selected": "observe" },
+  recruit: { "kairos-recruited": "observe" },
   observe: { "breach-cleared": "complete" },
   complete: {},
   skipped: {},
-});
-
-const TUTORIAL_ACTION_STEPS = Object.freeze({
-  "guard-core": Object.freeze(["command", "observe"]),
 });
 
 export const FIRST_WAVE = Object.freeze({
@@ -50,7 +44,7 @@ export function canPerformTutorialAction(step, action) {
   if (action.startsWith("recruit-")) {
     return step === "recruit" && action === "recruit-kairos";
   }
-  return TUTORIAL_ACTION_STEPS[action]?.includes(step) ?? false;
+  return true;
 }
 
 export function isTutorialProtected(step) {

@@ -193,7 +193,6 @@ test("tutorial advances only from the expected event", () => {
     "move",
     "shoot",
     "recruit",
-    "command",
     "observe",
     "complete",
     "skipped",
@@ -201,8 +200,7 @@ test("tutorial advances only from the expected event", () => {
   assert.equal(advanceTutorial("move", "enemy-defeated"), "move");
   assert.equal(advanceTutorial("move", "movement-complete"), "shoot");
   assert.equal(advanceTutorial("shoot", "training-cleared"), "recruit");
-  assert.equal(advanceTutorial("recruit", "kairos-recruited"), "command");
-  assert.equal(advanceTutorial("command", "guard-selected"), "observe");
+  assert.equal(advanceTutorial("recruit", "kairos-recruited"), "observe");
   assert.equal(advanceTutorial("observe", "breach-cleared"), "complete");
   assert.equal(advanceTutorial("complete", "movement-complete"), "complete");
 });
@@ -217,17 +215,15 @@ test("tutorial milestones are phase-gated and never replayed later", () => {
   step = advanceTutorial(step, "training-cleared");
   assert.equal(step, "recruit");
   assert.equal(advanceTutorial(step, "guard-selected"), "recruit");
-  assert.equal(advanceTutorial(step, "kairos-recruited"), "command");
-  assert.equal(advanceTutorial("command", "guard-selected"), "observe");
+  assert.equal(advanceTutorial(step, "kairos-recruited"), "observe");
 });
 
-test("tutorial action gates only allow the required recruitment and let GUARD CORE be restored during observe", () => {
+test("tutorial gates recruitment but never requires a squad-command click", () => {
   assert.equal(canPerformTutorialAction("move", "recruit-kairos"), false);
   assert.equal(canPerformTutorialAction("recruit", "recruit-kairos"), true);
   assert.equal(canPerformTutorialAction("recruit", "recruit-other"), false);
   assert.equal(canPerformTutorialAction("observe", "recruit-kairos"), false);
-  assert.equal(canPerformTutorialAction("shoot", "guard-core"), false);
-  assert.equal(canPerformTutorialAction("command", "guard-core"), true);
+  assert.equal(canPerformTutorialAction("shoot", "guard-core"), true);
   assert.equal(canPerformTutorialAction("observe", "guard-core"), true);
   assert.equal(canPerformTutorialAction(null, "recruit-kairos"), true);
 });
