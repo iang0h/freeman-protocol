@@ -90,6 +90,75 @@ export const UPGRADE_CAPS = Object.freeze({
   command: 2,
 });
 
+const UPGRADE_CATEGORIES = Object.freeze({
+  player: Object.freeze(["overclock", "bastion"]),
+  agent: Object.freeze(["bandwidth", "command"]),
+  defense: Object.freeze(["voltage", "repair"]),
+});
+
+export const PLAYER_ARMORS = Object.freeze({
+  vanguard: Object.freeze({
+    id: "vanguard",
+    name: "VANGUARD PLATING",
+    cost: 3,
+    maxRank: 1,
+    bonuses: Object.freeze({ maxHealth: 35, healingMultiplier: 1.15 }),
+  }),
+  striker: Object.freeze({
+    id: "striker",
+    name: "STRIKER WEAVE",
+    cost: 3,
+    maxRank: 1,
+    bonuses: Object.freeze({ damageMultiplier: 1.2, cooldownMultiplier: 0.85 }),
+  }),
+  relay: Object.freeze({
+    id: "relay",
+    name: "RELAY HARNESS",
+    cost: 3,
+    maxRank: 1,
+    bonuses: Object.freeze({ empMultiplier: 1.4, healingMultiplier: 1.25 }),
+  }),
+});
+
+export const AGENT_COMPONENT_UPGRADES = Object.freeze({
+  kairos: Object.freeze([
+    Object.freeze({
+      id: "stasis-array",
+      name: "STASIS ARRAY",
+      cost: 2,
+      maxRank: 2,
+      bonuses: Object.freeze({ cooldownMultiplier: 0.88 }),
+    }),
+  ]),
+  kira: Object.freeze([
+    Object.freeze({
+      id: "hunter-core",
+      name: "HUNTER CORE",
+      cost: 3,
+      maxRank: 2,
+      bonuses: Object.freeze({ damageMultiplier: 1.22 }),
+    }),
+  ]),
+  forge: Object.freeze([
+    Object.freeze({
+      id: "breach-ammo",
+      name: "BREACH AMMO",
+      cost: 3,
+      maxRank: 2,
+      bonuses: Object.freeze({ damageMultiplier: 1.16, cooldownMultiplier: 0.9 }),
+    }),
+  ]),
+  covenant: Object.freeze([
+    Object.freeze({
+      id: "nanite-reserve",
+      name: "NANITE RESERVE",
+      cost: 2,
+      maxRank: 2,
+      bonuses: Object.freeze({ healingMultiplier: 1.3 }),
+    }),
+  ]),
+});
+
 export function purchaseEvolution(state, agentId, evolutionId) {
   if (!state.recruited[agentId]) {
     throw new Error(`${agentId} is not recruited`);
@@ -114,6 +183,44 @@ export function purchaseEvolution(state, agentId, evolutionId) {
   };
 }
 
+export function purchaseComponentUpgrade(state, target, upgradeId) {
+  const definition = getComponentUpgrade(target, upgradeId);
+  if (!definition) throw new Error(`Unknown component upgrade ${upgradeId}`);
+  if (target !== "player" && !state.recruited?.[target]) {
+    throw new Error(`${target} is not recruited`);
+  }
+  if (target === "player" && state.armorId && state.armorId !== upgradeId) {
+    throw new Error(`${state.armorId} armor already selected`);
+  }
+
+  const ranks = state.componentUpgradeRanks ?? {};
+  const rankKey = `${target}:${upgradeId}`;
+  const current = ranks[rankKey] ?? 0;
+  if (current >= definition.maxRank) {
+    throw new Error(`${upgradeId} is capped`);
+  }
+  if ((state.components ?? 0) < definition.cost) {
+    throw new Error(`Not enough Components for ${definition.name}`);
+  }
+
+  return {
+    ...state,
+    components: state.components - definition.cost,
+    armorId: target === "player" ? upgradeId : state.armorId ?? null,
+    componentUpgradeRanks: {
+      ...ranks,
+      [rankKey]: current + 1,
+    },
+  };
+}
+
+function getComponentUpgrade(target, upgradeId) {
+  if (target === "player") return PLAYER_ARMORS[upgradeId];
+  return AGENT_COMPONENT_UPGRADES[target]?.find(
+    (upgrade) => upgrade.id === upgradeId,
+  );
+}
+
 export function applyUpgradeStack(state, upgradeId) {
   if (!(upgradeId in UPGRADE_CAPS)) {
     throw new Error(`Unknown upgrade ${upgradeId}`);
@@ -133,13 +240,18 @@ export function applyUpgradeStack(state, upgradeId) {
 
 export function getUpgradeDraft(wave, stacks) {
   const offset = ((wave - 1) * 2) % UPGRADE_ORDER.length;
-  const draft = [];
-  for (let step = 0; step < UPGRADE_ORDER.length * 2; step += 1) {
-    const id = UPGRADE_ORDER[(offset + step) % UPGRADE_ORDER.length];
-    if (draft.includes(id)) continue;
-    if ((stacks[id] ?? 0) >= UPGRADE_CAPS[id]) continue;
-    draft.push(id);
-    if (draft.length === 3) break;
-  }
-  return draft.map((id) => ({ id, stacks: stacks[id] ?? 0 }));
+  return Object.entries(UPGRADE_CATEGORIES).flatMap(([category, ids]) => {
+    for (let step = 0; step < UPGRADE_ORDER.length; step += 1) {
+      const id = UPGRADE_ORDER[(offset + step) % UPGRADE_ORDER.length];
+      if (!ids.includes(id)) continue;
+      if ((stacks[id] ?? 0) >= UPGRADE_CAPS[id]) continue;
+      return [{ id, category, stacks: stacks[id] ?? 0 }];
+    }
+    const fallbackId = "repair";
+    return [{
+      id: fallbackId,
+      category,
+      stacks: stacks[fallbackId] ?? 0,
+    }];
+  });
 }

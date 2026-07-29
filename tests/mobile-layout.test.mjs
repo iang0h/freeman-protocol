@@ -59,3 +59,21 @@ test("reflows the tutorial above an expanded mobile AI squad", () => {
     /@media \(max-width: 820px\) and \(orientation: landscape\)[\s\S]*?\.tutorial-card--above-squad\s*\{\s*bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 230px\)/,
   );
 });
+
+test("keeps mobile draft labels and workshop bonuses readable", () => {
+  assert.match(
+    styles,
+    /\.protocol-screen:not\(\.evolution-screen\) \.protocol-grid em\s*\{\s*display:\s*block;/,
+  );
+  assert.match(
+    styles,
+    /\.evolution-screen \.progression-grid p\s*\{\s*display:\s*block;/,
+  );
+});
+
+test("starts the desktop evolution workshop at the top", () => {
+  assert.match(
+    styles,
+    /\.protocol-screen\.evolution-screen\s*\{\s*justify-content:\s*flex-start;/,
+  );
+});

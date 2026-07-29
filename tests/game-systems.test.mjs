@@ -12,9 +12,12 @@ import {
   selectAutoSentryPosition,
 } from "../app/game/sentry-placement.mjs";
 import {
+  AGENT_COMPONENT_UPGRADES,
   EVOLUTIONS,
+  PLAYER_ARMORS,
   applyUpgradeStack,
   getUpgradeDraft,
+  purchaseComponentUpgrade,
   purchaseEvolution,
 } from "../app/game/progression.mjs";
 import { takeNextTrack } from "../app/game/playlist.mjs";
@@ -40,8 +43,172 @@ import {
   decideAgentIntent,
   shouldImprovise,
   spawnTemporarySubAgent,
+  tickTemporarySubAgent,
   tickSubAgents,
 } from "../app/game/autonomy-rules.mjs";
+import {
+  applyTerrainRouteBias,
+  getEffectiveResistanceFlags,
+  getMaxEmpResistancePercent,
+  getPhisherDecoyOffsets,
+  getRootkitRebootUpdates,
+  getTerrainModifier,
+  getWaveModifiers,
+  resolveEmpDamage,
+} from "../app/game/encounter-rules.mjs";
+
+test("wave one preserves the unmodified encounter and EMP", () => {
+  const modifiers = getWaveModifiers(1);
+
+  assert.deepEqual(modifiers.resistance, {
+    shieldReduction: 0,
+    decoyReduction: 0,
+    armorReduction: 0,
+    jammerReduction: 0,
+  });
+  assert.deepEqual(modifiers.flagsByType, {
+    virus: [],
+    phisher: [],
+    trojan: [],
+    rootkit: [],
+  });
+  assert.equal(
+    resolveEmpDamage(
+      100,
+      { resistanceFlags: ["shield", "decoy", "armor", "jammer"] },
+      modifiers,
+    ),
+    100,
+  );
+  assert.equal(getTerrainModifier(1).id, "none");
+});
+
+test("later waves add bounded visible hacker counter-play", () => {
+  const waveTwo = getWaveModifiers(2);
+  const waveFour = getWaveModifiers(4);
+  const finalWave = getWaveModifiers(8);
+
+  assert.deepEqual(waveTwo.flagsByType.virus, ["shield"]);
+  assert.deepEqual(waveFour.flagsByType.phisher, ["decoy"]);
+  assert.deepEqual(waveFour.flagsByType.trojan, ["shield", "armor"]);
+  assert.deepEqual(finalWave.flagsByType.rootkit, ["shield", "jammer"]);
+  assert.ok(finalWave.resistance.shieldReduction <= 0.35);
+  assert.ok(finalWave.resistance.decoyReduction <= 0.7);
+  assert.ok(finalWave.resistance.armorReduction <= 0.45);
+  assert.ok(finalWave.resistance.jammerReduction <= 0.3);
+  assert.deepEqual(getWaveModifiers(99), finalWave);
+});
+
+test("EMP resolution composes only resistance flags visible on the target", () => {
+  const modifiers = getWaveModifiers(8);
+  const shielded = resolveEmpDamage(
+    100,
+    { resistanceFlags: ["shield"] },
+    modifiers,
+  );
+  const layered = resolveEmpDamage(
+    100,
+    { resistanceFlags: ["shield", "armor", "jammer"] },
+    modifiers,
+  );
+
+  assert.equal(shielded, 65);
+  assert.equal(layered, 25);
+  assert.equal(
+    resolveEmpDamage(100, { resistanceFlags: [] }, modifiers),
+    100,
+  );
+});
+
+test("HUD resistance reports the strongest combined hostile EMP reduction", () => {
+  assert.equal(getMaxEmpResistancePercent(getWaveModifiers(1)), 0);
+  assert.equal(getMaxEmpResistancePercent(getWaveModifiers(4)), 39);
+  assert.equal(getMaxEmpResistancePercent(getWaveModifiers(8)), 79);
+});
+
+test("terrain modifiers are deterministic, serializable, and cycle after wave one", () => {
+  const expected = [
+    "none",
+    "relay-storm",
+    "firewall-lanes",
+    "data-fog",
+    "split-breach",
+    "relay-storm",
+    "firewall-lanes",
+    "data-fog",
+  ];
+
+  assert.deepEqual(
+    expected.map((_, index) => getTerrainModifier(index + 1).id),
+    expected,
+  );
+  for (let wave = 1; wave <= 8; wave += 1) {
+    const first = getTerrainModifier(wave);
+    const repeated = getTerrainModifier(wave);
+    assert.deepEqual(first, repeated);
+    assert.doesNotThrow(() => JSON.stringify(first));
+    assert.ok(first.empMultiplier >= 0.75 && first.empMultiplier <= 1.15);
+    assert.ok(first.targetingRangeMultiplier >= 0.7);
+    assert.ok(Math.abs(first.routeBias) <= 0.35);
+  }
+});
+
+test("terrain route bias stays normalized for renderer parity", () => {
+  const direction = applyTerrainRouteBias(0.6, 0.8, 0.3);
+
+  assert.ok(Math.abs(Math.hypot(direction.x, direction.z) - 1) < 1e-12);
+  assert.deepEqual(direction, applyTerrainRouteBias(0.6, 0.8, 0.3));
+  assert.deepEqual(applyTerrainRouteBias(0, 0, 0.3), { x: 0, z: 0 });
+});
+
+test("Phisher decoys are deterministic and absent from wave one", () => {
+  assert.deepEqual(getPhisherDecoyOffsets(1, 7), []);
+  const offsets = getPhisherDecoyOffsets(3, 7);
+
+  assert.equal(offsets.length, 2);
+  assert.deepEqual(offsets, getPhisherDecoyOffsets(3, 7));
+  assert.notDeepEqual(offsets[0], offsets[1]);
+});
+
+test("jammer zones add EMP resistance to nearby threats only", () => {
+  const jammer = {
+    id: 1,
+    x: 0,
+    z: 0,
+    resistanceFlags: ["jammer"],
+  };
+
+  assert.deepEqual(
+    getEffectiveResistanceFlags(
+      { id: 2, x: 3, z: 0, resistanceFlags: ["shield"] },
+      [jammer],
+    ),
+    ["shield", "jammer"],
+  );
+  assert.deepEqual(
+    getEffectiveResistanceFlags(
+      { id: 3, x: 6, z: 0, resistanceFlags: ["shield"] },
+      [jammer],
+    ),
+    ["shield"],
+  );
+});
+
+test("Rootkits reboot nearby damaged or slowed threats deterministically", () => {
+  const source = {
+    id: 1,
+    x: 0,
+    z: 0,
+    resistanceFlags: ["jammer"],
+  };
+  const updates = getRootkitRebootUpdates(source, [
+    { id: 1, x: 0, z: 0, hp: 100, maxHp: 100, slow: 0 },
+    { id: 2, x: 3, z: 0, hp: 40, maxHp: 100, slow: 2.8 },
+    { id: 3, x: 6, z: 0, hp: 40, maxHp: 100, slow: 2.8 },
+  ]);
+
+  assert.deepEqual(updates, [{ id: 2, hp: 58, slow: 0 }]);
+});
 
 test("paces queued enemies without changing the remaining threat total", () => {
   assert.equal(getActiveEnemyLimit("webgl"), 36);
@@ -115,11 +282,13 @@ test("auto placement rejects blockers and returns null when covered", () => {
 test("an agent can buy exactly one evolution", () => {
   const state = {
     compute: 200,
+    components: 6,
     recruited: { kairos: true },
     evolutions: {},
   };
   const purchased = purchaseEvolution(state, "kairos", "cryo-mesh");
   assert.equal(purchased.compute, 130);
+  assert.equal(purchased.components, 6);
   assert.equal(purchased.evolutions.kairos, "cryo-mesh");
   assert.throws(
     () => purchaseEvolution(purchased, "kairos", "stasis-lock"),
@@ -172,6 +341,110 @@ test("permanent upgrades cap at two stacks and leave drafts", () => {
     "repair",
   );
   assert.equal(repair.stacks.repair, 9);
+});
+
+test("wave drafts offer one player, agent, and defense choice", () => {
+  assert.deepEqual(
+    getUpgradeDraft(1, {}).map((item) => item.category),
+    ["player", "agent", "defense"],
+  );
+});
+
+test("wave drafts keep every category selectable after category upgrades cap", () => {
+  const cappedStacks = {
+    overclock: 2,
+    bastion: 2,
+    bandwidth: 2,
+    command: 2,
+    voltage: 2,
+  };
+  const draft = getUpgradeDraft(6, cappedStacks);
+
+  assert.deepEqual(
+    draft.map((item) => item.category),
+    ["player", "agent", "defense"],
+  );
+  for (const choice of draft) {
+    assert.doesNotThrow(() =>
+      applyUpgradeStack({ stacks: cappedStacks }, choice.id),
+    );
+  }
+});
+
+test("armor profiles expose mutually exclusive concrete player bonuses", () => {
+  assert.deepEqual(Object.keys(PLAYER_ARMORS), ["vanguard", "striker", "relay"]);
+  assert.equal(PLAYER_ARMORS.vanguard.bonuses.maxHealth, 35);
+  assert.equal(PLAYER_ARMORS.striker.bonuses.damageMultiplier, 1.2);
+  assert.equal(PLAYER_ARMORS.relay.bonuses.empMultiplier, 1.4);
+  assert.equal(PLAYER_ARMORS.relay.bonuses.healingMultiplier, 1.25);
+});
+
+test("each agent has a component-funded identity upgrade", () => {
+  assert.equal(AGENT_COMPONENT_UPGRADES.kairos[0].id, "stasis-array");
+  assert.equal(AGENT_COMPONENT_UPGRADES.kira[0].id, "hunter-core");
+  assert.equal(AGENT_COMPONENT_UPGRADES.forge[0].id, "breach-ammo");
+  assert.equal(AGENT_COMPONENT_UPGRADES.covenant[0].id, "nanite-reserve");
+  for (const upgrades of Object.values(AGENT_COMPONENT_UPGRADES)) {
+    assert.ok(upgrades[0].cost > 0);
+    assert.ok(Object.keys(upgrades[0].bonuses).length > 0);
+  }
+});
+
+test("component purchases deduct inventory only after valid validation", () => {
+  const state = {
+    components: 3,
+    armorId: null,
+    recruited: { kairos: true },
+    componentUpgradeRanks: {},
+  };
+  const purchased = purchaseComponentUpgrade(state, "kairos", "stasis-array");
+  assert.equal(purchased.components, 1);
+  assert.equal(purchased.componentUpgradeRanks["kairos:stasis-array"], 1);
+  assert.equal(state.components, 3);
+  assert.throws(
+    () => purchaseComponentUpgrade(state, "kairos", "not-real"),
+    /Unknown component upgrade/,
+  );
+  assert.deepEqual(state, {
+    components: 3,
+    armorId: null,
+    recruited: { kairos: true },
+    componentUpgradeRanks: {},
+  });
+  assert.throws(
+    () =>
+      purchaseComponentUpgrade(
+        { ...state, components: 1 },
+        "kairos",
+        "stasis-array",
+      ),
+    /Not enough Components/,
+  );
+});
+
+test("component upgrades cap ranks and armor selection stays exclusive", () => {
+  const base = {
+    components: 10,
+    armorId: null,
+    recruited: { kairos: true },
+    componentUpgradeRanks: { "kairos:stasis-array": 1 },
+  };
+  const rankTwo = purchaseComponentUpgrade(base, "kairos", "stasis-array");
+  assert.equal(rankTwo.componentUpgradeRanks["kairos:stasis-array"], 2);
+  assert.throws(
+    () => purchaseComponentUpgrade(rankTwo, "kairos", "stasis-array"),
+    /capped/,
+  );
+  const armored = purchaseComponentUpgrade(
+    { ...base, componentUpgradeRanks: {} },
+    "player",
+    "vanguard",
+  );
+  assert.equal(armored.armorId, "vanguard");
+  assert.throws(
+    () => purchaseComponentUpgrade(armored, "player", "relay"),
+    /already selected/,
+  );
 });
 
 test("shuffle bag plays every track and avoids boundary repeats", () => {
@@ -287,11 +560,40 @@ test("loot drops are deterministic and respect each enemy drop chance", () => {
   assert.deepEqual(first, repeated);
   assert.deepEqual(first, {
     id: "loot-trojan-component-250-750",
-    type: LOOT_TYPES.component,
+    type: LOOT_TYPES.component.id,
     x: -0.5,
     y: 0.5,
     value: 2,
   });
+});
+
+test("common loot types publish readable presentation metadata", () => {
+  for (const loot of [
+    LOOT_TYPES.repair,
+    LOOT_TYPES.component,
+  ]) {
+    assert.equal(typeof loot.id, "string");
+    assert.ok(loot.label.length >= 4);
+    assert.match(loot.color, /^#[0-9a-f]{6}$/i);
+    assert.ok(loot.dropChance > 0 && loot.dropChance <= 1);
+    assert.ok(loot.value > 0);
+    assert.equal(loot.eliteOnly, false);
+  }
+});
+
+test("elite-only loot is never selected from common enemies", () => {
+  assert.equal(LOOT_TYPES.upgradeShard.eliteOnly, true);
+  const commonDrop = rollLootDrop(
+    "trojan",
+    sequence([0.1, 0.99, 0.25, 0.75]),
+  );
+  assert.notEqual(commonDrop?.type, LOOT_TYPES.upgradeShard.id);
+
+  const eliteDrop = rollLootDrop(
+    "rootkit",
+    sequence([0.1, 0.99, 0.25, 0.75]),
+  );
+  assert.equal(eliteDrop?.type, LOOT_TYPES.upgradeShard.id);
 });
 
 test("loot requires player overlap before it can be collected", () => {
@@ -310,7 +612,7 @@ test("repair loot clamps player and core health at their maxima", () => {
     upgradeShards: 0,
   };
   assert.deepEqual(
-    applyLootPickup(state, { type: LOOT_TYPES.repair, value: 25 }),
+    applyLootPickup(state, { type: LOOT_TYPES.repair.id, value: 25 }),
     { ...state, health: 100, coreHealth: 180 },
   );
   assert.deepEqual(state, {
@@ -333,7 +635,7 @@ test("component loot increments the component inventory", () => {
     upgradeShards: 0,
   };
   const result = applyLootPickup(state, {
-    type: LOOT_TYPES.component,
+    type: LOOT_TYPES.component.id,
     value: 2,
   });
   assert.equal(result.components, 5);
@@ -489,6 +791,106 @@ test("temporary sub-agents expire and are cleared between waves", () => {
   ]);
   assert.deepEqual(clearSubAgents(subAgents), []);
   assert.equal(subAgents.length, 2);
+});
+
+test("assault sub-agents deterministically damage nearby threats", () => {
+  const result = tickTemporarySubAgent(
+    {
+      id: "subagent-kira-1",
+      parentId: "kira",
+      role: "assault",
+      remainingMs: 5_000,
+      maxLifetimeMs: 5_000,
+      cooldownLeftMs: 0,
+      canSpawn: false,
+    },
+    { attackTargetInRange: true },
+    100,
+  );
+
+  assert.deepEqual(result.action, { type: "attack", damage: 8 });
+  assert.equal(result.state.remainingMs, 4_900);
+  assert.equal(result.state.cooldownLeftMs, 1_400);
+  assert.equal(result.state.healthRatio, 0.98);
+  assert.equal(result.expired, false);
+});
+
+test("support sub-agents recover the player and Core while buffing allies", () => {
+  const result = tickTemporarySubAgent(
+    {
+      role: "support",
+      remainingMs: 4_000,
+      maxLifetimeMs: 5_000,
+      cooldownLeftMs: 0,
+      canSpawn: false,
+    },
+    { playerNeedsRepair: true, coreNeedsRepair: true },
+    0,
+  );
+
+  assert.deepEqual(result.action, {
+    type: "repair",
+    playerHealing: 2,
+    coreHealing: 2,
+    allyCooldownReductionMs: 250,
+  });
+});
+
+test("defense sub-agents intercept threats near the Core", () => {
+  const result = tickTemporarySubAgent(
+    {
+      role: "defend",
+      remainingMs: 3_000,
+      maxLifetimeMs: 5_000,
+      cooldownLeftMs: 0,
+      canSpawn: false,
+    },
+    { coreThreatInRange: true },
+    0,
+  );
+
+  assert.deepEqual(result.action, {
+    type: "guard",
+    damage: 6,
+    slowMs: 350,
+  });
+});
+
+test("temporary sub-agent ticks expose expiry and health cue state", () => {
+  const result = tickTemporarySubAgent(
+    {
+      role: "assault",
+      remainingMs: 250,
+      maxLifetimeMs: 1_000,
+      cooldownLeftMs: 800,
+      canSpawn: false,
+    },
+    { attackTargetInRange: true },
+    250,
+  );
+
+  assert.deepEqual(result.action, { type: "idle" });
+  assert.equal(result.state.remainingMs, 0);
+  assert.equal(result.state.cooldownLeftMs, 550);
+  assert.equal(result.state.healthRatio, 0);
+  assert.equal(result.expired, true);
+});
+
+test("temporary sub-agent cooldowns prevent repeated role actions", () => {
+  const result = tickTemporarySubAgent(
+    {
+      role: "assault",
+      remainingMs: 5_000,
+      maxLifetimeMs: 5_000,
+      cooldownLeftMs: 900,
+      canSpawn: false,
+    },
+    { attackTargetInRange: true },
+    100,
+  );
+
+  assert.deepEqual(result.action, { type: "idle" });
+  assert.equal(result.state.cooldownLeftMs, 800);
 });
 
 function sequence(values) {

@@ -14,6 +14,10 @@ const storage = await readFile(
   new URL("../app/game/storage.mjs", import.meta.url),
   "utf8",
 ).catch(() => "");
+const threeResources = await readFile(
+  new URL("../app/game/three-resources.ts", import.meta.url),
+  "utf8",
+);
 const webglGame = game.slice(
   game.indexOf("class FreemanEngine"),
   game.indexOf("type FlatEnemy"),
@@ -47,7 +51,7 @@ test("dynamic WebGL objects use centralized cleanup and pooling", () => {
 test("WebGL targeting uses a spatial grid", () => {
   assert.match(game, /new SpatialGrid<EnemyRuntime>/);
   assert.match(game, /this\.enemyGrid\.rebuild\(this\.enemies\)/);
-  assert.match(game, /this\.enemyGrid\.query\(position, maxDistance\)/);
+  assert.match(game, /this\.enemyGrid\.query\(position, targetingRange\)/);
 });
 
 test("both renderers pace spawns and include queued threats in the HUD", () => {
@@ -80,6 +84,21 @@ test("loot collection is overlap-gated in both renderers", () => {
     );
     assert.match(engine, /private clearLootPickups\(\)/);
   }
+});
+
+test("loot presentation is shared, pooled, touch-safe, and announced", () => {
+  assert.match(game, /getLootPresentation/);
+  assert.match(webglGame, /new BoundedPool<THREE\.Group>/);
+  assert.match(
+    webglGame,
+    /this\.lootPool\.release\(pickup\.mesh, \(mesh\) => resetLootPickupMesh/,
+  );
+  assert.match(webglGame, /mesh\.position\.y = 0\.62 \+ Math\.sin/);
+  assert.match(canvasGame, /getLootPresentation\(pickup\.type\)/);
+  assert.match(canvasGame, /presentation\.worldLabel/);
+  assert.match(game, /radius: TOUCH_SAFE_PICKUP_RADIUS/);
+  assert.match(game, /aria-live="polite"/);
+  assert.match(game, /presentation\.toastText/);
 });
 
 test("both renderers clear uncollected loot before every wave transition", () => {
@@ -118,6 +137,37 @@ test("player upgrades are capped and recruited agents can evolve", () => {
   ]) {
     assert.match(game, new RegExp(id));
   }
+});
+
+test("both engines charge evolution Compute without changing component inventory", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const evolveStart = engine.indexOf("evolveAgent(");
+    const evolveEnd = engine.indexOf("purchaseComponentUpgrade", evolveStart + 20);
+    const evolve = engine.slice(evolveStart, evolveEnd > evolveStart ? evolveEnd : evolveStart + 900);
+    assert.match(evolve, /compute: this\.data/);
+    assert.doesNotMatch(evolve, /compute: this\.data \+ this\.loot\.components/);
+    assert.doesNotMatch(evolve, /this\.loot\.components\s*=/);
+    assert.doesNotMatch(
+      engine,
+      /pickup\.type === "upgrade-shard"\) this\.data \+=/,
+    );
+  }
+  assert.match(game, /SHARD INVENTORY/);
+});
+
+test("hybrid progression exposes armor, component ranks, and categorized drafts", () => {
+  assert.match(game, /PLAYER_ARMORS/);
+  assert.match(game, /AGENT_COMPONENT_UPGRADES/);
+  assert.ok((game.match(/purchaseComponentUpgrade\(/g) ?? []).length >= 3);
+  assert.match(game, /armorId:/);
+  assert.match(game, /armorBonuses:/);
+  assert.match(game, /componentUpgradeRanks:/);
+  assert.match(game, /PLAYER DRAFT/);
+  assert.match(game, /AGENT DRAFT/);
+  assert.match(game, /DEFENSE DRAFT/);
+  assert.match(game, /ARMOR PROFILE/);
+  assert.match(game, /COMPONENTS/);
+  assert.match(game, /INSUFFICIENT COMPONENTS/);
 });
 
 test("streams a shuffled soundtrack through a crossfading audio manager", () => {
@@ -223,7 +273,7 @@ test("both engines drive recruited agents from shared autonomous role intents", 
 test("temporary autonomous sub-agents are bounded, rendered, expired, and reset", () => {
   assert.match(game, /const MAX_TEMPORARY_SUB_AGENTS_PER_WAVE = 3/);
   assert.match(game, /spawnTemporarySubAgent/);
-  assert.match(game, /tickSubAgents/);
+  assert.match(game, /tickTemporarySubAgent/);
   assert.match(game, /clearSubAgents/);
   assert.match(webglGame, /temporary-sub-agent/);
   assert.match(canvasGame, /private drawTemporarySubAgent/);
@@ -249,6 +299,24 @@ test("temporary autonomous sub-agents are bounded, rendered, expired, and reset"
   }
 });
 
+test("both engines consume shared temporary role actions and health cues", () => {
+  assert.match(threeResources, /createTemporarySubAgentMarker/);
+  assert.match(threeResources, /resetTemporarySubAgentMarker/);
+  assert.match(threeResources, /updateTemporarySubAgentHealthCue/);
+  assert.match(webglGame, /temporarySubAgentPool/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /private updateTemporarySubAgents\([\s\S]*?tickTemporarySubAgent\(/,
+    );
+    assert.match(engine, /action\.type === "attack"[\s\S]*?damageEnemy/);
+    assert.match(engine, /action\.type === "repair"[\s\S]*?playerHealing/);
+    assert.match(engine, /action\.type === "guard"[\s\S]*?slowMs/);
+    assert.match(engine, /healthRatio/);
+  }
+  assert.match(webglGame, /this\.temporarySubAgentPool\.clear/);
+});
+
 test("follow command overrides autonomous roles and Canvas disposal clears sub-agents", () => {
   assert.match(game, /this\.squadCommand === "follow"[\s\S]*?intent/);
   const canvasDispose = canvasGame.slice(canvasGame.lastIndexOf("dispose()"));
@@ -263,6 +331,53 @@ test("recruitment advances directly to passive autonomous observation", () => {
     assert.match(
       engine,
       /this\.emitTutorialEvent\("kairos-recruited"\)/,
+    );
+  }
+});
+
+test("both renderers consume shared hacker and terrain encounter rules", () => {
+  assert.match(game, /getWaveModifiers/);
+  assert.match(game, /getTerrainModifier/);
+  assert.ok((game.match(/resolveEmpDamage\(/g) ?? []).length >= 2);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /resistanceFlags/);
+    assert.match(engine, /applyTerrainRouteBias/);
+    assert.match(engine, /getEffectiveResistanceFlags/);
+    assert.match(engine, /getPhisherDecoyOffsets/);
+    assert.match(engine, /getRootkitRebootUpdates/);
+    assert.match(engine, /terrain\.spawnAngleOffset/);
+    assert.match(engine, /terrain\.targetingRangeMultiplier/);
+    assert.match(engine, /terrain\.routeBias/);
+    assert.match(engine, /decoyOwnerId/);
+    assert.match(engine, /enemy-jammer-zone/);
+  }
+});
+
+test("both renderers show resistance cues and deterministic terrain overlays", () => {
+  assert.match(webglGame, /enemy-resistance-cue/);
+  assert.match(webglGame, /terrain-overlay/);
+  assert.match(canvasGame, /private drawResistanceCues/);
+  assert.match(canvasGame, /private drawTerrainOverlay/);
+  for (const label of [
+    "RELAY STORM",
+    "FIREWALL LANES",
+    "DATA FOG",
+    "SPLIT BREACH",
+  ]) {
+    assert.match(game, new RegExp(label));
+  }
+});
+
+test("both renderers emit complete encounter telemetry in their HUD payloads", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /temporarySubAgents: this\.temporarySubAgents\.length/,
+    );
+    assert.match(engine, /terrainLabel: this\.terrain\.label/);
+    assert.match(
+      engine,
+      /empResistance: getMaxEmpResistancePercent\(this\.encounterModifiers\)/,
     );
   }
 });

@@ -1,33 +1,52 @@
 export const LOOT_TYPES = Object.freeze({
-  repair: "repair",
-  component: "component",
-  upgradeShard: "upgrade-shard",
+  repair: Object.freeze({
+    id: "repair",
+    label: "Repair Cache",
+    color: "#78d6a5",
+    dropChance: 0.2,
+    value: 25,
+    eliteOnly: false,
+  }),
+  component: Object.freeze({
+    id: "component",
+    label: "AI Component",
+    color: "#f0a65a",
+    dropChance: 0.35,
+    value: 2,
+    eliteOnly: false,
+  }),
+  upgradeShard: Object.freeze({
+    id: "upgrade-shard",
+    label: "Upgrade Shard",
+    color: "#b9a4ff",
+    dropChance: 0.8,
+    value: 1,
+    eliteOnly: true,
+  }),
 });
 
+const LOOT_BY_ID = Object.freeze(
+  Object.fromEntries(Object.values(LOOT_TYPES).map((loot) => [loot.id, loot])),
+);
+
 const DROP_TABLE = Object.freeze({
-  virus: Object.freeze({ chance: 0.2, types: [LOOT_TYPES.repair] }),
+  virus: Object.freeze({ chance: 0.2, types: [LOOT_TYPES.repair.id] }),
   phisher: Object.freeze({
     chance: 0.35,
-    types: [LOOT_TYPES.repair, LOOT_TYPES.component],
+    types: [LOOT_TYPES.repair.id, LOOT_TYPES.component.id],
   }),
   trojan: Object.freeze({
     chance: 0.6,
     types: [
-      LOOT_TYPES.repair,
-      LOOT_TYPES.component,
-      LOOT_TYPES.upgradeShard,
+      LOOT_TYPES.repair.id,
+      LOOT_TYPES.component.id,
+      LOOT_TYPES.upgradeShard.id,
     ],
   }),
   rootkit: Object.freeze({
     chance: 0.8,
-    types: [LOOT_TYPES.component, LOOT_TYPES.upgradeShard],
+    types: [LOOT_TYPES.component.id, LOOT_TYPES.upgradeShard.id],
   }),
-});
-
-const LOOT_VALUES = Object.freeze({
-  [LOOT_TYPES.repair]: 25,
-  [LOOT_TYPES.component]: 2,
-  [LOOT_TYPES.upgradeShard]: 1,
 });
 
 const PLAYER_PICKUP_RADIUS = 0.5;
@@ -37,7 +56,11 @@ export function rollLootDrop(enemyKind, rng) {
   const drop = DROP_TABLE[enemyKind];
   if (!drop || rng() >= drop.chance) return null;
 
-  const type = drop.types[Math.floor(rng() * drop.types.length)];
+  const types = drop.types.filter(
+    (type) => !LOOT_BY_ID[type].eliteOnly || enemyKind === "rootkit",
+  );
+  if (types.length === 0) return null;
+  const type = types[Math.floor(rng() * types.length)];
   const xRoll = rng();
   const yRoll = rng();
   const x = xRoll * 2 - 1;
@@ -48,7 +71,18 @@ export function rollLootDrop(enemyKind, rng) {
     type,
     x,
     y,
-    value: LOOT_VALUES[type],
+    value: LOOT_BY_ID[type].value,
+  };
+}
+
+export function getLootPresentation(type, value = LOOT_BY_ID[type]?.value) {
+  const loot = LOOT_BY_ID[type];
+  if (!loot) throw new Error(`Unknown loot type ${type}`);
+  return {
+    ...loot,
+    worldLabel: loot.label.toUpperCase(),
+    beamHeight: loot.eliteOnly ? 1.5 : 1.2,
+    toastText: `${loot.label} +${value}`,
   };
 }
 
@@ -61,16 +95,16 @@ export function canCollectLoot(player, loot) {
 }
 
 export function applyLootPickup(state, loot) {
-  if (!Object.values(LOOT_TYPES).includes(loot?.type)) {
+  if (!LOOT_BY_ID[loot?.type]) {
     throw new Error(`Unknown loot type ${loot?.type}`);
   }
 
-  const value = loot.value ?? LOOT_VALUES[loot.type];
+  const value = loot.value ?? LOOT_BY_ID[loot.type].value;
   if (!Number.isFinite(value) || value < 0) {
     throw new Error("Loot value must be a non-negative number");
   }
 
-  if (loot.type === LOOT_TYPES.repair) {
+  if (loot.type === LOOT_TYPES.repair.id) {
     return {
       ...state,
       health: clampRepair(state.health, state.maxHealth, value),
@@ -78,7 +112,7 @@ export function applyLootPickup(state, loot) {
     };
   }
 
-  if (loot.type === LOOT_TYPES.component) {
+  if (loot.type === LOOT_TYPES.component.id) {
     return { ...state, components: (state.components ?? 0) + value };
   }
 

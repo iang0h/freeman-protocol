@@ -34,6 +34,14 @@ type LootEntry = {
   detail: string;
 };
 
+type ProgressionEntry = {
+  id: string;
+  name: string;
+  signal: string;
+  tone: "cyan" | "amber" | "violet" | "red";
+  detail: string;
+};
+
 const agentEntries: AgentEntry[] = [
   {
     id: "kairos",
@@ -135,6 +143,56 @@ const lootEntries: LootEntry[] = [
   },
 ];
 
+const armorEntries: ProgressionEntry[] = [
+  { id: "vanguard", name: "Vanguard", signal: "SURVIVABILITY", tone: "cyan", detail: "Armor plates raise operator durability and strengthen incoming repairs." },
+  { id: "striker", name: "Striker", signal: "WEAPON OUTPUT", tone: "amber", detail: "Weapon cores raise direct damage and shorten the firing cadence." },
+  { id: "relay", name: "Relay", signal: "EMP SUPPORT", tone: "violet", detail: "Relay arrays amplify EMP output and improve support recovery." },
+];
+
+const eliteLootEntries: ProgressionEntry[] = [
+  { id: "plate", name: "Armor Plate", signal: "ELITE DROP", tone: "cyan", detail: "Rare plating funds one mission-long armor profile." },
+  { id: "core", name: "Weapon Core", signal: "ELITE DROP", tone: "amber", detail: "A tuned core reinforces specialist damage and suppression routines." },
+  { id: "memory", name: "Agent Memory Chip", signal: "ELITE DROP", tone: "violet", detail: "Memory chips unlock component ranks for the recruited agent who uses them." },
+];
+
+const componentUpgradeEntries: ProgressionEntry[] = [
+  {
+    id: "stasis-array",
+    name: "Stasis Array",
+    signal: "KAIROS · 2 COMPONENTS",
+    tone: "cyan",
+    detail: "Accelerates Kairos attack cycles by 12% per rank, up to rank two.",
+  },
+  {
+    id: "hunter-core",
+    name: "Hunter Core",
+    signal: "KIRA · 3 COMPONENTS",
+    tone: "violet",
+    detail: "Raises Kira's precision damage by 22% per rank, up to rank two.",
+  },
+  {
+    id: "breach-ammo",
+    name: "Breach Ammo",
+    signal: "FORGE · 3 COMPONENTS",
+    tone: "amber",
+    detail: "Adds 16% damage and 10% faster attacks per rank, up to rank two.",
+  },
+  {
+    id: "nanite-reserve",
+    name: "Nanite Reserve",
+    signal: "COVENANT · 2 COMPONENTS",
+    tone: "cyan",
+    detail: "Strengthens Covenant healing by 30% per rank, up to rank two.",
+  },
+];
+
+const terrainSignals: ProgressionEntry[] = [
+  { id: "storm", name: "Relay Storm", signal: "EMP +15%", tone: "cyan", detail: "A charged relay field boosts EMP output while altering breach routes." },
+  { id: "lanes", name: "Firewall Lanes", signal: "ROUTE SHIFT", tone: "amber", detail: "Firewall channels bend hostile paths into predictable defensive lanes." },
+  { id: "fog", name: "Data Fog", signal: "VISIBILITY LOW", tone: "violet", detail: "Fog reduces targeting confidence and lowers reliable EMP output." },
+  { id: "split", name: "Split Breach", signal: "TWO VECTORS", tone: "red", detail: "A forked intrusion spreads hostile routes across opposing approach angles." },
+];
+
 function SignalBadge({ label, tone }: { label: string; tone: SignalTone }) {
   return (
     <span className={`${styles.signalBadge} ${styles[`tone${tone}`]}`}>
@@ -188,6 +246,16 @@ function LootCard({ loot }: { loot: LootEntry }) {
         <p>{loot.detail}</p>
       </div>
       <strong>{loot.quantity}</strong>
+    </article>
+  );
+}
+
+function ProgressionCard({ entry }: { entry: ProgressionEntry }) {
+  return (
+    <article className={styles.progressionCard} data-tone={entry.tone}>
+      <SignalBadge label={entry.signal} tone={entry.tone} />
+      <h3>{entry.name}</h3>
+      <p>{entry.detail}</p>
     </article>
   );
 }
@@ -292,6 +360,58 @@ export default function AssetCatalog() {
         </div>
         <div className={styles.lootGrid}>
           {lootEntries.map((loot) => <LootCard key={loot.id} loot={loot} />)}
+        </div>
+      </section>
+
+      <section className={styles.section} aria-labelledby="armor-profiles-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>MISSION LOADOUT</p>
+            <h2 id="armor-profiles-title">Armor Profiles</h2>
+          </div>
+          <p>Choose one profile per mission; its bonuses appear in the in-game HUD.</p>
+        </div>
+        <div className={styles.progressionGrid}>
+          {armorEntries.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
+        </div>
+      </section>
+
+      <section className={`${styles.section} ${styles.threatSection}`} aria-labelledby="elite-recovery-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>HIGH-VALUE RECOVERY</p>
+            <h2 id="elite-recovery-title">Elite Recovery</h2>
+          </div>
+          <p>Elite breaches can return the components that deepen agent specialisation.</p>
+        </div>
+        <div className={styles.progressionGrid}>
+          {eliteLootEntries.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
+        </div>
+      </section>
+
+      <section className={styles.section} aria-labelledby="agent-components-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>SPECIALIST HARDWARE</p>
+            <h2 id="agent-components-title">Agent Component Upgrades</h2>
+          </div>
+          <p>Install up to two ranks on recruited agents using recovered components.</p>
+        </div>
+        <div className={styles.progressionGrid}>
+          {componentUpgradeEntries.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
+        </div>
+      </section>
+
+      <section className={styles.section} aria-labelledby="terrain-signals-title">
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>ENCOUNTER TELEMETRY</p>
+            <h2 id="terrain-signals-title">Terrain Signals</h2>
+          </div>
+          <p>Terrain labels forecast routing, visibility, and EMP conditions before a wave begins.</p>
+        </div>
+        <div className={styles.progressionGrid}>
+          {terrainSignals.map((entry) => <ProgressionCard entry={entry} key={entry.id} />)}
         </div>
       </section>
 

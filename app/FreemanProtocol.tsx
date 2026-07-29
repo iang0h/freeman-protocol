@@ -17,23 +17,38 @@ import {
 } from "./game/combat-rules.mjs";
 import { selectAutoSentryPosition } from "./game/sentry-placement.mjs";
 import {
+  AGENT_COMPONENT_UPGRADES,
   EVOLUTIONS,
+  PLAYER_ARMORS,
   applyUpgradeStack,
   getUpgradeDraft,
+  purchaseComponentUpgrade,
   purchaseEvolution,
 } from "./game/progression.mjs";
 import { normalizeStickInput, tapToFire } from "./game/input-rules.mjs";
 import {
   applyLootPickup,
   canCollectLoot,
+  getLootPresentation,
   rollLootDrop,
 } from "./game/loot-rules.mjs";
 import {
   clearSubAgents,
   decideAgentIntent,
   spawnTemporarySubAgent,
-  tickSubAgents,
+  tickTemporarySubAgent,
 } from "./game/autonomy-rules.mjs";
+import {
+  JAMMER_ZONE_RADIUS,
+  applyTerrainRouteBias,
+  getEffectiveResistanceFlags,
+  getMaxEmpResistancePercent,
+  getPhisherDecoyOffsets,
+  getRootkitRebootUpdates,
+  getTerrainModifier,
+  getWaveModifiers,
+  resolveEmpDamage,
+} from "./game/encounter-rules.mjs";
 import {
   FIRST_WAVE,
   OBSERVE_BREACH,
@@ -47,8 +62,11 @@ import { SpatialGrid } from "./game/spatial-grid";
 import {
   BoundedPool,
   createLootPickupMesh,
+  createTemporarySubAgentMarker,
   disposeObject3D,
   resetLootPickupMesh,
+  resetTemporarySubAgentMarker,
+  updateTemporarySubAgentHealthCue,
 } from "./game/three-resources";
 import { AudioManager } from "./game/AudioManager";
 
@@ -61,13 +79,23 @@ type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type UpgradeId =
   "overclock" | "bastion" | "bandwidth" | "voltage" | "repair" | "command";
 type EnemyType = "virus" | "phisher" | "trojan" | "rootkit";
+type ResistanceFlag = "shield" | "decoy" | "armor" | "jammer";
 type EvolutionId =
   | "cryo-mesh" | "stasis-lock"
   | "execution-protocol" | "rail-pierce"
   | "cluster-burst" | "suppression-loop"
   | "aegis-relay" | "nanite-repair";
+type PlayerArmorId = "vanguard" | "striker" | "relay";
 type UpgradeStacks = Record<UpgradeId, number>;
 type Evolutions = Record<AgentId, EvolutionId | null>;
+type ComponentUpgradeRanks = Record<string, number>;
+type ArmorBonuses = {
+  maxHealth?: number;
+  damageMultiplier?: number;
+  cooldownMultiplier?: number;
+  empMultiplier?: number;
+  healingMultiplier?: number;
+};
 type TutorialStep =
   | "move" | "shoot" | "recruit"
   | "observe" | "complete" | "skipped";
@@ -78,7 +106,14 @@ type AutonomyRole = "assault" | "support" | "defend";
 type AutonomyIntent = AutonomyRole | "improvise" | "follow";
 type StartOptions = { tutorial: boolean };
 type LootType = "repair" | "component" | "upgrade-shard";
-type LootRecord = { id: string; type: LootType; x: number; y: number; value: number };
+type LootRecord = {
+  id: string;
+  type: LootType;
+  x: number;
+  y: number;
+  value: number;
+  radius?: number;
+};
 type LootCounters = { repairs: number; components: number; shards: number };
 
 type FirstWaveCheckpoint = {
@@ -94,6 +129,7 @@ const ARENA_RADIUS = 17.5;
 const SPAWN_RADIUS = 15.2;
 const TUTORIAL_STORAGE_KEY = "freeman-tutorial-complete";
 const MAX_TEMPORARY_SUB_AGENTS_PER_WAVE = 3;
+const TOUCH_SAFE_PICKUP_RADIUS = 0.75;
 
 const AUTONOMY_ROLES: Record<AgentId, AutonomyRole> = {
   kairos: "defend",
@@ -123,6 +159,12 @@ type HudState = {
   agents: Record<AgentId, boolean>;
   upgradeStacks: UpgradeStacks;
   evolutions: Evolutions;
+  armorId: PlayerArmorId | null;
+  armorBonuses: ArmorBonuses;
+  componentUpgradeRanks: ComponentUpgradeRanks;
+  temporarySubAgents: number;
+  terrainLabel: string;
+  empResistance: number;
   tutorialStep: TutorialStep | null;
   canRetryWave: boolean;
   loot: LootCounters;
@@ -159,6 +201,7 @@ interface GameController {
   dash(): void;
   ultimate(): void;
   applyUpgrade(id: UpgradeId): void;
+  purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string): void;
   evolveAgent(agentId: AgentId, evolutionId: EvolutionId): void;
   continueWithoutEvolution(): void;
   rotateCamera(direction: -1 | 1): void;
@@ -195,12 +238,25 @@ type TemporarySubAgent = {
   parentId: AgentId;
   role: AutonomyRole;
   remainingMs: number;
+  maxLifetimeMs: number;
+  cooldownLeftMs: number;
+  healthRatio: number;
   canSpawn: false;
 };
 
+type TemporarySubAgentAction =
+  | { type: "attack"; damage: number }
+  | {
+      type: "repair";
+      playerHealing: number;
+      coreHealing: number;
+      allyCooldownReductionMs: number;
+    }
+  | { type: "guard"; damage: number; slowMs: number }
+  | { type: "idle" };
+
 type WebglTemporarySubAgent = TemporarySubAgent & {
   marker: THREE.Group;
-  cooldownLeft: number;
 };
 
 type DefenseRuntime = {
@@ -232,6 +288,9 @@ type EnemyRuntime = {
   bossPhase: number;
   hitFlash: number;
   tutorial: boolean;
+  resistanceFlags: ResistanceFlag[];
+  decoyOwnerId: number | null;
+  decoyLeft: number;
 };
 
 type ProjectileRuntime = {
@@ -251,7 +310,7 @@ type EffectRuntime = {
   kind: "ring" | "beam" | "burst" | "portal" | "text";
 };
 
-type LootRuntime = LootRecord & { mesh: THREE.Mesh };
+type LootRuntime = LootRecord & { mesh: THREE.Group };
 
 type AnimatedRig = {
   root: THREE.Group;
@@ -388,10 +447,13 @@ const ENCOUNTERS: EnemyType[][] = [
 
 const getUpgradeChoices = (wave: number, stacks: UpgradeStacks) => {
   return getUpgradeDraft(wave, stacks)
-    .map(({ id }: { id: string }) =>
-      UPGRADES.find((upgrade) => upgrade.id === (id as UpgradeId)),
-    )
-    .filter(Boolean) as typeof UPGRADES;
+    .map(({ id, category }: { id: string; category: string }) => {
+      const upgrade = UPGRADES.find(
+        (item) => item.id === (id as UpgradeId),
+      );
+      return upgrade ? { ...upgrade, category } : null;
+    })
+    .filter((upgrade): upgrade is NonNullable<typeof upgrade> => Boolean(upgrade));
 };
 
 const EVOLUTION_COPY: Record<EvolutionId, string> = {
@@ -411,6 +473,30 @@ const EMPTY_UPGRADE_STACKS: UpgradeStacks = {
 };
 const EMPTY_EVOLUTIONS: Evolutions = {
   kairos: null, kira: null, forge: null, covenant: null,
+};
+const EMPTY_COMPONENT_UPGRADE_RANKS: ComponentUpgradeRanks = {};
+const getArmorBonuses = (armorId: PlayerArmorId | null): ArmorBonuses =>
+  armorId ? PLAYER_ARMORS[armorId].bonuses : {};
+const getComponentRank = (
+  ranks: ComponentUpgradeRanks,
+  target: "player" | AgentId,
+  upgradeId: string,
+) => ranks[`${target}:${upgradeId}`] ?? 0;
+const ARMOR_COPY: Record<PlayerArmorId, string> = {
+  vanguard: "+35 max health · +15% incoming repairs",
+  striker: "+20% weapon damage · 15% faster fire",
+  relay: "+40% EMP output · +25% incoming repairs",
+};
+const COMPONENT_COPY: Record<string, string> = {
+  "stasis-array": "12% faster attacks per rank",
+  "hunter-core": "+22% damage per rank",
+  "breach-ammo": "+16% damage and 10% faster attacks per rank",
+  "nanite-reserve": "+30% healing per rank",
+};
+const UPGRADE_CATEGORY_LABELS: Record<string, string> = {
+  player: "PLAYER DRAFT",
+  agent: "AGENT DRAFT",
+  defense: "DEFENSE DRAFT",
 };
 
 const INITIAL_HUD: HudState = {
@@ -439,6 +525,12 @@ const INITIAL_HUD: HudState = {
   },
   upgradeStacks: { ...EMPTY_UPGRADE_STACKS },
   evolutions: { ...EMPTY_EVOLUTIONS },
+  armorId: null,
+  armorBonuses: {},
+  componentUpgradeRanks: { ...EMPTY_COMPONENT_UPGRADE_RANKS },
+  temporarySubAgents: 0,
+  terrainLabel: "CLEAR GRID",
+  empResistance: 0,
   tutorialStep: null,
   canRetryWave: false,
   loot: { repairs: 0, components: 0, shards: 0 },
@@ -681,7 +773,8 @@ class FreemanEngine {
   private readonly enemyGrid = new SpatialGrid<EnemyRuntime>(3);
   private readonly disposedResources = new WeakSet<object>();
   private readonly projectilePool = new BoundedPool<THREE.Mesh>(128);
-  private readonly lootPool = new BoundedPool<THREE.Mesh>(48);
+  private readonly lootPool = new BoundedPool<THREE.Group>(48);
+  private readonly temporarySubAgentPool = new BoundedPool<THREE.Group>(6);
   private readonly pickups: LootRuntime[] = [];
   private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly aimPoint = new THREE.Vector3(0, 0, -4);
@@ -731,8 +824,13 @@ class FreemanEngine {
   private agentRateMultiplier = 1;
   private agentDamageMultiplier = 1;
   private empMultiplier = 1;
+  private playerAttackCooldownMultiplier = 1;
   private upgradeStacks: UpgradeStacks = { ...EMPTY_UPGRADE_STACKS };
   private evolutions: Evolutions = { ...EMPTY_EVOLUTIONS };
+  private armorId: PlayerArmorId | null = null;
+  private componentUpgradeRanks: ComponentUpgradeRanks = {
+    ...EMPTY_COMPONENT_UPGRADE_RANKS,
+  };
   private shake = 0;
   private elapsed = 0;
   private hudClock = 0;
@@ -756,6 +854,9 @@ class FreemanEngine {
   private tutorialResolved = false;
   private firstWaveCheckpoint: FirstWaveCheckpoint | null = null;
   private tutorialMarker: THREE.Group | null = null;
+  private encounterModifiers = getWaveModifiers(1);
+  private terrain = getTerrainModifier(1);
+  private terrainOverlay: THREE.Group | null = null;
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
@@ -834,8 +935,11 @@ class FreemanEngine {
     this.agentRateMultiplier = 1;
     this.agentDamageMultiplier = 1;
     this.empMultiplier = 1;
+    this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
+    this.armorId = null;
+    this.componentUpgradeRanks = { ...EMPTY_COMPONENT_UPGRADE_RANKS };
     this.squadCommand = "auto";
     this.firstWaveCheckpoint = null;
     this.tutorialStep = null;
@@ -1102,7 +1206,7 @@ class FreemanEngine {
     if (direction.lengthSq() < 0.001) direction.copy(this.lastMove);
     direction.normalize();
     this.faceDirection(this.player.group, direction);
-    this.player.attackCooldown = 0.28;
+    this.player.attackCooldown = 0.28 * this.playerAttackCooldownMultiplier;
     this.fireProjectile(
       from.add(direction.clone().multiplyScalar(0.65)),
       direction,
@@ -1200,12 +1304,39 @@ class FreemanEngine {
     if (this.mode !== "playing" || this.player.ultimate < 100) return;
     this.player.ultimate = 0;
     const origin = this.player.group.position.clone();
-    const damage = (44 + this.agents.length * 8) * this.empMultiplier;
+    const damage =
+      (44 + this.agents.length * 8) *
+      this.empMultiplier *
+      this.terrain.empMultiplier;
+    const jammerThreats = this.enemies.map((threat) => ({
+      id: threat.id,
+      x: threat.group.position.x,
+      z: threat.group.position.z,
+      resistanceFlags: threat.resistanceFlags,
+    }));
     for (const enemy of this.enemyGrid.query(origin, 10.5)) {
       const distance = enemy.group.position.distanceTo(origin);
       if (distance <= 10.5) {
         enemy.slow = Math.max(enemy.slow, 2.8);
-        this.damageEnemy(enemy, damage, enemy.group.position);
+        const resistanceFlags = getEffectiveResistanceFlags(
+          {
+            id: enemy.id,
+            x: enemy.group.position.x,
+            z: enemy.group.position.z,
+            resistanceFlags: enemy.resistanceFlags,
+          },
+          jammerThreats,
+        );
+        this.damageEnemy(
+          enemy,
+          resolveEmpDamage(
+            damage,
+            { resistanceFlags },
+            this.encounterModifiers,
+          ),
+          enemy.group.position,
+          true,
+        );
       }
     }
     this.addRing(origin, 0xf1eadd, 0.4, 11, 0.9, "portal");
@@ -1272,7 +1403,7 @@ class FreemanEngine {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
-        compute: this.data + this.loot.components * 20,
+        compute: this.data,
         recruited: Object.fromEntries(
           (Object.keys(this.evolutions) as AgentId[]).map((id) => [
             id,
@@ -1282,7 +1413,6 @@ class FreemanEngine {
         evolutions: this.evolutions,
       }, agentId, evolutionId);
       this.data = next.compute;
-      this.loot.components = Math.max(0, this.loot.components - 1);
       this.evolutions = next.evolutions;
       const evolution = EVOLUTIONS[agentId].find(
         (item: { id: string }) => item.id === evolutionId,
@@ -1302,6 +1432,53 @@ class FreemanEngine {
     }
   }
 
+  purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string) {
+    if (this.mode !== "evolution") return;
+    try {
+      const next = purchaseComponentUpgrade({
+        components: this.loot.components,
+        armorId: this.armorId,
+        recruited: Object.fromEntries(
+          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+            id,
+            this.agents.some((agent) => agent.id === id),
+          ]),
+        ),
+        componentUpgradeRanks: this.componentUpgradeRanks,
+      }, target, upgradeId);
+      this.loot.components = next.components;
+      this.componentUpgradeRanks = next.componentUpgradeRanks;
+      if (target === "player") {
+        this.armorId = next.armorId as PlayerArmorId;
+        const bonuses = getArmorBonuses(this.armorId);
+        const addedHealth = bonuses.maxHealth ?? 0;
+        this.player.maxHp += addedHealth;
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + addedHealth);
+        this.attackMultiplier *= bonuses.damageMultiplier ?? 1;
+        this.playerAttackCooldownMultiplier *= bonuses.cooldownMultiplier ?? 1;
+        this.empMultiplier *= bonuses.empMultiplier ?? 1;
+      }
+      const definition = target === "player"
+        ? PLAYER_ARMORS[upgradeId as PlayerArmorId]
+        : AGENT_COMPONENT_UPGRADES[target].find(
+            (item: { id: string }) => item.id === upgradeId,
+          );
+      this.callbacks.onToast({
+        eyebrow: "COMPONENT INSTALLED",
+        title: definition?.name ?? "UPGRADE INSTALLED",
+        detail: "Components were committed to a permanent mission upgrade.",
+      });
+      this.emitHud(true);
+    } catch (error) {
+      this.callbacks.onToast({
+        eyebrow: "COMPONENT UPGRADE UNAVAILABLE",
+        title: error instanceof Error ? error.message.toUpperCase() : "TRY AGAIN",
+        detail: "INSUFFICIENT COMPONENTS, capped ranks, or an unavailable target.",
+      });
+    }
+  }
+
+  // Component purchases stay in the post-wave workshop until the operator continues.
   continueWithoutEvolution() {
     if (this.mode === "evolution") this.startNextWave();
   }
@@ -1346,6 +1523,9 @@ class FreemanEngine {
     this.clearDynamic();
     this.projectilePool.clear((mesh) => this.disposeDynamicObject(mesh));
     this.lootPool.clear((mesh) => this.disposeDynamicObject(mesh));
+    this.temporarySubAgentPool.clear((marker) =>
+      this.disposeDynamicObject(marker),
+    );
     this.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh || object instanceof THREE.Line))
         return;
@@ -2178,7 +2358,13 @@ class FreemanEngine {
   private createEnemy(
     type: EnemyType,
     position: THREE.Vector3,
-    options: { tutorial?: boolean; speed?: number; damage?: number; reward?: number } = {},
+    options: {
+      tutorial?: boolean;
+      speed?: number;
+      damage?: number;
+      reward?: number;
+      decoyOwnerId?: number;
+    } = {},
   ) {
     const definitions: Record<
       EnemyType,
@@ -2240,8 +2426,13 @@ class FreemanEngine {
       },
     };
     const definition = definitions[type];
+    const resistanceFlags: ResistanceFlag[] =
+      options.tutorial || options.decoyOwnerId
+      ? []
+      : [...this.encounterModifiers.flagsByType[type]] as ResistanceFlag[];
     const group = new THREE.Group();
     group.position.copy(position);
+    group.name = options.decoyOwnerId ? "enemy-decoy-target" : "enemy-threat";
 
     const material = new THREE.MeshStandardMaterial({
       color: definition.color,
@@ -2335,6 +2526,33 @@ class FreemanEngine {
       group.add(antenna);
     }
 
+    if (resistanceFlags.includes("jammer")) {
+      const jammerZone = new THREE.Mesh(
+        new THREE.RingGeometry(
+          JAMMER_ZONE_RADIUS - 0.08,
+          JAMMER_ZONE_RADIUS,
+          48,
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0xe86b64,
+          transparent: true,
+          opacity: 0.22,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      jammerZone.name = "enemy-jammer-zone";
+      jammerZone.rotation.x = -Math.PI / 2;
+      jammerZone.position.y = 0.035;
+      group.add(jammerZone);
+    }
+
+    if (options.decoyOwnerId) {
+      group.scale.setScalar(0.72);
+      material.transparent = true;
+      material.opacity = 0.46;
+    }
+
     if (type === "trojan") {
       const hornGeometry = new THREE.ConeGeometry(0.12, 0.55, 5);
       const hornMaterial = new THREE.MeshBasicMaterial({
@@ -2370,13 +2588,35 @@ class FreemanEngine {
     healthBar.add(healthBack, healthFill);
     group.add(healthBar);
 
+    resistanceFlags.forEach((flag, index) => {
+      const colors: Record<ResistanceFlag, number> = {
+        shield: 0x9ed8dd,
+        decoy: 0xc6a6e8,
+        armor: 0xf0b26b,
+        jammer: 0xe86b64,
+      };
+      const cue = new THREE.Mesh(
+        new THREE.TorusGeometry(0.12, 0.028, 5, 14),
+        new THREE.MeshBasicMaterial({ color: colors[flag] }),
+      );
+      cue.name = "enemy-resistance-cue";
+      cue.position.set(
+        (index - (resistanceFlags.length - 1) / 2) * 0.3,
+        definition.radius * 2.25 + 0.7,
+        0,
+      );
+      group.add(cue);
+    });
+
     this.scene.add(group);
     const healthScale =
       1 + (this.wave - 1) * (type === "rootkit" ? 0.12 : 0.09);
     const damageScale = 1 + (this.wave - 1) * 0.055;
     const speedScale = 1 + Math.min(0.28, (this.wave - 1) * 0.035);
     const attackRateScale = Math.max(0.72, 1 - (this.wave - 1) * 0.035);
-    const scaledHp = Math.round(definition.hp * healthScale);
+    const scaledHp = options.decoyOwnerId
+      ? 1
+      : Math.round(definition.hp * healthScale);
     const enemy: EnemyRuntime = {
       id: ++this.enemySequence,
       type,
@@ -2386,7 +2626,9 @@ class FreemanEngine {
       healthFill,
       hp: scaledHp,
       maxHp: scaledHp,
-      speed: options.speed ?? definition.speed * speedScale,
+      speed: options.decoyOwnerId
+        ? 0
+        : options.speed ?? definition.speed * speedScale,
       damage:
         options.damage ??
         Math.round(
@@ -2396,7 +2638,7 @@ class FreemanEngine {
         ),
       range: definition.range,
       attackCooldown: definition.cooldown * attackRateScale,
-      cooldownLeft: 0.4 + Math.random() * 0.8,
+      cooldownLeft: options.decoyOwnerId ? 0 : 0.4 + Math.random() * 0.8,
       telegraphLeft: 0,
       telegraphTotal:
         type === "phisher" ? 0.82 : type === "rootkit" ? 1.05 : 0.6,
@@ -2406,6 +2648,9 @@ class FreemanEngine {
       bossPhase: type === "rootkit" ? 1 : 0,
       hitFlash: 0,
       tutorial: options.tutorial ?? false,
+      resistanceFlags,
+      decoyOwnerId: options.decoyOwnerId ?? null,
+      decoyLeft: options.decoyOwnerId ? 4.2 : 0,
     };
     this.enemies.push(enemy);
     this.addRing(
@@ -2529,6 +2774,9 @@ class FreemanEngine {
   }
 
   private spawnWave(wave: number) {
+    this.encounterModifiers = getWaveModifiers(wave);
+    this.terrain = getTerrainModifier(wave);
+    this.updateTerrainOverlay();
     this.waveActive = true;
     this.waveEndClock = 0;
     if (wave === 1) {
@@ -2576,7 +2824,8 @@ class FreemanEngine {
       const angle =
         (index / types.length) * Math.PI * 2 +
         this.wave * 0.38 +
-        (index % 2) * 0.12;
+        (index % 2) * 0.12 +
+        this.terrain.spawnAngleOffset;
       const radius =
         type === "rootkit" ? SPAWN_RADIUS : SPAWN_RADIUS + (index % 4) * 1.1;
       this.createEnemy(
@@ -2989,39 +3238,78 @@ class FreemanEngine {
   }
 
   private updateTemporarySubAgents(delta: number) {
-    const active = tickSubAgents(
-      this.temporarySubAgents,
-      delta * 1_000,
-    ) as WebglTemporarySubAgent[];
-    const activeIds = new Set(active.map((subAgent) => subAgent.id));
-    for (const subAgent of this.temporarySubAgents) {
-      if (!activeIds.has(subAgent.id)) {
-        this.disposeDynamicObject(subAgent.marker);
-      }
-    }
-    this.temporarySubAgents = active;
+    const active: WebglTemporarySubAgent[] = [];
     this.temporarySubAgents.forEach((subAgent, index) => {
       const parent = this.agents.find((agent) => agent.id === subAgent.parentId);
-      if (!parent) return;
+      if (!parent) {
+        this.temporarySubAgentPool.release(
+          subAgent.marker,
+          (marker) => resetTemporarySubAgentMarker(marker, 0xffffff),
+          (marker) => this.disposeDynamicObject(marker),
+        );
+        return;
+      }
       const angle = this.elapsed * 1.8 + index * 2.1;
       subAgent.marker.position
         .copy(parent.group.position)
         .add(new THREE.Vector3(Math.cos(angle) * 0.75, 0.3, Math.sin(angle) * 0.75));
       subAgent.marker.rotation.y += delta * 2.5;
-      subAgent.cooldownLeft = Math.max(0, subAgent.cooldownLeft - delta);
-      if (subAgent.cooldownLeft <= 0) {
-        const target = this.enemies.find((enemy) => enemy.group.position.distanceTo(subAgent.marker.position) < 6);
-        if (target) {
-          subAgent.cooldownLeft = 1.4;
-          if (subAgent.role === "support") {
-            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
-            this.core.hp = Math.min(this.core.maxHp, this.core.hp + 2);
-          } else {
-            this.damageEnemy(target, 8, subAgent.marker.position);
-          }
-        }
+      const attackTarget = this.enemies.find(
+        (enemy) => enemy.group.position.distanceTo(subAgent.marker.position) < 6,
+      );
+      const coreThreat = this.enemies.find(
+        (enemy) => enemy.group.position.distanceTo(this.core.group.position) < 7.5,
+      );
+      const result = tickTemporarySubAgent(
+        subAgent,
+        {
+          attackTargetInRange: Boolean(attackTarget),
+          playerNeedsRepair: this.player.hp < this.player.maxHp,
+          coreNeedsRepair: this.core.hp < this.core.maxHp,
+          coreThreatInRange: Boolean(coreThreat),
+        },
+        delta * 1_000,
+      );
+      Object.assign(subAgent, result.state);
+      updateTemporarySubAgentHealthCue(subAgent.marker, subAgent.healthRatio);
+      const healthBar = subAgent.marker.getObjectByName(
+        "temporary-sub-agent-health",
+      );
+      healthBar?.quaternion.copy(this.camera.quaternion);
+      if (result.expired) {
+        this.temporarySubAgentPool.release(
+          subAgent.marker,
+          (marker) => resetTemporarySubAgentMarker(marker, 0xffffff),
+          (marker) => this.disposeDynamicObject(marker),
+        );
+        return;
       }
+      const action = result.action as TemporarySubAgentAction;
+      if (action.type === "attack" && attackTarget) {
+        this.damageEnemy(attackTarget, action.damage, subAgent.marker.position);
+      } else if (action.type === "repair") {
+        this.player.hp = Math.min(
+          this.player.maxHp,
+          this.player.hp + action.playerHealing,
+        );
+        this.core.hp = Math.min(
+          this.core.maxHp,
+          this.core.hp + action.coreHealing,
+        );
+        for (const ally of this.agents) {
+          ally.cooldownLeft = Math.max(
+            0,
+            ally.cooldownLeft - action.allyCooldownReductionMs / 1_000,
+          );
+        }
+        this.addRing(subAgent.marker.position, parent.color, 0.12, 1.2, 0.25);
+      } else if (action.type === "guard" && coreThreat) {
+        coreThreat.slow = Math.max(coreThreat.slow, action.slowMs / 1_000);
+        this.damageEnemy(coreThreat, action.damage, subAgent.marker.position);
+      }
+      active.push(subAgent);
     });
+    this.temporarySubAgents = active;
   }
 
   private maybeSpawnTemporarySubAgent(
@@ -3047,34 +3335,28 @@ class FreemanEngine {
       },
     ) as TemporarySubAgent | null;
     if (!spawned) return;
-    const marker = new THREE.Group();
-    marker.name = "temporary-sub-agent";
-    const signal = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.2),
-      new THREE.MeshBasicMaterial({
-        color: agent.color,
-        transparent: true,
-        opacity: 0.82,
-      }),
+    const marker = this.temporarySubAgentPool.acquire(() =>
+      createTemporarySubAgentMarker(agent.color),
     );
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.36, 0.025, 6, 20),
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.65,
-      }),
-    );
-    ring.rotation.x = Math.PI / 2;
-    marker.add(signal, ring);
+    resetTemporarySubAgentMarker(marker, agent.color, 1);
     this.scene.add(marker);
-    this.temporarySubAgents.push({ ...spawned, marker, cooldownLeft: 0.35 });
+    this.temporarySubAgents.push({
+      ...spawned,
+      marker,
+      maxLifetimeMs: spawned.remainingMs,
+      cooldownLeftMs: 350,
+      healthRatio: 1,
+    });
     this.subAgentsSpawnedThisWave += 1;
   }
 
   private clearTemporarySubAgents() {
     for (const subAgent of this.temporarySubAgents) {
-      this.disposeDynamicObject(subAgent.marker);
+      this.temporarySubAgentPool.release(
+        subAgent.marker,
+        (marker) => resetTemporarySubAgentMarker(marker, 0xffffff),
+        (marker) => this.disposeDynamicObject(marker),
+      );
     }
     this.temporarySubAgents = clearSubAgents() as WebglTemporarySubAgent[];
     this.autonomyState = {};
@@ -3198,14 +3480,20 @@ class FreemanEngine {
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
         const aegis = this.evolutions.covenant === "aegis-relay";
+        const healingMultiplier =
+          (getArmorBonuses(this.armorId).healingMultiplier ?? 1) *
+          Math.pow(
+            AGENT_COMPONENT_UPGRADES.covenant[0].bonuses.healingMultiplier,
+            getComponentRank(this.componentUpgradeRanks, "covenant", "nanite-reserve"),
+          );
         agent.supportClock = aegis ? 8 : 6.5;
         this.player.hp = Math.min(
           this.player.maxHp,
-          this.player.hp + (nanites ? 18 : aegis ? 20 : 12),
+          this.player.hp + (nanites ? 18 : aegis ? 20 : 12) * healingMultiplier,
         );
         this.core.hp = Math.min(
           this.core.maxHp,
-          this.core.hp + (nanites ? 16 : aegis ? 30 : 10),
+          this.core.hp + (nanites ? 16 : aegis ? 30 : 10) * healingMultiplier,
         );
         if (nanites) {
           for (const ally of this.agents) {
@@ -3250,6 +3538,17 @@ class FreemanEngine {
       agent.cooldownLeft =
         agent.cooldown *
         this.agentRateMultiplier *
+        (agent.id === "kairos"
+          ? Math.pow(
+              AGENT_COMPONENT_UPGRADES.kairos[0].bonuses.cooldownMultiplier,
+              getComponentRank(this.componentUpgradeRanks, "kairos", "stasis-array"),
+            )
+          : agent.id === "forge"
+            ? Math.pow(
+                AGENT_COMPONENT_UPGRADES.forge[0].bonuses.cooldownMultiplier,
+                getComponentRank(this.componentUpgradeRanks, "forge", "breach-ammo"),
+              )
+            : 1) *
         (agent.id === "forge" &&
         this.evolutions.forge === "suppression-loop"
           ? 0.68
@@ -3301,11 +3600,23 @@ class FreemanEngine {
             : agent.id === "kira" && this.evolutions.kira === "rail-pierce"
               ? 1.22
               : 1;
+      const componentDamage =
+        agent.id === "kira"
+          ? Math.pow(
+              AGENT_COMPONENT_UPGRADES.kira[0].bonuses.damageMultiplier,
+              getComponentRank(this.componentUpgradeRanks, "kira", "hunter-core"),
+            )
+          : agent.id === "forge"
+            ? Math.pow(
+                AGENT_COMPONENT_UPGRADES.forge[0].bonuses.damageMultiplier,
+                getComponentRank(this.componentUpgradeRanks, "forge", "breach-ammo"),
+              )
+            : 1;
       this.fireProjectile(
         origin,
         direction,
         agent.color,
-        agent.damage * this.agentDamageMultiplier * evolutionDamage,
+        agent.damage * this.agentDamageMultiplier * evolutionDamage * componentDamage,
         agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10,
         "agent",
         agent.id === "covenant" ? 0.25 : 0,
@@ -3351,6 +3662,17 @@ class FreemanEngine {
       enemy.cooldownLeft = Math.max(0, enemy.cooldownLeft - delta);
       enemy.slow = Math.max(0, enemy.slow - delta);
       enemy.hitFlash = Math.max(0, enemy.hitFlash - delta);
+      if (enemy.decoyOwnerId !== null) {
+        enemy.decoyLeft -= delta;
+        const ownerActive = this.enemies.some(
+          (threat) => threat.id === enemy.decoyOwnerId,
+        );
+        if (enemy.decoyLeft <= 0 || !ownerActive) {
+          this.disposeDynamicObject(enemy.group);
+          this.enemies.splice(this.enemies.indexOf(enemy), 1);
+        }
+        continue;
+      }
       const enemyMaterial = enemy.body.material as THREE.MeshStandardMaterial;
       enemyMaterial.emissiveIntensity = THREE.MathUtils.lerp(
         enemy.type === "rootkit" ? 1.4 : 0.8,
@@ -3365,7 +3687,15 @@ class FreemanEngine {
         : this.core.group.position;
       const distance = position.distanceTo(targetPosition);
       const direction = targetPosition.clone().sub(position).setY(0);
-      if (direction.lengthSq() > 0.001) direction.normalize();
+      if (direction.lengthSq() > 0.001) {
+        direction.normalize();
+        const directX = direction.x;
+        const directZ = direction.z;
+        const routeBias =
+          this.terrain.routeBias * (enemy.id % 2 === 0 ? 1 : -1);
+        const routed = applyTerrainRouteBias(directX, directZ, routeBias);
+        direction.set(routed.x, 0, routed.z);
+      }
 
       enemy.body.rotation.y += delta * (enemy.type === "rootkit" ? 0.45 : 1.2);
       enemy.body.position.y =
@@ -3464,6 +3794,25 @@ class FreemanEngine {
                   : 1.02,
           );
           if (enemy.type === "phisher") {
+            if (enemy.resistanceFlags.includes("decoy")) {
+              const hasActiveDecoys = this.enemies.some(
+                (threat) => threat.decoyOwnerId === enemy.id,
+              );
+              if (!hasActiveDecoys) {
+                for (const offset of getPhisherDecoyOffsets(
+                  this.wave,
+                  enemy.id,
+                )) {
+                  this.createEnemy(
+                    "phisher",
+                    position
+                      .clone()
+                      .add(new THREE.Vector3(offset.x, 0, offset.z)),
+                    { decoyOwnerId: enemy.id, reward: 0 },
+                  );
+                }
+              }
+            }
             const availableAgents = this.agents.filter(
               (agent) => agent.disabledLeft <= 0,
             );
@@ -3495,6 +3844,37 @@ class FreemanEngine {
               0.2,
             );
           } else if (distance <= enemy.range + 0.9) {
+            if (enemy.type === "rootkit") {
+              const updates = getRootkitRebootUpdates(
+                {
+                  id: enemy.id,
+                  x: position.x,
+                  z: position.z,
+                  resistanceFlags: enemy.resistanceFlags,
+                },
+                this.enemies.map((threat) => ({
+                  id: threat.id,
+                  x: threat.group.position.x,
+                  z: threat.group.position.z,
+                  hp: threat.hp,
+                  maxHp: threat.maxHp,
+                  slow: threat.slow,
+                  decoyOwnerId: threat.decoyOwnerId,
+                })),
+              );
+              for (const update of updates) {
+                const rebooted = this.enemies.find(
+                  (threat) => threat.id === update.id,
+                );
+                if (!rebooted) continue;
+                rebooted.hp = update.hp;
+                rebooted.slow = update.slow;
+                const ratio = clamp01(rebooted.hp / rebooted.maxHp);
+                rebooted.healthFill.scale.x = Math.max(0.001, ratio);
+                rebooted.healthFill.position.x = -0.59 * (1 - ratio);
+                this.addBeam(position, rebooted.group.position, 0xe86b64, 0.28);
+              }
+            }
             this.damageTarget(targetPlayer ? "player" : "core", enemy.damage);
             this.addRing(
               targetPosition,
@@ -3587,7 +3967,11 @@ class FreemanEngine {
     for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
       const pickup = this.pickups[index];
       pickup.mesh.rotation.y += delta * 2.4;
-      pickup.mesh.position.y = 0.48 + Math.sin(this.elapsed * 3 + index) * 0.08;
+      pickup.mesh.position.y = 0.62 + Math.sin(this.elapsed * 3 + index) * 0.1;
+      pickup.mesh.scale.setScalar(
+        Math.min(1, pickup.mesh.scale.x + delta * 5) *
+          (1 + Math.sin(this.elapsed * 4 + index) * 0.035),
+      );
       if (!canCollectLoot({ x: this.player.group.position.x, y: this.player.group.position.z }, pickup)) continue;
       const next = applyLootPickup({ health: this.player.hp, maxHealth: this.player.maxHp, coreHealth: this.core.hp, maxCoreHealth: this.core.maxHp, components: this.loot.components, upgradeShards: this.loot.shards }, pickup);
       this.player.hp = next.health;
@@ -3595,8 +3979,8 @@ class FreemanEngine {
       if (pickup.type === "repair") this.loot.repairs += pickup.value;
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
-      if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
-      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
+      const presentation = getLootPresentation(pickup.type);
+      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: presentation.toastText, detail: "Recovered from a destroyed threat." });
       this.releaseLootPickup(pickup);
       this.pickups.splice(index, 1);
       this.emitHud(true);
@@ -3789,9 +4173,13 @@ class FreemanEngine {
     enemy: EnemyRuntime,
     damage: number,
     hitPosition: THREE.Vector3,
+    bypassArmor = false,
   ) {
     if (!this.enemies.includes(enemy)) return;
-    const armoured = enemy.type === "trojan" && enemy.hp > enemy.maxHp * 0.45;
+    const armoured =
+      !bypassArmor &&
+      enemy.resistanceFlags.includes("armor") &&
+      enemy.hp > enemy.maxHp * 0.45;
     const appliedDamage = armoured ? damage * 0.42 : damage;
     enemy.hp -= appliedDamage;
     enemy.hitFlash = 0.11;
@@ -3835,6 +4223,16 @@ class FreemanEngine {
     const deathPosition = enemy.group.position.clone();
     this.disposeDynamicObject(enemy.group);
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
+    if (enemy.decoyOwnerId !== null) {
+      this.addBurst(deathPosition, 0xc6a6e8, 5);
+      return;
+    }
+    for (const decoy of this.enemies.filter(
+      (threat) => threat.decoyOwnerId === enemy.id,
+    )) {
+      this.disposeDynamicObject(decoy.group);
+      this.enemies.splice(this.enemies.indexOf(decoy), 1);
+    }
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
@@ -3842,8 +4240,15 @@ class FreemanEngine {
     if (drop) {
       const mesh = this.lootPool.acquire(() => createLootPickupMesh(drop.type));
       resetLootPickupMesh(mesh, drop.type);
-      const pickup: LootRuntime = { ...drop, x: deathPosition.x + drop.x * 0.35, y: deathPosition.z + drop.y * 0.35, mesh };
-      mesh.position.set(pickup.x, 0.48, pickup.y);
+      const pickup: LootRuntime = {
+        ...drop,
+        x: deathPosition.x + drop.x * 0.35,
+        y: deathPosition.z + drop.y * 0.35,
+        radius: TOUCH_SAFE_PICKUP_RADIUS,
+        mesh,
+      };
+      mesh.position.set(pickup.x, 0.62, pickup.y);
+      mesh.scale.setScalar(0.15);
       this.scene.add(mesh);
       this.pickups.push(pickup);
     }
@@ -4372,12 +4777,17 @@ class FreemanEngine {
 
   private getNearestEnemy(position: THREE.Vector3, maxDistance = Infinity) {
     let nearest: EnemyRuntime | null = null;
-    let nearestDistance = maxDistance;
-    const candidates = Number.isFinite(maxDistance)
-      ? this.enemyGrid.query(position, maxDistance)
+    const targetingRange = Number.isFinite(maxDistance)
+      ? maxDistance * this.terrain.targetingRangeMultiplier
+      : maxDistance;
+    let nearestDistance = targetingRange;
+    const candidates = Number.isFinite(targetingRange)
+      ? this.enemyGrid.query(position, targetingRange)
       : this.enemies;
     for (const enemy of candidates) {
-      const distance = enemy.group.position.distanceTo(position);
+      const distance =
+        enemy.group.position.distanceTo(position) *
+        (enemy.resistanceFlags.includes("decoy") ? 1.35 : 1);
       if (distance < nearestDistance) {
         nearest = enemy;
         nearestDistance = distance;
@@ -4426,6 +4836,7 @@ class FreemanEngine {
 
   private clearDynamic() {
     this.clearTemporarySubAgents();
+    this.clearTerrainOverlay();
     for (const enemy of this.enemies) this.disposeDynamicObject(enemy.group);
     for (const agent of this.agents) this.disposeDynamicObject(agent.group);
     for (const defense of this.defenses) this.disposeDynamicObject(defense.group);
@@ -4446,6 +4857,52 @@ class FreemanEngine {
     this.scheduledReinforcementThreats = 0;
     this.waveActive = false;
     this.waveEndClock = 0;
+  }
+
+  private clearTerrainOverlay() {
+    if (!this.terrainOverlay) return;
+    this.disposeDynamicObject(this.terrainOverlay);
+    this.terrainOverlay = null;
+  }
+
+  private updateTerrainOverlay() {
+    this.clearTerrainOverlay();
+    if (this.terrain.id === "none") return;
+    const overlay = new THREE.Group();
+    overlay.name = "terrain-overlay";
+    const material = new THREE.MeshBasicMaterial({
+      color: this.terrain.color,
+      transparent: true,
+      opacity: this.terrain.id === "data-fog" ? 0.09 : 0.28,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const offsets =
+      this.terrain.id === "split-breach"
+        ? [-7, 7]
+        : this.terrain.id === "firewall-lanes"
+          ? [-7.5, -2.5, 2.5, 7.5]
+          : [0, 0];
+    offsets.forEach((offset, index) => {
+      const marker =
+        this.terrain.id === "relay-storm" || this.terrain.id === "data-fog"
+          ? new THREE.Mesh(
+              new THREE.RingGeometry(
+                6 + index * 5,
+                6.12 + index * 5,
+                64,
+              ),
+              material,
+            )
+          : new THREE.Mesh(new THREE.PlaneGeometry(1.1, 31), material);
+      marker.rotation.x = -Math.PI / 2;
+      marker.rotation.z =
+        this.terrain.id === "split-breach" ? index * Math.PI : 0;
+      marker.position.set(offset, 0.025, 0);
+      overlay.add(marker);
+    });
+    this.scene.add(overlay);
+    this.terrainOverlay = overlay;
   }
 
   private resize() {
@@ -4508,6 +4965,12 @@ class FreemanEngine {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      armorId: this.armorId,
+      armorBonuses: getArmorBonuses(this.armorId),
+      componentUpgradeRanks: { ...this.componentUpgradeRanks },
+      temporarySubAgents: this.temporarySubAgents.length,
+      terrainLabel: this.terrain.label,
+      empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
@@ -4539,6 +5002,9 @@ type FlatEnemy = {
   slow: number;
   bossPhase: number;
   tutorial: boolean;
+  resistanceFlags: ResistanceFlag[];
+  decoyOwnerId: number | null;
+  decoyLeft: number;
 };
 
 type FlatAgent = AgentDefinition & {
@@ -4553,7 +5019,6 @@ type FlatTemporarySubAgent = TemporarySubAgent & {
   x: number;
   z: number;
   color: number;
-  cooldownLeft: number;
 };
 
 type FlatDefense = {
@@ -4605,6 +5070,52 @@ type FlatEffect = {
 const toCssColor = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
 
 class FreemanCanvasEngine implements GameController {
+  purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string) {
+    if (this.mode !== "evolution") return;
+    try {
+      const next = purchaseComponentUpgrade({
+        components: this.loot.components,
+        armorId: this.armorId,
+        recruited: Object.fromEntries(
+          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+            id,
+            this.agents.some((agent) => agent.id === id),
+          ]),
+        ),
+        componentUpgradeRanks: this.componentUpgradeRanks,
+      }, target, upgradeId);
+      this.loot.components = next.components;
+      this.componentUpgradeRanks = next.componentUpgradeRanks;
+      if (target === "player") {
+        this.armorId = next.armorId as PlayerArmorId;
+        const bonuses = getArmorBonuses(this.armorId);
+        const addedHealth = bonuses.maxHealth ?? 0;
+        this.player.maxHp += addedHealth;
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + addedHealth);
+        this.attackMultiplier *= bonuses.damageMultiplier ?? 1;
+        this.playerAttackCooldownMultiplier *= bonuses.cooldownMultiplier ?? 1;
+        this.empMultiplier *= bonuses.empMultiplier ?? 1;
+      }
+      const definition = target === "player"
+        ? PLAYER_ARMORS[upgradeId as PlayerArmorId]
+        : AGENT_COMPONENT_UPGRADES[target].find(
+            (item: { id: string }) => item.id === upgradeId,
+          );
+      this.callbacks.onToast({
+        eyebrow: "COMPONENT INSTALLED",
+        title: definition?.name ?? "UPGRADE INSTALLED",
+        detail: "Components were committed to a permanent mission upgrade.",
+      });
+      this.emitHud(true);
+    } catch (error) {
+      this.callbacks.onToast({
+        eyebrow: "COMPONENT UPGRADE UNAVAILABLE",
+        title: error instanceof Error ? error.message.toUpperCase() : "TRY AGAIN",
+        detail: "INSUFFICIENT COMPONENTS, capped ranks, or an unavailable target.",
+      });
+    }
+  }
+
   private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
   private readonly callbacks: GameCallbacks;
@@ -4673,8 +5184,13 @@ class FreemanCanvasEngine implements GameController {
   private agentRateMultiplier = 1;
   private agentDamageMultiplier = 1;
   private empMultiplier = 1;
+  private playerAttackCooldownMultiplier = 1;
   private upgradeStacks: UpgradeStacks = { ...EMPTY_UPGRADE_STACKS };
   private evolutions: Evolutions = { ...EMPTY_EVOLUTIONS };
+  private armorId: PlayerArmorId | null = null;
+  private componentUpgradeRanks: ComponentUpgradeRanks = {
+    ...EMPTY_COMPONENT_UPGRADE_RANKS,
+  };
   private dragPointer: number | null = null;
   private dragX = 0;
   private reducedMotion = false;
@@ -4689,6 +5205,8 @@ class FreemanCanvasEngine implements GameController {
   private tutorialResolved = false;
   private firstWaveCheckpoint: FirstWaveCheckpoint | null = null;
   private tutorialMarker: { x: number; z: number } | null = null;
+  private encounterModifiers = getWaveModifiers(1);
+  private terrain = getTerrainModifier(1);
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     const context = canvas.getContext("2d");
@@ -4746,8 +5264,11 @@ class FreemanCanvasEngine implements GameController {
     this.agentRateMultiplier = 1;
     this.agentDamageMultiplier = 1;
     this.empMultiplier = 1;
+    this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
+    this.armorId = null;
+    this.componentUpgradeRanks = { ...EMPTY_COMPONENT_UPGRADE_RANKS };
     this.squadCommand = "auto";
     this.firstWaveCheckpoint = null;
     this.tutorialStep = null;
@@ -4988,7 +5509,7 @@ class FreemanCanvasEngine implements GameController {
     const length = Math.hypot(dx, dz) || 1;
     dx /= length;
     dz /= length;
-    this.player.attackCooldown = 0.28;
+    this.player.attackCooldown = 0.28 * this.playerAttackCooldownMultiplier;
     this.projectiles.push({
       x: this.player.x + dx * 0.55,
       z: this.player.z + dz * 0.55,
@@ -5091,13 +5612,34 @@ class FreemanCanvasEngine implements GameController {
   ultimate() {
     if (this.mode !== "playing" || this.player.ultimate < 100) return;
     this.player.ultimate = 0;
-    const damage = (44 + this.agents.length * 8) * this.empMultiplier;
+    const damage =
+      (44 + this.agents.length * 8) *
+      this.empMultiplier *
+      this.terrain.empMultiplier;
+    const jammerThreats = this.enemies.map((threat) => ({
+      id: threat.id,
+      x: threat.x,
+      z: threat.z,
+      resistanceFlags: threat.resistanceFlags,
+    }));
     for (const enemy of [...this.enemies]) {
       if (
         this.distance(enemy.x, enemy.z, this.player.x, this.player.z) <= 10.5
       ) {
         enemy.slow = Math.max(enemy.slow, 2.8);
-        this.damageEnemy(enemy, damage);
+        const resistanceFlags = getEffectiveResistanceFlags(
+          enemy,
+          jammerThreats,
+        );
+        this.damageEnemy(
+          enemy,
+          resolveEmpDamage(
+            damage,
+            { resistanceFlags },
+            this.encounterModifiers,
+          ),
+          true,
+        );
       }
     }
     this.addRing(this.player.x, this.player.z, 0xf1eadd, 0.4, 11, 0.9);
@@ -5164,7 +5706,7 @@ class FreemanCanvasEngine implements GameController {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
-        compute: this.data + this.loot.components * 20,
+        compute: this.data,
         recruited: Object.fromEntries(
           (Object.keys(this.evolutions) as AgentId[]).map((id) => [
             id,
@@ -5174,7 +5716,6 @@ class FreemanCanvasEngine implements GameController {
         evolutions: this.evolutions,
       }, agentId, evolutionId);
       this.data = next.compute;
-      this.loot.components = Math.max(0, this.loot.components - 1);
       this.evolutions = next.evolutions;
       const evolution = EVOLUTIONS[agentId].find(
         (item: { id: string }) => item.id === evolutionId,
@@ -5597,30 +6138,59 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private updateTemporarySubAgents(delta: number) {
-    this.temporarySubAgents = tickSubAgents(
-      this.temporarySubAgents,
-      delta * 1_000,
-    ) as FlatTemporarySubAgent[];
+    const active: FlatTemporarySubAgent[] = [];
     this.temporarySubAgents.forEach((subAgent, index) => {
       const parent = this.agents.find((agent) => agent.id === subAgent.parentId);
       if (!parent) return;
       const angle = this.elapsed * 1.8 + index * 2.1;
       subAgent.x = parent.x + Math.cos(angle) * 0.75;
       subAgent.z = parent.z + Math.sin(angle) * 0.75;
-      subAgent.cooldownLeft = Math.max(0, subAgent.cooldownLeft - delta);
-      if (subAgent.cooldownLeft <= 0) {
-        const target = this.enemies.find((enemy) => this.distance(enemy.x, enemy.z, subAgent.x, subAgent.z) < 6);
-        if (target) {
-          subAgent.cooldownLeft = 1.4;
-          if (subAgent.role === "support") {
-            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
-            this.core.hp = Math.min(this.core.maxHp, this.core.hp + 2);
-          } else {
-            this.damageEnemy(target, 8);
-          }
+      const attackTarget = this.enemies.find(
+        (enemy) =>
+          this.distance(enemy.x, enemy.z, subAgent.x, subAgent.z) < 6,
+      );
+      const coreThreat = this.enemies.find(
+        (enemy) =>
+          this.distance(enemy.x, enemy.z, this.core.x, this.core.z) < 7.5,
+      );
+      const result = tickTemporarySubAgent(
+        subAgent,
+        {
+          attackTargetInRange: Boolean(attackTarget),
+          playerNeedsRepair: this.player.hp < this.player.maxHp,
+          coreNeedsRepair: this.core.hp < this.core.maxHp,
+          coreThreatInRange: Boolean(coreThreat),
+        },
+        delta * 1_000,
+      );
+      Object.assign(subAgent, result.state);
+      if (result.expired) return;
+      const action = result.action as TemporarySubAgentAction;
+      if (action.type === "attack" && attackTarget) {
+        this.damageEnemy(attackTarget, action.damage);
+      } else if (action.type === "repair") {
+        this.player.hp = Math.min(
+          this.player.maxHp,
+          this.player.hp + action.playerHealing,
+        );
+        this.core.hp = Math.min(
+          this.core.maxHp,
+          this.core.hp + action.coreHealing,
+        );
+        for (const ally of this.agents) {
+          ally.cooldownLeft = Math.max(
+            0,
+            ally.cooldownLeft - action.allyCooldownReductionMs / 1_000,
+          );
         }
+        this.addRing(subAgent.x, subAgent.z, parent.color, 0.12, 1.2, 0.25);
+      } else if (action.type === "guard" && coreThreat) {
+        coreThreat.slow = Math.max(coreThreat.slow, action.slowMs / 1_000);
+        this.damageEnemy(coreThreat, action.damage);
       }
+      active.push(subAgent);
     });
+    this.temporarySubAgents = active;
   }
 
   private maybeSpawnTemporarySubAgent(
@@ -5651,7 +6221,9 @@ class FreemanCanvasEngine implements GameController {
       x: agent.x,
       z: agent.z,
       color: agent.color,
-      cooldownLeft: 0.35,
+      maxLifetimeMs: spawned.remainingMs,
+      cooldownLeftMs: 350,
+      healthRatio: 1,
     });
     this.subAgentsSpawnedThisWave += 1;
   }
@@ -5737,14 +6309,20 @@ class FreemanCanvasEngine implements GameController {
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
         const aegis = this.evolutions.covenant === "aegis-relay";
+        const healingMultiplier =
+          (getArmorBonuses(this.armorId).healingMultiplier ?? 1) *
+          Math.pow(
+            AGENT_COMPONENT_UPGRADES.covenant[0].bonuses.healingMultiplier,
+            getComponentRank(this.componentUpgradeRanks, "covenant", "nanite-reserve"),
+          );
         agent.supportClock = aegis ? 8 : 6.5;
         this.player.hp = Math.min(
           this.player.maxHp,
-          this.player.hp + (nanites ? 18 : aegis ? 20 : 12),
+          this.player.hp + (nanites ? 18 : aegis ? 20 : 12) * healingMultiplier,
         );
         this.core.hp = Math.min(
           this.core.maxHp,
-          this.core.hp + (nanites ? 16 : aegis ? 30 : 10),
+          this.core.hp + (nanites ? 16 : aegis ? 30 : 10) * healingMultiplier,
         );
         if (nanites) {
           for (const ally of this.agents) {
@@ -5783,6 +6361,17 @@ class FreemanCanvasEngine implements GameController {
       agent.cooldownLeft =
         agent.cooldown *
         this.agentRateMultiplier *
+        (agent.id === "kairos"
+          ? Math.pow(
+              AGENT_COMPONENT_UPGRADES.kairos[0].bonuses.cooldownMultiplier,
+              getComponentRank(this.componentUpgradeRanks, "kairos", "stasis-array"),
+            )
+          : agent.id === "forge"
+            ? Math.pow(
+                AGENT_COMPONENT_UPGRADES.forge[0].bonuses.cooldownMultiplier,
+                getComponentRank(this.componentUpgradeRanks, "forge", "breach-ammo"),
+              )
+            : 1) *
         (agent.id === "forge" &&
         this.evolutions.forge === "suppression-loop"
           ? 0.68
@@ -5823,13 +6412,37 @@ class FreemanCanvasEngine implements GameController {
             : agent.id === "kira" && this.evolutions.kira === "rail-pierce"
               ? 1.22
               : 1;
+      const componentDamage =
+        agent.id === "kira"
+          ? Math.pow(
+              AGENT_COMPONENT_UPGRADES.kira[0].bonuses.damageMultiplier,
+              getComponentRank(
+                this.componentUpgradeRanks,
+                "kira",
+                "hunter-core",
+              ),
+            )
+          : agent.id === "forge"
+            ? Math.pow(
+                AGENT_COMPONENT_UPGRADES.forge[0].bonuses.damageMultiplier,
+                getComponentRank(
+                  this.componentUpgradeRanks,
+                  "forge",
+                  "breach-ammo",
+                ),
+              )
+            : 1;
       this.projectiles.push({
         x: agent.x,
         z: agent.z,
         vx: dx * (agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10),
         vz: dz * (agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10),
         life: 2.2,
-        damage: agent.damage * this.agentDamageMultiplier * evolutionDamage,
+        damage:
+          agent.damage *
+          this.agentDamageMultiplier *
+          evolutionDamage *
+          componentDamage,
         radius: agent.id === "forge" ? 0.14 : 0.18,
         color: toCssColor(agent.color),
         faction: "agent",
@@ -5872,6 +6485,16 @@ class FreemanCanvasEngine implements GameController {
     for (const enemy of [...this.enemies]) {
       enemy.cooldownLeft = Math.max(0, enemy.cooldownLeft - delta);
       enemy.slow = Math.max(0, enemy.slow - delta);
+      if (enemy.decoyOwnerId !== null) {
+        enemy.decoyLeft -= delta;
+        const ownerActive = this.enemies.some(
+          (threat) => threat.id === enemy.decoyOwnerId,
+        );
+        if (enemy.decoyLeft <= 0 || !ownerActive) {
+          this.enemies.splice(this.enemies.indexOf(enemy), 1);
+        }
+        continue;
+      }
       const playerDistance = this.distance(
         enemy.x,
         enemy.z,
@@ -5938,6 +6561,24 @@ class FreemanCanvasEngine implements GameController {
         if (enemy.telegraphLeft <= 0) {
           enemy.cooldownLeft = enemy.attackCooldown;
           if (enemy.type === "phisher") {
+            if (enemy.resistanceFlags.includes("decoy")) {
+              const hasActiveDecoys = this.enemies.some(
+                (threat) => threat.decoyOwnerId === enemy.id,
+              );
+              if (!hasActiveDecoys) {
+                for (const offset of getPhisherDecoyOffsets(
+                  this.wave,
+                  enemy.id,
+                )) {
+                  this.createEnemy(
+                    "phisher",
+                    enemy.x + offset.x,
+                    enemy.z + offset.z,
+                    { decoyOwnerId: enemy.id, reward: 0 },
+                  );
+                }
+              }
+            }
             const availableAgents = this.agents.filter(
               (agent) => agent.disabledLeft <= 0,
             );
@@ -5971,6 +6612,25 @@ class FreemanCanvasEngine implements GameController {
               slow: 0,
             });
           } else if (distance <= enemy.range + 0.9) {
+            if (enemy.type === "rootkit") {
+              const updates = getRootkitRebootUpdates(enemy, this.enemies);
+              for (const update of updates) {
+                const rebooted = this.enemies.find(
+                  (threat) => threat.id === update.id,
+                );
+                if (!rebooted) continue;
+                rebooted.hp = update.hp;
+                rebooted.slow = update.slow;
+                this.addBeam(
+                  enemy.x,
+                  enemy.z,
+                  rebooted.x,
+                  rebooted.z,
+                  0xe86b64,
+                  0.28,
+                );
+              }
+            }
             this.damageTarget(targetPlayer ? "player" : "core", enemy.damage);
             this.addRing(
               targetX,
@@ -6001,10 +6661,21 @@ class FreemanCanvasEngine implements GameController {
       if (distance > Math.max(0.75, enemy.range * 0.86)) {
         const slowFactor = enemy.slow > 0 ? 0.48 : 1;
         const length = distance || 1;
+        const directX = (targetX - enemy.x) / length;
+        const directZ = (targetZ - enemy.z) / length;
+        const routeBias =
+          this.terrain.routeBias * (enemy.id % 2 === 0 ? 1 : -1);
+        const routed = applyTerrainRouteBias(directX, directZ, routeBias);
         enemy.x +=
-          ((targetX - enemy.x) / length) * delta * enemy.speed * slowFactor;
+          routed.x *
+          delta *
+          enemy.speed *
+          slowFactor;
         enemy.z +=
-          ((targetZ - enemy.z) / length) * delta * enemy.speed * slowFactor;
+          routed.z *
+          delta *
+          enemy.speed *
+          slowFactor;
       }
     }
   }
@@ -6087,6 +6758,8 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private spawnWave(wave: number) {
+    this.encounterModifiers = getWaveModifiers(wave);
+    this.terrain = getTerrainModifier(wave);
     this.waveActive = true;
     this.waveEndClock = 0;
     if (wave === 1) {
@@ -6135,7 +6808,8 @@ class FreemanCanvasEngine implements GameController {
       const angle =
         (index / types.length) * Math.PI * 2 +
         this.wave * 0.38 +
-        (index % 2) * 0.12;
+        (index % 2) * 0.12 +
+        this.terrain.spawnAngleOffset;
       const radius =
         type === "rootkit" ? SPAWN_RADIUS : SPAWN_RADIUS + (index % 4) * 1.1;
       this.createEnemy(
@@ -6164,7 +6838,13 @@ class FreemanCanvasEngine implements GameController {
     type: EnemyType,
     x: number,
     z: number,
-    options: { tutorial?: boolean; speed?: number; damage?: number; reward?: number } = {},
+    options: {
+      tutorial?: boolean;
+      speed?: number;
+      damage?: number;
+      reward?: number;
+      decoyOwnerId?: number;
+    } = {},
   ) {
     const definitions: Record<
       EnemyType,
@@ -6180,6 +6860,9 @@ class FreemanCanvasEngine implements GameController {
         | "slow"
         | "bossPhase"
         | "tutorial"
+        | "resistanceFlags"
+        | "decoyOwnerId"
+        | "decoyLeft"
       >
     > = {
       virus: {
@@ -6224,12 +6907,18 @@ class FreemanCanvasEngine implements GameController {
       },
     };
     const definition = definitions[type];
+    const resistanceFlags: ResistanceFlag[] =
+      options.tutorial || options.decoyOwnerId
+      ? []
+      : [...this.encounterModifiers.flagsByType[type]] as ResistanceFlag[];
     const healthScale =
       1 + (this.wave - 1) * (type === "rootkit" ? 0.12 : 0.09);
     const damageScale = 1 + (this.wave - 1) * 0.055;
     const speedScale = 1 + Math.min(0.28, (this.wave - 1) * 0.035);
     const attackRateScale = Math.max(0.72, 1 - (this.wave - 1) * 0.035);
-    const scaledHp = Math.round(definition.hp * healthScale);
+    const scaledHp = options.decoyOwnerId
+      ? 1
+      : Math.round(definition.hp * healthScale);
     const enemy: FlatEnemy = {
       id: ++this.enemySequence,
       type,
@@ -6238,7 +6927,9 @@ class FreemanCanvasEngine implements GameController {
       ...definition,
       hp: scaledHp,
       maxHp: scaledHp,
-      speed: options.speed ?? definition.speed * speedScale,
+      speed: options.decoyOwnerId
+        ? 0
+        : options.speed ?? definition.speed * speedScale,
       damage:
         options.damage ??
         Math.round(
@@ -6248,11 +6939,14 @@ class FreemanCanvasEngine implements GameController {
         ),
       reward: options.reward ?? definition.reward,
       attackCooldown: definition.attackCooldown * attackRateScale,
-      cooldownLeft: 0.4 + Math.random() * 0.8,
+      cooldownLeft: options.decoyOwnerId ? 0 : 0.4 + Math.random() * 0.8,
       telegraphLeft: 0,
       slow: 0,
       bossPhase: type === "rootkit" ? 1 : 0,
       tutorial: options.tutorial ?? false,
+      resistanceFlags,
+      decoyOwnerId: options.decoyOwnerId ?? null,
+      decoyLeft: options.decoyOwnerId ? 4.2 : 0,
     };
     this.enemies.push(enemy);
     this.addRing(
@@ -6428,9 +7122,16 @@ class FreemanCanvasEngine implements GameController {
     this.emitHud(true);
   }
 
-  private damageEnemy(enemy: FlatEnemy, damage: number) {
+  private damageEnemy(
+    enemy: FlatEnemy,
+    damage: number,
+    bypassArmor = false,
+  ) {
     if (!this.enemies.includes(enemy)) return;
-    const armoured = enemy.type === "trojan" && enemy.hp > enemy.maxHp * 0.45;
+    const armoured =
+      !bypassArmor &&
+      enemy.resistanceFlags.includes("armor") &&
+      enemy.hp > enemy.maxHp * 0.45;
     const appliedDamage = armoured ? damage * 0.42 : damage;
     enemy.hp -= appliedDamage;
     this.player.ultimate = Math.min(
@@ -6441,11 +7142,27 @@ class FreemanCanvasEngine implements GameController {
     this.audio.play("hit");
     if (enemy.hp > 0) return;
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
+    if (enemy.decoyOwnerId !== null) {
+      this.addBurst(enemy.x, enemy.z, 0xc6a6e8, 5);
+      return;
+    }
+    for (const decoy of this.enemies.filter(
+      (threat) => threat.decoyOwnerId === enemy.id,
+    )) {
+      this.enemies.splice(this.enemies.indexOf(decoy), 1);
+    }
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
     const drop = rollLootDrop(enemy.type, Math.random);
-    if (drop) this.pickups.push({ ...drop, x: enemy.x + drop.x * 0.35, y: enemy.z + drop.y * 0.35 });
+    if (drop) {
+      this.pickups.push({
+        ...drop,
+        x: enemy.x + drop.x * 0.35,
+        y: enemy.z + drop.y * 0.35,
+        radius: TOUCH_SAFE_PICKUP_RADIUS,
+      });
+    }
     this.addRing(enemy.x, enemy.z, 0xd9793f, 0.2, enemy.radius * 2.4, 0.42);
     this.addBurst(
       enemy.x,
@@ -6483,8 +7200,8 @@ class FreemanCanvasEngine implements GameController {
       if (pickup.type === "repair") this.loot.repairs += pickup.value;
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
-      if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
-      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
+      const presentation = getLootPresentation(pickup.type);
+      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: presentation.toastText, detail: "Recovered from a destroyed threat." });
       this.pickups.splice(index, 1);
       this.emitHud(true);
     }
@@ -6661,9 +7378,13 @@ class FreemanCanvasEngine implements GameController {
 
   private getNearestEnemy(x: number, z: number, maxDistance = Infinity) {
     let nearest: FlatEnemy | null = null;
-    let nearestDistance = maxDistance;
+    let nearestDistance = Number.isFinite(maxDistance)
+      ? maxDistance * this.terrain.targetingRangeMultiplier
+      : maxDistance;
     for (const enemy of this.enemies) {
-      const distance = this.distance(x, z, enemy.x, enemy.z);
+      const distance =
+        this.distance(x, z, enemy.x, enemy.z) *
+        (enemy.resistanceFlags.includes("decoy") ? 1.35 : 1);
       if (distance < nearestDistance) {
         nearest = enemy;
         nearestDistance = distance;
@@ -6768,6 +7489,7 @@ class FreemanCanvasEngine implements GameController {
     context.fillRect(0, 0, this.width, this.height);
 
     this.drawGrid();
+    this.drawTerrainOverlay();
     this.drawPlatform();
     if (this.tutorialMarker) this.drawTutorialMarker();
     if (this.placementActive) this.drawPlacementPreview();
@@ -6827,16 +7549,45 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private drawLootPickup(pickup: FlatLootRuntime) {
-    const point = this.project(pickup.x, pickup.y, 0.35 + Math.sin(this.elapsed * 3) * 0.08);
-    const color = pickup.type === "repair" ? "#78d6a5" : pickup.type === "component" ? "#f0a65a" : "#b9a4ff";
+    const presentation = getLootPresentation(pickup.type);
+    const point = this.project(
+      pickup.x,
+      pickup.y,
+      0.48 + Math.sin(this.elapsed * 3) * 0.1,
+    );
+    const ground = this.project(pickup.x, pickup.y, 0);
+    const beamTop = this.project(pickup.x, pickup.y, presentation.beamHeight);
+    const pulse = 1 + Math.sin(this.elapsed * 4) * 0.08;
     const context = this.context;
     context.save();
-    context.fillStyle = color;
-    context.shadowColor = color;
-    context.shadowBlur = 14;
+    context.strokeStyle = presentation.color;
+    context.globalAlpha = 0.5;
+    context.lineWidth = Math.max(2, point.scale * 0.08);
     context.beginPath();
-    context.arc(point.x, point.y, Math.max(4, point.scale * 0.2), 0, Math.PI * 2);
+    context.moveTo(ground.x, ground.y);
+    context.lineTo(beamTop.x, beamTop.y);
+    context.stroke();
+    context.globalAlpha = 1;
+    context.fillStyle = presentation.color;
+    context.shadowColor = presentation.color;
+    context.shadowBlur = 20;
+    context.beginPath();
+    context.arc(
+      point.x,
+      point.y,
+      Math.max(7, point.scale * 0.28) * pulse,
+      0,
+      Math.PI * 2,
+    );
     context.fill();
+    context.shadowBlur = 6;
+    context.font = `700 ${Math.max(11, point.scale * 0.22)}px system-ui`;
+    context.textAlign = "center";
+    context.textBaseline = "bottom";
+    context.lineWidth = 4;
+    context.strokeStyle = "#05080b";
+    context.strokeText(presentation.worldLabel, beamTop.x, beamTop.y - 6);
+    context.fillText(presentation.worldLabel, beamTop.x, beamTop.y - 6);
     context.restore();
   }
 
@@ -6861,6 +7612,44 @@ class FreemanCanvasEngine implements GameController {
       context.lineTo(verticalEnd.x, verticalEnd.y);
       context.stroke();
     }
+    context.restore();
+  }
+
+  private drawTerrainOverlay() {
+    if (this.terrain.id === "none") return;
+    const labels: Record<string, string> = {
+      "relay-storm": "RELAY STORM",
+      "firewall-lanes": "FIREWALL LANES",
+      "data-fog": "DATA FOG",
+      "split-breach": "SPLIT BREACH",
+    };
+    const context = this.context;
+    context.save();
+    context.strokeStyle = this.terrain.color;
+    context.fillStyle = this.terrain.color;
+    context.globalAlpha = this.terrain.id === "data-fog" ? 0.12 : 0.34;
+    context.lineWidth = 2;
+    const lanes =
+      this.terrain.id === "split-breach"
+        ? [-8, 8]
+        : this.terrain.id === "firewall-lanes"
+          ? [-7.5, -2.5, 2.5, 7.5]
+          : [-11, 11];
+    for (const lane of lanes) {
+      const start = this.project(lane, -16, 0.03);
+      const end = this.project(lane, 16, 0.03);
+      context.beginPath();
+      context.moveTo(start.x, start.y);
+      context.lineTo(end.x, end.y);
+      context.stroke();
+    }
+    if (this.terrain.id === "data-fog") {
+      context.fillRect(0, this.height * 0.25, this.width, this.height * 0.5);
+    }
+    context.globalAlpha = 0.78;
+    context.font = "700 10px monospace";
+    context.textAlign = "center";
+    context.fillText(labels[this.terrain.id] ?? "", this.width / 2, 90);
     context.restore();
   }
 
@@ -7289,6 +8078,17 @@ class FreemanCanvasEngine implements GameController {
     context.lineTo(signal.x - size, signal.y);
     context.closePath();
     context.fill();
+    const healthRatio = Math.min(1, Math.max(0, subAgent.healthRatio));
+    context.shadowBlur = 0;
+    context.fillStyle = "#071015";
+    context.fillRect(signal.x - size * 1.3, signal.y - size * 1.75, size * 2.6, 3);
+    context.fillStyle = toCssColor(subAgent.color);
+    context.fillRect(
+      signal.x - size * 1.3,
+      signal.y - size * 1.75,
+      size * 2.6 * healthRatio,
+      3,
+    );
     context.restore();
   }
 
@@ -7465,6 +8265,26 @@ class FreemanCanvasEngine implements GameController {
 
   private drawEnemy(enemy: FlatEnemy) {
     const context = this.context;
+    if (enemy.resistanceFlags.includes("jammer")) {
+      const jammerZoneName = "enemy-jammer-zone";
+      const center = this.project(enemy.x, enemy.z);
+      const edge = this.project(enemy.x + JAMMER_ZONE_RADIUS, enemy.z);
+      context.save();
+      context.strokeStyle = "rgba(232,107,100,.28)";
+      context.lineWidth = 2;
+      context.setLineDash([5, 7]);
+      context.beginPath();
+      context.arc(
+        center.x,
+        center.y,
+        Math.hypot(edge.x - center.x, edge.y - center.y),
+        0,
+        Math.PI * 2,
+      );
+      context.stroke();
+      context.restore();
+      void jammerZoneName;
+    }
     const point = this.project(
       enemy.x,
       enemy.z,
@@ -7484,6 +8304,7 @@ class FreemanCanvasEngine implements GameController {
       enemy.telegraphLeft > 0 ? 1 + Math.sin(this.elapsed * 18) * 0.09 : 1;
     const size = baseSize * pulse;
     context.save();
+    if (enemy.decoyOwnerId !== null) context.globalAlpha = 0.48;
     context.fillStyle = "rgba(0,0,0,.48)";
     context.beginPath();
     context.ellipse(
@@ -7592,11 +8413,37 @@ class FreemanCanvasEngine implements GameController {
     context.textAlign = "center";
     context.textBaseline = "bottom";
     context.fillText(
-      enemy.type === "rootkit" ? "ROOTKIT BOSS" : enemy.type.toUpperCase(),
+      enemy.decoyOwnerId !== null
+        ? "PHISHER DECOY"
+        : enemy.type === "rootkit"
+          ? "ROOTKIT BOSS"
+          : enemy.type.toUpperCase(),
       point.x,
       point.y - size - 15,
     );
+    this.drawResistanceCues(enemy, point.x, point.y - size - 28);
     context.restore();
+  }
+
+  private drawResistanceCues(
+    enemy: FlatEnemy,
+    x: number,
+    y: number,
+  ) {
+    const colors: Record<ResistanceFlag, string> = {
+      shield: "#9ed8dd",
+      decoy: "#c6a6e8",
+      armor: "#f0b26b",
+      jammer: "#e86b64",
+    };
+    enemy.resistanceFlags.forEach((flag, index) => {
+      const cueX =
+        x + (index - (enemy.resistanceFlags.length - 1) / 2) * 9;
+      this.context.fillStyle = colors[flag];
+      this.context.beginPath();
+      this.context.arc(cueX, y, 3, 0, Math.PI * 2);
+      this.context.fill();
+    });
   }
 
   private drawProjectiles() {
@@ -7710,6 +8557,12 @@ class FreemanCanvasEngine implements GameController {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      armorId: this.armorId,
+      armorBonuses: getArmorBonuses(this.armorId),
+      componentUpgradeRanks: { ...this.componentUpgradeRanks },
+      temporarySubAgents: this.temporarySubAgents.length,
+      terrainLabel: this.terrain.label,
+      empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
@@ -7881,6 +8734,16 @@ export default function FreemanProtocol() {
 
   const isOverlay = mode !== "playing";
   const recruitedCount = Object.values(hud.agents).filter(Boolean).length;
+  const agentRankSummary = AGENTS.filter((agent) => hud.agents[agent.id])
+    .map((agent) => {
+      const componentRanks = AGENT_COMPONENT_UPGRADES[agent.id].reduce(
+        (total: number, upgrade: { id: string }) =>
+          total + getComponentRank(hud.componentUpgradeRanks, agent.id, upgrade.id),
+        0,
+      );
+      return `${agent.code} ${hud.evolutions[agent.id] ? "II" : "I"}${componentRanks ? ` +${componentRanks}` : ""}`;
+    })
+    .join(" · ") || "NO AGENTS";
   const tutorial =
     hud.tutorialStep &&
     hud.tutorialStep !== "complete" &&
@@ -8044,11 +8907,42 @@ export default function FreemanProtocol() {
                 <small>SCORE</small>
                 <strong>{hud.score.toLocaleString()}</strong>
               </span>
-              <span>
-                <small>LOOT R/C/S</small>
-                <strong>{hud.loot.repairs}/{hud.loot.components}/{hud.loot.shards}</strong>
-              </span>
             </div>
+            <section
+              className="progression-telemetry"
+              aria-label="Progression and encounter telemetry"
+            >
+              <div>
+                <small>LOOT INVENTORY</small>
+                <strong>R {hud.loot.repairs} · C {hud.loot.components} · S {hud.loot.shards}</strong>
+                <span>REPAIRS · MODULES · SHARD INVENTORY</span>
+              </div>
+              <div>
+                <small>ARMOR PROFILE</small>
+                <strong>{hud.armorId?.toUpperCase() ?? "UNASSIGNED"}</strong>
+                <span>{hud.armorId ? ARMOR_COPY[hud.armorId] : "INSTALL AT THE WORKSHOP"}</span>
+              </div>
+              <div>
+                <small>AGENT RANKS</small>
+                <strong>{agentRankSummary}</strong>
+                <span>RANK · COMPONENT STACKS</span>
+              </div>
+              <div>
+                <small>TEMP SUB-AGENTS</small>
+                <strong>{hud.temporarySubAgents}/{MAX_TEMPORARY_SUB_AGENTS_PER_WAVE}</strong>
+                <span>ACTIVE THIS WAVE</span>
+              </div>
+              <div>
+                <small>TERRAIN SIGNAL</small>
+                <strong>{hud.terrainLabel}</strong>
+                <span>ENCOUNTER ROUTING MODIFIER</span>
+              </div>
+              <div>
+                <small>EMP RESISTANCE</small>
+                <strong>{hud.empResistance}% MAX</strong>
+                <span>HIGHEST HOSTILE REDUCTION</span>
+              </div>
+            </section>
             <button
               type="button"
               className={`base-builder ${hud.placingDefense ? "is-placing" : ""}`}
@@ -8295,7 +9189,12 @@ export default function FreemanProtocol() {
       )}
 
       {toast && (
-        <div className="mission-toast" key={toast.id} role="status">
+        <div
+          className="mission-toast"
+          key={toast.id}
+          role="status"
+          aria-live="polite"
+        >
           <small>{toast.eyebrow}</small>
           <strong>{toast.title}</strong>
           <span>{toast.detail}</span>
@@ -8382,12 +9281,12 @@ export default function FreemanProtocol() {
             {getUpgradeChoices(hud.wave, hud.upgradeStacks).map((upgrade) => (
               <button
                 type="button"
-                key={upgrade.id}
+                key={`${upgrade.category}:${upgrade.id}`}
                 onClick={() => engineRef.current?.applyUpgrade(upgrade.id)}
               >
                 <small>{upgrade.index}</small>
                 <span>
-                  <em>APPLY UPGRADE</em>
+                  <em>{UPGRADE_CATEGORY_LABELS[upgrade.category]}</em>
                   <strong>{upgrade.name}</strong>
                   <p>{upgrade.detail}</p>
                 </span>
@@ -8408,9 +9307,110 @@ export default function FreemanProtocol() {
             <span className="eyebrow">OPTIONAL TEAM EVOLUTION</span>
             <h2>Specialize an AI agent.</h2>
             <p>
-              Spend Compute on one permanent protocol, or save it for the next
-              wave.
+              Spend Compute on protocols or install deeper component upgrades.
+              COMPONENTS AVAILABLE: {hud.loot.components}
             </p>
+          </div>
+          <div className="progression-section">
+            <div className="progression-section__heading">
+              <span>ARMOR PROFILE</span>
+              <strong>{hud.armorId?.toUpperCase() ?? "UNASSIGNED"}</strong>
+            </div>
+            <div className="protocol-grid progression-grid">
+              {(Object.entries(PLAYER_ARMORS) as Array<
+                [PlayerArmorId, (typeof PLAYER_ARMORS)[PlayerArmorId]]
+              >).map(([armorId, armor]) => {
+                const rank = getComponentRank(
+                  hud.componentUpgradeRanks,
+                  "player",
+                  armorId,
+                );
+                const locked = Boolean(hud.armorId && hud.armorId !== armorId);
+                const unaffordable = hud.loot.components < armor.cost;
+                return (
+                  <button
+                    type="button"
+                    key={armorId}
+                    disabled={locked || rank >= armor.maxRank || unaffordable}
+                    onClick={() =>
+                      engineRef.current?.purchaseComponentUpgrade(
+                        "player",
+                        armorId,
+                      )
+                    }
+                  >
+                    <small>{armorId.slice(0, 1).toUpperCase()}</small>
+                    <span>
+                      <em>PLAYER ARMOR</em>
+                      <strong>{armor.name}</strong>
+                      <p>{ARMOR_COPY[armorId]}</p>
+                    </span>
+                    <b>
+                      {locked
+                        ? `${hud.armorId?.toUpperCase()} ALREADY ACTIVE`
+                        : rank >= armor.maxRank
+                          ? "INSTALLED"
+                          : unaffordable
+                            ? `INSUFFICIENT COMPONENTS · ${armor.cost} REQUIRED`
+                            : `${armor.cost} COMPONENTS · RANK 0/1`}
+                    </b>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="progression-section">
+            <div className="progression-section__heading">
+              <span>AGENT COMPONENT UPGRADES</span>
+              <strong>{hud.loot.components} COMPONENTS</strong>
+            </div>
+            <div className="protocol-grid progression-grid">
+              {AGENTS.filter((agent) => hud.agents[agent.id]).flatMap((agent) =>
+                AGENT_COMPONENT_UPGRADES[agent.id].map(
+                  (upgrade: {
+                    id: string;
+                    name: string;
+                    cost: number;
+                    maxRank: number;
+                  }) => {
+                    const rank = getComponentRank(
+                      hud.componentUpgradeRanks,
+                      agent.id,
+                      upgrade.id,
+                    );
+                    const capped = rank >= upgrade.maxRank;
+                    const unaffordable = hud.loot.components < upgrade.cost;
+                    return (
+                      <button
+                        type="button"
+                        key={`${agent.id}:${upgrade.id}`}
+                        disabled={capped || unaffordable}
+                        onClick={() =>
+                          engineRef.current?.purchaseComponentUpgrade(
+                            agent.id,
+                            upgrade.id,
+                          )
+                        }
+                      >
+                        <small>{agent.code}</small>
+                        <span>
+                          <em>{agent.name} COMPONENT</em>
+                          <strong>{upgrade.name}</strong>
+                          <p>{COMPONENT_COPY[upgrade.id]}</p>
+                        </span>
+                        <b>
+                          {capped
+                            ? `MAX RANK ${rank}/${upgrade.maxRank}`
+                            : unaffordable
+                              ? `INSUFFICIENT COMPONENTS · ${upgrade.cost} REQUIRED`
+                              : `${upgrade.cost} COMPONENTS · RANK ${rank}/${upgrade.maxRank}`}
+                        </b>
+                      </button>
+                    );
+                  },
+                ),
+              )}
+            </div>
           </div>
           <div className="protocol-grid evolution-grid">
             {AGENTS.filter(
