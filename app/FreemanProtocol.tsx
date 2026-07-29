@@ -33,6 +33,12 @@ import {
   recruitWarbandSlot,
   tickAgentGathering,
 } from "./game/warband-rules.mjs";
+import {
+  applyUnitDamage,
+  getRepairDecision,
+  repairTurret,
+  tickRepairBay,
+} from "./game/repair-rules.mjs";
 import { normalizeStickInput, tapToFire } from "./game/input-rules.mjs";
 import {
   applyLootPickup,
@@ -214,6 +220,7 @@ interface GameController {
   buildDefense(): void;
   beginManualDefensePlacement(): void;
   setSquadCommand(command: SquadCommand): void;
+  useFieldKit(): void;
   attack(): void;
   melee(): void;
   dash(): void;
@@ -244,6 +251,11 @@ type AgentDefinition = {
 
 type AgentRuntime = AgentDefinition & {
   group: THREE.Group;
+  healthBar: THREE.Group;
+  healthFill: THREE.Mesh;
+  hp: number;
+  maxHp: number;
+  repairDecision: "fight" | "retreat" | "repair" | "return";
   cooldownLeft: number;
   supportClock: number;
   disabledLeft: number;
@@ -282,6 +294,10 @@ type WebglTemporarySubAgent = TemporarySubAgent & {
 type DefenseRuntime = {
   group: THREE.Group;
   turret: THREE.Group;
+  healthBar: THREE.Group;
+  healthFill: THREE.Mesh;
+  hp: number;
+  maxHp: number;
   cooldownLeft: number;
   index: number;
 };
@@ -881,6 +897,13 @@ class FreemanEngine {
     hp: number;
     maxHp: number;
   };
+  private readonly repairBay: {
+    group: THREE.Group;
+    healthBar: THREE.Group;
+    healthFill: THREE.Mesh;
+    hp: number;
+    maxHp: number;
+  };
   private resizeObserver: ResizeObserver;
   private animationFrame = 0;
   private mode: GameMode = "intro";
@@ -968,6 +991,7 @@ class FreemanEngine {
 
     this.buildWorld();
     this.core = this.buildCore();
+    this.repairBay = this.buildRepairBay();
     this.player = this.buildOperator();
     void this.attachOperatorRig();
     this.bindEvents();
@@ -1039,6 +1063,7 @@ class FreemanEngine {
     this.player.group.visible = true;
     this.playRig(this.player.rig, "idle");
     this.core.hp = this.core.maxHp = 180;
+    this.repairBay.hp = this.repairBay.maxHp = 70;
   }
 
   private emitTutorialEvent(event: TutorialEvent) {
@@ -1186,6 +1211,44 @@ class FreemanEngine {
     this.emitHud(true);
   }
 
+  useFieldKit() {
+    if (this.mode !== "playing") return;
+    const damagedAgent = [...this.agents]
+      .filter((agent) => agent.hp < agent.maxHp)
+      .sort((left, right) => left.hp / left.maxHp - right.hp / right.maxHp)[0];
+    if (damagedAgent && this.loot.repairs > 0) {
+      damagedAgent.hp = Math.min(damagedAgent.maxHp, damagedAgent.hp + 28);
+      this.loot.repairs -= 1;
+      this.callbacks.onToast({
+        eyebrow: "FIELD KIT DEPLOYED",
+        title: `${damagedAgent.name} STABILISED`,
+        detail: "Repair supplies are reserved for agents outside the functioning bay.",
+      });
+      this.emitHud(true);
+      return;
+    }
+    const damagedTurret = this.defenses.find((defense) => defense.hp < defense.maxHp);
+    if (damagedTurret) {
+      const repaired = repairTurret(damagedTurret, this.loot.components);
+      if (repaired.components !== this.loot.components) {
+        damagedTurret.hp = repaired.turret.hp;
+        this.loot.components = repaired.components;
+        this.callbacks.onToast({
+          eyebrow: "COMPONENT REPAIR",
+          title: "SENTRY RESTORED",
+          detail: "Components rebuilt the damaged turret assembly.",
+        });
+        this.emitHud(true);
+        return;
+      }
+    }
+    this.callbacks.onToast({
+      eyebrow: "FIELD KIT UNAVAILABLE",
+      title: "NO REPAIR TARGET OR SUPPLIES",
+      detail: "Recover repair packs for agents or Components for sentries.",
+    });
+  }
+
   setMuted(muted: boolean) {
     this.audio.setMuted(muted);
   }
@@ -1255,10 +1318,19 @@ class FreemanEngine {
     group.position
       .copy(this.player.group.position)
       .add(new THREE.Vector3(0, 0.8, 0));
+    const health = this.createWorldHealthBar(1.08, definition.color);
+    health.group.name = "agent-health";
+    health.group.position.y = 2.08;
+    group.add(health.group);
     this.scene.add(group);
     const runtime: AgentRuntime = {
       ...definition,
       group,
+      healthBar: health.group,
+      healthFill: health.fill,
+      hp: 75,
+      maxHp: 75,
+      repairDecision: "return",
       cooldownLeft: 0.35,
       supportClock: 5,
       disabledLeft: 0,
@@ -2118,6 +2190,42 @@ class FreemanEngine {
       ultimate: 0,
       invulnerable: 0,
       rig: null,
+    };
+  }
+
+  private buildRepairBay() {
+    const group = new THREE.Group();
+    group.name = "separate-repair-bay";
+    group.position.set(-3.1, 0, 1.15);
+    const shell = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.58, 0.72, 0.74, 8),
+      new THREE.MeshStandardMaterial({
+        color: 0x26383a,
+        emissive: 0x0d5554,
+        emissiveIntensity: 1.15,
+        metalness: 0.78,
+        roughness: 0.28,
+      }),
+    );
+    shell.position.y = 0.37;
+    group.add(shell);
+    const beacon = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.13, 0.7, 8),
+      new THREE.MeshBasicMaterial({ color: 0x76c6c1 }),
+    );
+    beacon.position.y = 1.05;
+    group.add(beacon);
+    const health = this.createWorldHealthBar(1.28, 0x76c6c1);
+    health.group.name = "repair-bay-health";
+    health.group.position.y = 1.58;
+    group.add(health.group);
+    this.scene.add(group);
+    return {
+      group,
+      healthBar: health.group,
+      healthFill: health.fill,
+      hp: 70,
+      maxHp: 70,
     };
   }
 
@@ -3189,12 +3297,16 @@ class FreemanEngine {
       0.035 + (this.core.hp / this.core.maxHp) * 0.05;
     this.player.healthBar.quaternion.copy(this.camera.quaternion);
     this.core.healthBar.quaternion.copy(this.camera.quaternion);
+    this.repairBay.healthBar.quaternion.copy(this.camera.quaternion);
     const playerRatio = clamp01(this.player.hp / this.player.maxHp);
     const coreRatio = clamp01(this.core.hp / this.core.maxHp);
     this.player.healthFill.scale.x = Math.max(0.001, playerRatio);
     this.player.healthFill.position.x = -0.76 * (1 - playerRatio);
     this.core.healthFill.scale.x = Math.max(0.001, coreRatio);
     this.core.healthFill.position.x = -1.175 * (1 - coreRatio);
+    const bayRatio = clamp01(this.repairBay.hp / this.repairBay.maxHp);
+    this.repairBay.healthFill.scale.x = Math.max(0.001, bayRatio);
+    this.repairBay.healthFill.position.x = -0.59 * (1 - bayRatio);
   }
 
   private updateGame(delta: number) {
@@ -3479,6 +3591,14 @@ class FreemanEngine {
           : this.squadCommand === "defend"
             ? "defend"
             : roleIntent;
+      agent.repairDecision = getRepairDecision(agent, {
+        repairBay: {
+          hp: this.repairBay.hp,
+          maxHp: this.repairBay.maxHp,
+          isSeparate: true,
+          repairPerSecond: 18,
+        },
+      });
       const gathering = tickAgentGathering(
         {
           id: agent.id,
@@ -3490,7 +3610,7 @@ class FreemanEngine {
           hostileTargetInRange: Boolean(
             this.getNearestEnemy(agent.group.position, agent.range),
           ),
-          retreating: agent.disabledLeft > 0,
+          retreating: agent.disabledLeft > 0 || agent.repairDecision === "repair" || agent.repairDecision === "retreat",
           nearbyLoot: this.pickups,
         },
         delta * 1000,
@@ -3503,7 +3623,9 @@ class FreemanEngine {
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
         (intent === "support" ? this.elapsed * 0.18 : 0);
-      const anchor = gatheringPickup
+      const anchor = agent.repairDecision === "repair"
+        ? this.repairBay.group.position
+        : gatheringPickup
         ? new THREE.Vector3(gatheringPickup.x, 0.02, gatheringPickup.y)
         : intent === "follow"
           ? this.player.group.position
@@ -3546,6 +3668,20 @@ class FreemanEngine {
         targetPosition,
         1 - Math.exp(-delta * (agent.id === "forge" ? 5 : 4)),
       );
+      const atRepairBay =
+        agent.group.position.distanceTo(this.repairBay.group.position) <= 1.35;
+      const repaired = tickRepairBay(
+        {
+          hp: this.repairBay.hp,
+          maxHp: this.repairBay.maxHp,
+          isSeparate: true,
+          repairPerSecond: 18,
+        },
+        [{ ...agent, disabledLeftMs: agent.disabledLeft * 1_000, repairing: atRepairBay }],
+        delta * 1_000,
+      );
+      agent.hp = repaired.units[0].hp;
+      agent.disabledLeft = repaired.units[0].disabledLeftMs / 1_000;
       agent.group.rotation.z = agent.rig
         ? 0
         : Math.sin(this.elapsed * 2.8 + index) * 0.06;
@@ -3578,7 +3714,6 @@ class FreemanEngine {
       if (leftArm) leftArm.rotation.x = -stride * 0.3 - 0.12;
       if (rightArm) rightArm.rotation.x = stride * 0.22 - 0.2;
       agent.cooldownLeft = Math.max(0, agent.cooldownLeft - delta);
-      agent.disabledLeft = Math.max(0, agent.disabledLeft - delta);
       const activeScale = agent.rig
         ? 0.84
         : agent.id === "forge"
@@ -3587,6 +3722,10 @@ class FreemanEngine {
       agent.group.scale.setScalar(
         agent.disabledLeft > 0 ? activeScale * 0.76 : activeScale,
       );
+      const agentRatio = clamp01(agent.hp / agent.maxHp);
+      agent.healthBar.quaternion.copy(this.camera.quaternion);
+      agent.healthFill.scale.x = Math.max(0.001, agentRatio);
+      agent.healthFill.position.x = -0.49 * (1 - agentRatio);
       this.updateRig(agent.rig, delta, agent.moving ? "run" : "idle");
       if (agent.disabledLeft > 0) return;
       agent.supportClock -= delta;
@@ -3641,6 +3780,8 @@ class FreemanEngine {
         }
         this.addRing(this.player.group.position, agent.color, 0.4, 3.2, 0.72);
       }
+
+      if (agent.repairDecision === "repair" || agent.repairDecision === "retreat") return;
 
       let target: EnemyRuntime | null = null;
       if (!gatheringPickup && (intent === "assault" || intent === "improvise")) {
@@ -3766,6 +3907,11 @@ class FreemanEngine {
 
   private updateDefenses(delta: number) {
     for (const defense of this.defenses) {
+      defense.healthBar.quaternion.copy(this.camera.quaternion);
+      const healthRatio = clamp01(defense.hp / defense.maxHp);
+      defense.healthFill.scale.x = Math.max(0.001, healthRatio);
+      defense.healthFill.position.x = -0.54 * (1 - healthRatio);
+      if (defense.hp <= 0) continue;
       defense.cooldownLeft = Math.max(0, defense.cooldownLeft - delta);
       const ring = defense.group.getObjectByName("sentry-ring");
       if (ring) ring.rotation.z += delta * (0.6 + defense.index * 0.12);
@@ -3820,10 +3966,37 @@ class FreemanEngine {
       );
       const position = enemy.group.position;
       const playerDistance = position.distanceTo(this.player.group.position);
-      const targetPlayer = playerDistance < 4.2;
-      const targetPosition = targetPlayer
+      const agentTarget = this.agents
+        .filter((agent) => agent.hp > 0 && agent.disabledLeft <= 0)
+        .sort((left, right) =>
+          position.distanceTo(left.group.position) - position.distanceTo(right.group.position),
+        )[0];
+      const turretTarget = this.defenses
+        .filter((defense) => defense.hp > 0)
+        .sort((left, right) =>
+          position.distanceTo(left.group.position) - position.distanceTo(right.group.position),
+        )[0];
+      const agentDistance = agentTarget
+        ? position.distanceTo(agentTarget.group.position)
+        : Infinity;
+      const turretDistance = turretTarget
+        ? position.distanceTo(turretTarget.group.position)
+        : Infinity;
+      const targetKind =
+        playerDistance < 4.2
+          ? "player"
+          : agentDistance < 6.5
+            ? "agent"
+            : turretDistance < 6.5
+              ? "turret"
+              : "core";
+      const targetPosition = targetKind === "player"
         ? this.player.group.position
-        : this.core.group.position;
+        : targetKind === "agent" && agentTarget
+          ? agentTarget.group.position
+          : targetKind === "turret" && turretTarget
+            ? turretTarget.group.position
+            : this.core.group.position;
       const distance = position.distanceTo(targetPosition);
       const direction = targetPosition.clone().sub(position).setY(0);
       if (direction.lengthSq() > 0.001) {
@@ -4014,7 +4187,13 @@ class FreemanEngine {
                 this.addBeam(position, rebooted.group.position, 0xe86b64, 0.28);
               }
             }
-            this.damageTarget(targetPlayer ? "player" : "core", enemy.damage);
+            if (targetKind === "agent" && agentTarget) {
+              this.damageAgent(agentTarget, enemy.damage);
+            } else if (targetKind === "turret" && turretTarget) {
+              this.damageDefense(turretTarget, enemy.damage);
+            } else {
+              this.damageTarget(targetKind === "player" ? "player" : "core", enemy.damage);
+            }
             this.addRing(
               targetPosition,
               0xb7422e,
@@ -4285,6 +4464,25 @@ class FreemanEngine {
     this.audio.play("damage");
     this.emitHud(true);
     if (this.player.hp <= 0 || this.core.hp <= 0) this.defeat();
+  }
+
+  private damageAgent(agent: AgentRuntime, damage: number) {
+    const damaged = applyUnitDamage(
+      { hp: agent.hp, maxHp: agent.maxHp, disabledLeftMs: agent.disabledLeft * 1_000 },
+      damage,
+    );
+    agent.hp = damaged.hp;
+    agent.disabledLeft = damaged.disabledLeftMs / 1_000;
+    this.triggerRig(agent.rig, "hit", 0.28);
+    this.addDamageNumber(agent.group.position.clone().add(new THREE.Vector3(0, 2.2, 0)), `-${Math.round(damage)}`, 0xff8a68);
+    this.addBurst(agent.group.position.clone().add(new THREE.Vector3(0, 0.8, 0)), 0xb7422e, 6);
+  }
+
+  private damageDefense(defense: DefenseRuntime, damage: number) {
+    const damaged = applyUnitDamage(defense, damage);
+    defense.hp = damaged.hp;
+    this.addDamageNumber(defense.group.position.clone().add(new THREE.Vector3(0, 1.8, 0)), `-${Math.round(damage)}`, 0xff8a68);
+    this.addBurst(defense.group.position.clone().add(new THREE.Vector3(0, 0.7, 0)), 0xb7422e, 6);
   }
 
   private defeat() {
@@ -4840,10 +5038,18 @@ class FreemanEngine {
     this.cancelDefensePlacement(false);
     const group = this.createDefenseModel(index);
     group.position.copy(worldPosition);
+    const health = this.createWorldHealthBar(1.18, 0x9ed8dd);
+    health.group.name = "sentry-health";
+    health.group.position.y = 1.82;
+    group.add(health.group);
     this.scene.add(group);
     this.defenses.push({
       group,
       turret: group.getObjectByName("sentry-turret") as THREE.Group,
+      healthBar: health.group,
+      healthFill: health.fill,
+      hp: 100,
+      maxHp: 100,
       cooldownLeft: 0.35,
       index,
     });
@@ -5156,6 +5362,8 @@ type FlatEnemy = {
 type FlatAgent = AgentDefinition & {
   x: number;
   z: number;
+  hp: number;
+  maxHp: number;
   cooldownLeft: number;
   supportClock: number;
   disabledLeft: number;
@@ -5172,6 +5380,8 @@ type FlatTemporarySubAgent = TemporarySubAgent & {
 type FlatDefense = {
   x: number;
   z: number;
+  hp: number;
+  maxHp: number;
   cooldownLeft: number;
   index: number;
   rotation: number;
@@ -5568,6 +5778,27 @@ class FreemanCanvasEngine implements GameController {
     this.emitHud(true);
   }
 
+  useFieldKit() {
+    if (this.mode !== "playing") return;
+    const agent = [...this.agents]
+      .filter((candidate) => candidate.hp < candidate.maxHp)
+      .sort((left, right) => left.hp / left.maxHp - right.hp / right.maxHp)[0];
+    if (agent && this.loot.repairs > 0) {
+      agent.hp = Math.min(agent.maxHp, agent.hp + 28);
+      this.loot.repairs -= 1;
+      this.callbacks.onToast({ eyebrow: "FIELD KIT DEPLOYED", title: `${agent.name} STABILISED`, detail: "Repair supplies restore a damaged agent." });
+      this.emitHud(true);
+      return;
+    }
+    const turret = this.defenses.find((candidate) => candidate.hp < candidate.maxHp);
+    if (turret) {
+      const repaired = repairTurret(turret, this.loot.components);
+      turret.hp = repaired.turret.hp;
+      this.loot.components = repaired.components;
+      this.emitHud(true);
+    }
+  }
+
   setMuted(muted: boolean) {
     this.audio.setMuted(muted);
   }
@@ -5635,6 +5866,8 @@ class FreemanCanvasEngine implements GameController {
       ...definition,
       x: this.player.x,
       z: this.player.z,
+      hp: 75,
+      maxHp: 75,
       cooldownLeft: 0.35,
       supportClock: 5,
       disabledLeft: 0,
@@ -7543,6 +7776,8 @@ class FreemanCanvasEngine implements GameController {
     this.defenses.push({
       x: position.x,
       z: position.z,
+      hp: 100,
+      maxHp: 100,
       cooldownLeft: 0.35,
       index,
       rotation: 0,
@@ -9413,6 +9648,17 @@ export default function FreemanProtocol() {
               <strong>EMP PULSE</strong>
             </button>
           </div>
+
+          <button
+            type="button"
+            className="repair-field-kit"
+            onClick={() => engineRef.current?.useFieldKit()}
+            disabled={mode !== "playing"}
+            aria-label="Repair damaged agents with a field kit or sentries with Components"
+          >
+            <small>R {hud.loot.repairs} · C {hud.loot.components}</small>
+            <strong>REPAIR / FIELD KIT</strong>
+          </button>
 
           <div className="mobile-stick">
             <VirtualStick

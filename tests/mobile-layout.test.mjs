@@ -35,6 +35,16 @@ test("keeps both sentry deployment actions available on mobile", () => {
   assert.match(styles, /\.base-builder__manual/);
 });
 
+test("keeps the repair field kit as a large touch-safe action", () => {
+  assert.match(game, /repair-field-kit/);
+  assert.match(game, /REPAIR \/ FIELD KIT/);
+  assert.match(game, /useFieldKit\(\)/);
+  assert.match(
+    styles,
+    /\.repair-field-kit\s*\{[\s\S]*?min-height:\s*48px/,
+  );
+});
+
 test("keeps the guided tutorial clear of mobile combat controls", () => {
   assert.match(game, /tutorial-card/);
   assert.match(game, /SKIP TUTORIAL/);

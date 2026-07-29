@@ -73,6 +73,81 @@ import {
   tickAgentGathering,
 } from "../app/game/warband-rules.mjs";
 
+async function loadRepairRules() {
+  return import("../app/game/repair-rules.mjs");
+}
+
+test("agents retreat below their threshold, repair only at a separate functioning bay, and return at their configured ratio", async () => {
+  const { getRepairDecision, tickRepairBay } = await loadRepairRules();
+  const agent = {
+    id: "relay",
+    hp: 28,
+    maxHp: 100,
+    repairThreshold: 0.4,
+    returnHealthRatio: 0.75,
+    repairDecision: "repair",
+    disabledLeftMs: 0,
+  };
+  const destroyedBay = { hp: 0, maxHp: 70, isSeparate: true, repairPerSecond: 20 };
+  const sharedCore = { hp: 70, maxHp: 70, isSeparate: false, repairPerSecond: 20 };
+  const functioningBay = { hp: 70, maxHp: 70, isSeparate: true, repairPerSecond: 20 };
+
+  assert.equal(getRepairDecision(agent, { repairBay: destroyedBay }), "retreat");
+  assert.equal(getRepairDecision(agent, { repairBay: sharedCore }), "retreat");
+  assert.equal(getRepairDecision(agent, { repairBay: functioningBay }), "repair");
+
+  const repaired = tickRepairBay(functioningBay, [agent], 2_500);
+  assert.equal(repaired.units[0].hp, 78);
+  assert.equal(getRepairDecision(repaired.units[0], { repairBay: functioningBay }), "return");
+});
+
+test("unit damage and repair timers clamp without mutating Core health", async () => {
+  const { applyUnitDamage, tickRepairBay } = await loadRepairRules();
+  const damaged = applyUnitDamage(
+    { id: "warden", hp: 12, maxHp: 100, disabledLeftMs: 300, coreHealth: 137 },
+    99,
+  );
+  assert.deepEqual(damaged, {
+    id: "warden",
+    hp: 0,
+    maxHp: 100,
+    disabledLeftMs: 3_000,
+    coreHealth: 137,
+  });
+
+  const repaired = tickRepairBay(
+    { hp: 60, maxHp: 60, isSeparate: true, repairPerSecond: 50 },
+    [{ ...damaged, repairDecision: "repair" }],
+    1_000,
+  );
+  assert.equal(repaired.units[0].disabledLeftMs, 2_000);
+  assert.equal(repaired.units[0].hp, 0);
+  assert.equal(repaired.units[0].coreHealth, 137);
+  assert.equal(damaged.coreHealth, 137);
+});
+
+test("turrets take enemy damage, repair with Components, and a destroyed bay never silently heals units", async () => {
+  const { applyUnitDamage, repairTurret, tickRepairBay } = await loadRepairRules();
+  const turret = applyUnitDamage({ id: "sentry-1", hp: 55, maxHp: 100 }, 80);
+  assert.equal(turret.hp, 0);
+
+  const repairedTurret = repairTurret(
+    { ...turret, repairCost: 2, repairAmount: 45 },
+    3,
+  );
+  assert.equal(repairedTurret.turret.hp, 45);
+  assert.equal(repairedTurret.components, 1);
+
+  const fieldKit = repairTurret({ hp: 25, maxHp: 100, repairAmount: 20 }, 1);
+  assert.equal(fieldKit.turret.hp, 45);
+  const noBayRepair = tickRepairBay(
+    { hp: 0, maxHp: 60, isSeparate: true, repairPerSecond: 40 },
+    [{ hp: 25, maxHp: 100, repairDecision: "repair" }],
+    5_000,
+  );
+  assert.equal(noBayRepair.units[0].hp, 25);
+});
+
 test("warband recruitment keeps starter costs and escalates material costs after slot four", () => {
   assert.equal(WARBAND_SLOTS.length, 8);
   assert.deepEqual(
