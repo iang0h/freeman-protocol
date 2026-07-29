@@ -59,6 +59,29 @@ test("both renderers pace spawns and include queued threats in the HUD", () => {
   assert.ok((game.match(/canCompleteWave\(/g) ?? []).length >= 2);
 });
 
+test("enemy defeat creates a loot pickup in both renderers", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const damageEnemy = engine.slice(
+      engine.indexOf("private damageEnemy("),
+      engine.indexOf("private fireProjectile(") >= 0
+        ? engine.indexOf("private fireProjectile(")
+        : engine.indexOf("private removeProjectile("),
+    );
+    assert.match(damageEnemy, /rollLootDrop\(enemy\.type, Math\.random\)/);
+    assert.match(damageEnemy, /this\.pickups\.push/);
+  }
+});
+
+test("loot collection is overlap-gated in both renderers", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /private updateLootPickups\([\s\S]*?canCollectLoot\([\s\S]*?applyLootPickup\(/,
+    );
+    assert.match(engine, /private clearLootPickups\(\)/);
+  }
+});
+
 test("sentries support automatic deployment and optional manual placement", () => {
   assert.match(game, /AUTO-DEPLOY SENTRY/);
   assert.match(game, /PLACE MANUALLY/);

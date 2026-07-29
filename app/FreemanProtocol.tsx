@@ -24,6 +24,11 @@ import {
 } from "./game/progression.mjs";
 import { normalizeStickInput } from "./game/input-rules.mjs";
 import {
+  applyLootPickup,
+  canCollectLoot,
+  rollLootDrop,
+} from "./game/loot-rules.mjs";
+import {
   FIRST_WAVE,
   OBSERVE_BREACH,
   advanceTutorial,
@@ -33,7 +38,12 @@ import {
 } from "./game/tutorial-rules.mjs";
 import { readStoredNumber, readStoredValue, writeStoredValue } from "./game/storage.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
-import { BoundedPool, disposeObject3D } from "./game/three-resources";
+import {
+  BoundedPool,
+  createLootPickupMesh,
+  disposeObject3D,
+  resetLootPickupMesh,
+} from "./game/three-resources";
 import { AudioManager } from "./game/AudioManager";
 
 type GameMode =
@@ -59,6 +69,9 @@ type TutorialEvent =
   | "movement-complete" | "training-cleared" | "kairos-recruited"
   | "guard-selected" | "breach-cleared";
 type StartOptions = { tutorial: boolean };
+type LootType = "repair" | "component" | "upgrade-shard";
+type LootRecord = { id: string; type: LootType; x: number; y: number; value: number };
+type LootCounters = { repairs: number; components: number; shards: number };
 
 type FirstWaveCheckpoint = {
   data: number;
@@ -96,6 +109,7 @@ type HudState = {
   evolutions: Evolutions;
   tutorialStep: TutorialStep | null;
   canRetryWave: boolean;
+  loot: LootCounters;
 };
 
 type ToastState = {
@@ -207,6 +221,8 @@ type EffectRuntime = {
   maxLife: number;
   kind: "ring" | "beam" | "burst" | "portal" | "text";
 };
+
+type LootRuntime = LootRecord & { mesh: THREE.Mesh };
 
 type AnimatedRig = {
   root: THREE.Group;
@@ -396,6 +412,7 @@ const INITIAL_HUD: HudState = {
   evolutions: { ...EMPTY_EVOLUTIONS },
   tutorialStep: null,
   canRetryWave: false,
+  loot: { repairs: 0, components: 0, shards: 0 },
 };
 
 const TUTORIAL_COPY: Record<
@@ -637,6 +654,9 @@ class FreemanEngine {
   private readonly enemyGrid = new SpatialGrid<EnemyRuntime>(3);
   private readonly disposedResources = new WeakSet<object>();
   private readonly projectilePool = new BoundedPool<THREE.Mesh>(128);
+  private readonly lootPool = new BoundedPool<THREE.Mesh>(48);
+  private readonly pickups: LootRuntime[] = [];
+  private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly aimPoint = new THREE.Vector3(0, 0, -4);
   private readonly lastMove = new THREE.Vector3(0, 0, -1);
   private readonly touchMove = new THREE.Vector2();
@@ -777,6 +797,7 @@ class FreemanEngine {
 
   private resetMissionState() {
     this.clearDynamic();
+    this.loot = { repairs: 0, components: 0, shards: 0 };
     this.clearTutorialMarker();
     this.wave = 1;
     this.score = 0;
@@ -1291,6 +1312,7 @@ class FreemanEngine {
     this.audio.dispose();
     this.clearDynamic();
     this.projectilePool.clear((mesh) => this.disposeDynamicObject(mesh));
+    this.lootPool.clear((mesh) => this.disposeDynamicObject(mesh));
     this.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh || object instanceof THREE.Line))
         return;
@@ -2785,6 +2807,7 @@ class FreemanEngine {
     this.updateEnemies(delta);
     this.enemyGrid.rebuild(this.enemies);
     this.updateProjectiles(delta);
+    this.updateLootPickups(delta);
     this.releaseQueuedEnemies();
     this.player.attackCooldown = Math.max(
       0,
@@ -3381,6 +3404,34 @@ class FreemanEngine {
     }
   }
 
+  private updateLootPickups(delta: number) {
+    for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
+      const pickup = this.pickups[index];
+      pickup.mesh.rotation.y += delta * 2.4;
+      pickup.mesh.position.y = 0.48 + Math.sin(this.elapsed * 3 + index) * 0.08;
+      if (!canCollectLoot({ x: this.player.group.position.x, y: this.player.group.position.z }, pickup)) continue;
+      const next = applyLootPickup({ health: this.player.hp, maxHealth: this.player.maxHp, coreHealth: this.core.hp, maxCoreHealth: this.core.maxHp, components: this.loot.components, upgradeShards: this.loot.shards }, pickup);
+      this.player.hp = next.health;
+      this.core.hp = next.coreHealth;
+      if (pickup.type === "repair") this.loot.repairs += pickup.value;
+      this.loot.components = next.components ?? 0;
+      this.loot.shards = next.upgradeShards ?? 0;
+      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
+      this.releaseLootPickup(pickup);
+      this.pickups.splice(index, 1);
+      this.emitHud(true);
+    }
+  }
+
+  private releaseLootPickup(pickup: LootRuntime) {
+    this.lootPool.release(pickup.mesh, (mesh) => resetLootPickupMesh(mesh, pickup.type), (mesh) => this.disposeDynamicObject(mesh));
+  }
+
+  private clearLootPickups() {
+    for (const pickup of this.pickups) this.releaseLootPickup(pickup);
+    this.pickups.length = 0;
+  }
+
   private updateEffects(delta: number) {
     for (let index = this.effects.length - 1; index >= 0; index -= 1) {
       const effect = this.effects[index];
@@ -3463,6 +3514,7 @@ class FreemanEngine {
     this.resetInput();
     this.cancelDefensePlacement(false);
     if (this.wave >= TOTAL_WAVES) {
+      this.clearLootPickups();
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
@@ -3536,6 +3588,7 @@ class FreemanEngine {
     this.resetInput();
     this.mode = "defeat";
     this.waveActive = false;
+    this.clearLootPickups();
     if (this.player.hp <= 0) {
       this.triggerRig(this.player.rig, "death", 2.8);
     }
@@ -3603,6 +3656,15 @@ class FreemanEngine {
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
+    const drop = rollLootDrop(enemy.type, Math.random);
+    if (drop) {
+      const mesh = this.lootPool.acquire(() => createLootPickupMesh(drop.type));
+      resetLootPickupMesh(mesh, drop.type);
+      const pickup: LootRuntime = { ...drop, x: deathPosition.x + drop.x * 0.35, y: deathPosition.z + drop.y * 0.35, mesh };
+      mesh.position.set(pickup.x, 0.48, pickup.y);
+      this.scene.add(mesh);
+      this.pickups.push(pickup);
+    }
     this.addRing(deathPosition, 0xd9793f, 0.2, enemy.radius * 2.4, 0.42);
     this.addBurst(
       deathPosition.clone().add(new THREE.Vector3(0, enemy.radius, 0)),
@@ -4190,6 +4252,7 @@ class FreemanEngine {
     for (const effect of this.effects) {
       this.disposeDynamicObject(effect.object);
     }
+    this.clearLootPickups();
     this.enemies.length = 0;
     this.agents.length = 0;
     this.defenses.length = 0;
@@ -4262,6 +4325,7 @@ class FreemanEngine {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
         wave: this.wave,
@@ -4323,6 +4387,8 @@ type FlatProjectile = {
   slow: number;
 };
 
+type FlatLootRuntime = LootRecord;
+
 type FlatParticle = {
   x: number;
   z: number;
@@ -4359,6 +4425,8 @@ class FreemanCanvasEngine implements GameController {
   private readonly defenses: FlatDefense[] = [];
   private readonly projectiles: FlatProjectile[] = [];
   private readonly effects: FlatEffect[] = [];
+  private readonly pickups: FlatLootRuntime[] = [];
+  private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly touchMove = { x: 0, y: 0 };
   private readonly aim = { x: 0, z: -4 };
   private readonly lastMove = { x: 0, z: -1 };
@@ -4475,6 +4543,8 @@ class FreemanCanvasEngine implements GameController {
     this.defenses.length = 0;
     this.projectiles.length = 0;
     this.effects.length = 0;
+    this.clearLootPickups();
+    this.loot = { repairs: 0, components: 0, shards: 0 };
     this.wave = 1;
     this.score = 0;
     this.data = 55;
@@ -5182,6 +5252,7 @@ class FreemanCanvasEngine implements GameController {
     this.updateDefenses(delta);
     this.updateEnemies(delta);
     this.updateProjectiles(delta);
+    this.updateLootPickups();
     this.releaseQueuedEnemies();
     this.player.attackCooldown = Math.max(
       0,
@@ -5960,6 +6031,7 @@ class FreemanCanvasEngine implements GameController {
     this.defenses.length = 0;
     this.projectiles.length = 0;
     this.effects.length = 0;
+    this.clearLootPickups();
     this.spawnQueue = [];
     this.nextQueueReleaseAt = 0;
     this.scheduledReinforcementThreats = 0;
@@ -5972,6 +6044,7 @@ class FreemanCanvasEngine implements GameController {
     this.resetInput();
     this.placementActive = false;
     if (this.wave >= TOTAL_WAVES) {
+      this.clearLootPickups();
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
@@ -6021,6 +6094,7 @@ class FreemanCanvasEngine implements GameController {
     this.resetInput();
     this.mode = "defeat";
     this.waveActive = false;
+    this.clearLootPickups();
     this.callbacks.onMode("defeat");
     this.audio.play("defeat");
     this.callbacks.onToast({
@@ -6048,6 +6122,8 @@ class FreemanCanvasEngine implements GameController {
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
+    const drop = rollLootDrop(enemy.type, Math.random);
+    if (drop) this.pickups.push({ ...drop, x: enemy.x + drop.x * 0.35, y: enemy.z + drop.y * 0.35 });
     this.addRing(enemy.x, enemy.z, 0xd9793f, 0.2, enemy.radius * 2.4, 0.42);
     this.addBurst(
       enemy.x,
@@ -6073,6 +6149,26 @@ class FreemanCanvasEngine implements GameController {
   private removeProjectile(projectile: FlatProjectile) {
     const index = this.projectiles.indexOf(projectile);
     if (index >= 0) this.projectiles.splice(index, 1);
+  }
+
+  private updateLootPickups() {
+    for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
+      const pickup = this.pickups[index];
+      if (!canCollectLoot({ x: this.player.x, y: this.player.z }, pickup)) continue;
+      const next = applyLootPickup({ health: this.player.hp, maxHealth: this.player.maxHp, coreHealth: this.core.hp, maxCoreHealth: this.core.maxHp, components: this.loot.components, upgradeShards: this.loot.shards }, pickup);
+      this.player.hp = next.health;
+      this.core.hp = next.coreHealth;
+      if (pickup.type === "repair") this.loot.repairs += pickup.value;
+      this.loot.components = next.components ?? 0;
+      this.loot.shards = next.upgradeShards ?? 0;
+      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
+      this.pickups.splice(index, 1);
+      this.emitHud(true);
+    }
+  }
+
+  private clearLootPickups() {
+    this.pickups.length = 0;
   }
 
   private addRing(
@@ -6389,10 +6485,30 @@ class FreemanCanvasEngine implements GameController {
         draw: () => this.drawEnemy(enemy),
       });
     }
+    for (const pickup of this.pickups) {
+      drawables.push({
+        depth: this.project(pickup.x, pickup.y).depth,
+        draw: () => this.drawLootPickup(pickup),
+      });
+    }
     drawables.sort((a, b) => a.depth - b.depth);
     drawables.forEach((drawable) => drawable.draw());
     this.drawProjectiles();
     this.drawEffects();
+  }
+
+  private drawLootPickup(pickup: FlatLootRuntime) {
+    const point = this.project(pickup.x, pickup.y, 0.35 + Math.sin(this.elapsed * 3) * 0.08);
+    const color = pickup.type === "repair" ? "#78d6a5" : pickup.type === "component" ? "#f0a65a" : "#b9a4ff";
+    const context = this.context;
+    context.save();
+    context.fillStyle = color;
+    context.shadowColor = color;
+    context.shadowBlur = 14;
+    context.beginPath();
+    context.arc(point.x, point.y, Math.max(4, point.scale * 0.2), 0, Math.PI * 2);
+    context.fill();
+    context.restore();
   }
 
   private drawGrid() {
@@ -7227,6 +7343,7 @@ class FreemanCanvasEngine implements GameController {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
         wave: this.wave,
@@ -7559,6 +7676,10 @@ export default function FreemanProtocol() {
               <span>
                 <small>SCORE</small>
                 <strong>{hud.score.toLocaleString()}</strong>
+              </span>
+              <span>
+                <small>LOOT R/C/S</small>
+                <strong>{hud.loot.repairs}/{hud.loot.components}/{hud.loot.shards}</strong>
               </span>
             </div>
             <button
