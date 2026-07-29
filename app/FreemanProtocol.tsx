@@ -17,9 +17,12 @@ import {
 } from "./game/combat-rules.mjs";
 import { selectAutoSentryPosition } from "./game/sentry-placement.mjs";
 import {
+  AGENT_COMPONENT_UPGRADES,
   EVOLUTIONS,
+  PLAYER_ARMORS,
   applyUpgradeStack,
   getUpgradeDraft,
+  purchaseComponentUpgrade,
   purchaseEvolution,
 } from "./game/progression.mjs";
 import { normalizeStickInput, tapToFire } from "./game/input-rules.mjs";
@@ -67,8 +70,17 @@ type EvolutionId =
   | "execution-protocol" | "rail-pierce"
   | "cluster-burst" | "suppression-loop"
   | "aegis-relay" | "nanite-repair";
+type PlayerArmorId = "vanguard" | "striker" | "relay";
 type UpgradeStacks = Record<UpgradeId, number>;
 type Evolutions = Record<AgentId, EvolutionId | null>;
+type ComponentUpgradeRanks = Record<string, number>;
+type ArmorBonuses = {
+  maxHealth?: number;
+  damageMultiplier?: number;
+  cooldownMultiplier?: number;
+  empMultiplier?: number;
+  healingMultiplier?: number;
+};
 type TutorialStep =
   | "move" | "shoot" | "recruit"
   | "observe" | "complete" | "skipped";
@@ -132,6 +144,9 @@ type HudState = {
   agents: Record<AgentId, boolean>;
   upgradeStacks: UpgradeStacks;
   evolutions: Evolutions;
+  armorId: PlayerArmorId | null;
+  armorBonuses: ArmorBonuses;
+  componentUpgradeRanks: ComponentUpgradeRanks;
   tutorialStep: TutorialStep | null;
   canRetryWave: boolean;
   loot: LootCounters;
@@ -168,6 +183,7 @@ interface GameController {
   dash(): void;
   ultimate(): void;
   applyUpgrade(id: UpgradeId): void;
+  purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string): void;
   evolveAgent(agentId: AgentId, evolutionId: EvolutionId): void;
   continueWithoutEvolution(): void;
   rotateCamera(direction: -1 | 1): void;
@@ -397,10 +413,13 @@ const ENCOUNTERS: EnemyType[][] = [
 
 const getUpgradeChoices = (wave: number, stacks: UpgradeStacks) => {
   return getUpgradeDraft(wave, stacks)
-    .map(({ id }: { id: string }) =>
-      UPGRADES.find((upgrade) => upgrade.id === (id as UpgradeId)),
-    )
-    .filter(Boolean) as typeof UPGRADES;
+    .map(({ id, category }: { id: string; category: string }) => {
+      const upgrade = UPGRADES.find(
+        (item) => item.id === (id as UpgradeId),
+      );
+      return upgrade ? { ...upgrade, category } : null;
+    })
+    .filter((upgrade): upgrade is NonNullable<typeof upgrade> => Boolean(upgrade));
 };
 
 const EVOLUTION_COPY: Record<EvolutionId, string> = {
@@ -420,6 +439,30 @@ const EMPTY_UPGRADE_STACKS: UpgradeStacks = {
 };
 const EMPTY_EVOLUTIONS: Evolutions = {
   kairos: null, kira: null, forge: null, covenant: null,
+};
+const EMPTY_COMPONENT_UPGRADE_RANKS: ComponentUpgradeRanks = {};
+const getArmorBonuses = (armorId: PlayerArmorId | null): ArmorBonuses =>
+  armorId ? PLAYER_ARMORS[armorId].bonuses : {};
+const getComponentRank = (
+  ranks: ComponentUpgradeRanks,
+  target: "player" | AgentId,
+  upgradeId: string,
+) => ranks[`${target}:${upgradeId}`] ?? 0;
+const ARMOR_COPY: Record<PlayerArmorId, string> = {
+  vanguard: "+35 max health · +15% incoming repairs",
+  striker: "+20% weapon damage · 15% faster fire",
+  relay: "+40% EMP output · +25% incoming repairs",
+};
+const COMPONENT_COPY: Record<string, string> = {
+  "stasis-array": "12% faster attacks per rank",
+  "hunter-core": "+22% damage per rank",
+  "breach-ammo": "+16% damage and 10% faster attacks per rank",
+  "nanite-reserve": "+30% healing per rank",
+};
+const UPGRADE_CATEGORY_LABELS: Record<string, string> = {
+  player: "PLAYER DRAFT",
+  agent: "AGENT DRAFT",
+  defense: "DEFENSE DRAFT",
 };
 
 const INITIAL_HUD: HudState = {
@@ -448,6 +491,9 @@ const INITIAL_HUD: HudState = {
   },
   upgradeStacks: { ...EMPTY_UPGRADE_STACKS },
   evolutions: { ...EMPTY_EVOLUTIONS },
+  armorId: null,
+  armorBonuses: {},
+  componentUpgradeRanks: { ...EMPTY_COMPONENT_UPGRADE_RANKS },
   tutorialStep: null,
   canRetryWave: false,
   loot: { repairs: 0, components: 0, shards: 0 },
@@ -740,8 +786,13 @@ class FreemanEngine {
   private agentRateMultiplier = 1;
   private agentDamageMultiplier = 1;
   private empMultiplier = 1;
+  private playerAttackCooldownMultiplier = 1;
   private upgradeStacks: UpgradeStacks = { ...EMPTY_UPGRADE_STACKS };
   private evolutions: Evolutions = { ...EMPTY_EVOLUTIONS };
+  private armorId: PlayerArmorId | null = null;
+  private componentUpgradeRanks: ComponentUpgradeRanks = {
+    ...EMPTY_COMPONENT_UPGRADE_RANKS,
+  };
   private shake = 0;
   private elapsed = 0;
   private hudClock = 0;
@@ -843,8 +894,11 @@ class FreemanEngine {
     this.agentRateMultiplier = 1;
     this.agentDamageMultiplier = 1;
     this.empMultiplier = 1;
+    this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
+    this.armorId = null;
+    this.componentUpgradeRanks = { ...EMPTY_COMPONENT_UPGRADE_RANKS };
     this.squadCommand = "auto";
     this.firstWaveCheckpoint = null;
     this.tutorialStep = null;
@@ -1111,7 +1165,7 @@ class FreemanEngine {
     if (direction.lengthSq() < 0.001) direction.copy(this.lastMove);
     direction.normalize();
     this.faceDirection(this.player.group, direction);
-    this.player.attackCooldown = 0.28;
+    this.player.attackCooldown = 0.28 * this.playerAttackCooldownMultiplier;
     this.fireProjectile(
       from.add(direction.clone().multiplyScalar(0.65)),
       direction,
@@ -1311,6 +1365,53 @@ class FreemanEngine {
     }
   }
 
+  purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string) {
+    if (this.mode !== "evolution") return;
+    try {
+      const next = purchaseComponentUpgrade({
+        components: this.loot.components,
+        armorId: this.armorId,
+        recruited: Object.fromEntries(
+          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+            id,
+            this.agents.some((agent) => agent.id === id),
+          ]),
+        ),
+        componentUpgradeRanks: this.componentUpgradeRanks,
+      }, target, upgradeId);
+      this.loot.components = next.components;
+      this.componentUpgradeRanks = next.componentUpgradeRanks;
+      if (target === "player") {
+        this.armorId = next.armorId as PlayerArmorId;
+        const bonuses = getArmorBonuses(this.armorId);
+        const addedHealth = bonuses.maxHealth ?? 0;
+        this.player.maxHp += addedHealth;
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + addedHealth);
+        this.attackMultiplier *= bonuses.damageMultiplier ?? 1;
+        this.playerAttackCooldownMultiplier *= bonuses.cooldownMultiplier ?? 1;
+        this.empMultiplier *= bonuses.empMultiplier ?? 1;
+      }
+      const definition = target === "player"
+        ? PLAYER_ARMORS[upgradeId as PlayerArmorId]
+        : AGENT_COMPONENT_UPGRADES[target].find(
+            (item: { id: string }) => item.id === upgradeId,
+          );
+      this.callbacks.onToast({
+        eyebrow: "COMPONENT INSTALLED",
+        title: definition?.name ?? "UPGRADE INSTALLED",
+        detail: "Components were committed to a permanent mission upgrade.",
+      });
+      this.emitHud(true);
+    } catch (error) {
+      this.callbacks.onToast({
+        eyebrow: "COMPONENT UPGRADE UNAVAILABLE",
+        title: error instanceof Error ? error.message.toUpperCase() : "TRY AGAIN",
+        detail: "INSUFFICIENT COMPONENTS, capped ranks, or an unavailable target.",
+      });
+    }
+  }
+
+  // Component purchases stay in the post-wave workshop until the operator continues.
   continueWithoutEvolution() {
     if (this.mode === "evolution") this.startNextWave();
   }
@@ -3207,14 +3308,20 @@ class FreemanEngine {
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
         const aegis = this.evolutions.covenant === "aegis-relay";
+        const healingMultiplier =
+          (getArmorBonuses(this.armorId).healingMultiplier ?? 1) *
+          Math.pow(
+            AGENT_COMPONENT_UPGRADES.covenant[0].bonuses.healingMultiplier,
+            getComponentRank(this.componentUpgradeRanks, "covenant", "nanite-reserve"),
+          );
         agent.supportClock = aegis ? 8 : 6.5;
         this.player.hp = Math.min(
           this.player.maxHp,
-          this.player.hp + (nanites ? 18 : aegis ? 20 : 12),
+          this.player.hp + (nanites ? 18 : aegis ? 20 : 12) * healingMultiplier,
         );
         this.core.hp = Math.min(
           this.core.maxHp,
-          this.core.hp + (nanites ? 16 : aegis ? 30 : 10),
+          this.core.hp + (nanites ? 16 : aegis ? 30 : 10) * healingMultiplier,
         );
         if (nanites) {
           for (const ally of this.agents) {
@@ -3259,6 +3366,17 @@ class FreemanEngine {
       agent.cooldownLeft =
         agent.cooldown *
         this.agentRateMultiplier *
+        (agent.id === "kairos"
+          ? Math.pow(
+              AGENT_COMPONENT_UPGRADES.kairos[0].bonuses.cooldownMultiplier,
+              getComponentRank(this.componentUpgradeRanks, "kairos", "stasis-array"),
+            )
+          : agent.id === "forge"
+            ? Math.pow(
+                AGENT_COMPONENT_UPGRADES.forge[0].bonuses.cooldownMultiplier,
+                getComponentRank(this.componentUpgradeRanks, "forge", "breach-ammo"),
+              )
+            : 1) *
         (agent.id === "forge" &&
         this.evolutions.forge === "suppression-loop"
           ? 0.68
@@ -3310,11 +3428,23 @@ class FreemanEngine {
             : agent.id === "kira" && this.evolutions.kira === "rail-pierce"
               ? 1.22
               : 1;
+      const componentDamage =
+        agent.id === "kira"
+          ? Math.pow(
+              AGENT_COMPONENT_UPGRADES.kira[0].bonuses.damageMultiplier,
+              getComponentRank(this.componentUpgradeRanks, "kira", "hunter-core"),
+            )
+          : agent.id === "forge"
+            ? Math.pow(
+                AGENT_COMPONENT_UPGRADES.forge[0].bonuses.damageMultiplier,
+                getComponentRank(this.componentUpgradeRanks, "forge", "breach-ammo"),
+              )
+            : 1;
       this.fireProjectile(
         origin,
         direction,
         agent.color,
-        agent.damage * this.agentDamageMultiplier * evolutionDamage,
+        agent.damage * this.agentDamageMultiplier * evolutionDamage * componentDamage,
         agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10,
         "agent",
         agent.id === "covenant" ? 0.25 : 0,
@@ -4529,6 +4659,9 @@ class FreemanEngine {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      armorId: this.armorId,
+      armorBonuses: getArmorBonuses(this.armorId),
+      componentUpgradeRanks: { ...this.componentUpgradeRanks },
       loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
@@ -4626,6 +4759,52 @@ type FlatEffect = {
 const toCssColor = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
 
 class FreemanCanvasEngine implements GameController {
+  purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string) {
+    if (this.mode !== "evolution") return;
+    try {
+      const next = purchaseComponentUpgrade({
+        components: this.loot.components,
+        armorId: this.armorId,
+        recruited: Object.fromEntries(
+          (Object.keys(this.evolutions) as AgentId[]).map((id) => [
+            id,
+            this.agents.some((agent) => agent.id === id),
+          ]),
+        ),
+        componentUpgradeRanks: this.componentUpgradeRanks,
+      }, target, upgradeId);
+      this.loot.components = next.components;
+      this.componentUpgradeRanks = next.componentUpgradeRanks;
+      if (target === "player") {
+        this.armorId = next.armorId as PlayerArmorId;
+        const bonuses = getArmorBonuses(this.armorId);
+        const addedHealth = bonuses.maxHealth ?? 0;
+        this.player.maxHp += addedHealth;
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + addedHealth);
+        this.attackMultiplier *= bonuses.damageMultiplier ?? 1;
+        this.playerAttackCooldownMultiplier *= bonuses.cooldownMultiplier ?? 1;
+        this.empMultiplier *= bonuses.empMultiplier ?? 1;
+      }
+      const definition = target === "player"
+        ? PLAYER_ARMORS[upgradeId as PlayerArmorId]
+        : AGENT_COMPONENT_UPGRADES[target].find(
+            (item: { id: string }) => item.id === upgradeId,
+          );
+      this.callbacks.onToast({
+        eyebrow: "COMPONENT INSTALLED",
+        title: definition?.name ?? "UPGRADE INSTALLED",
+        detail: "Components were committed to a permanent mission upgrade.",
+      });
+      this.emitHud(true);
+    } catch (error) {
+      this.callbacks.onToast({
+        eyebrow: "COMPONENT UPGRADE UNAVAILABLE",
+        title: error instanceof Error ? error.message.toUpperCase() : "TRY AGAIN",
+        detail: "INSUFFICIENT COMPONENTS, capped ranks, or an unavailable target.",
+      });
+    }
+  }
+
   private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
   private readonly callbacks: GameCallbacks;
@@ -4694,8 +4873,13 @@ class FreemanCanvasEngine implements GameController {
   private agentRateMultiplier = 1;
   private agentDamageMultiplier = 1;
   private empMultiplier = 1;
+  private playerAttackCooldownMultiplier = 1;
   private upgradeStacks: UpgradeStacks = { ...EMPTY_UPGRADE_STACKS };
   private evolutions: Evolutions = { ...EMPTY_EVOLUTIONS };
+  private armorId: PlayerArmorId | null = null;
+  private componentUpgradeRanks: ComponentUpgradeRanks = {
+    ...EMPTY_COMPONENT_UPGRADE_RANKS,
+  };
   private dragPointer: number | null = null;
   private dragX = 0;
   private reducedMotion = false;
@@ -4767,8 +4951,11 @@ class FreemanCanvasEngine implements GameController {
     this.agentRateMultiplier = 1;
     this.agentDamageMultiplier = 1;
     this.empMultiplier = 1;
+    this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
+    this.armorId = null;
+    this.componentUpgradeRanks = { ...EMPTY_COMPONENT_UPGRADE_RANKS };
     this.squadCommand = "auto";
     this.firstWaveCheckpoint = null;
     this.tutorialStep = null;
@@ -5009,7 +5196,7 @@ class FreemanCanvasEngine implements GameController {
     const length = Math.hypot(dx, dz) || 1;
     dx /= length;
     dz /= length;
-    this.player.attackCooldown = 0.28;
+    this.player.attackCooldown = 0.28 * this.playerAttackCooldownMultiplier;
     this.projectiles.push({
       x: this.player.x + dx * 0.55,
       z: this.player.z + dz * 0.55,
@@ -5758,14 +5945,20 @@ class FreemanCanvasEngine implements GameController {
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
         const aegis = this.evolutions.covenant === "aegis-relay";
+        const healingMultiplier =
+          (getArmorBonuses(this.armorId).healingMultiplier ?? 1) *
+          Math.pow(
+            AGENT_COMPONENT_UPGRADES.covenant[0].bonuses.healingMultiplier,
+            getComponentRank(this.componentUpgradeRanks, "covenant", "nanite-reserve"),
+          );
         agent.supportClock = aegis ? 8 : 6.5;
         this.player.hp = Math.min(
           this.player.maxHp,
-          this.player.hp + (nanites ? 18 : aegis ? 20 : 12),
+          this.player.hp + (nanites ? 18 : aegis ? 20 : 12) * healingMultiplier,
         );
         this.core.hp = Math.min(
           this.core.maxHp,
-          this.core.hp + (nanites ? 16 : aegis ? 30 : 10),
+          this.core.hp + (nanites ? 16 : aegis ? 30 : 10) * healingMultiplier,
         );
         if (nanites) {
           for (const ally of this.agents) {
@@ -5804,6 +5997,17 @@ class FreemanCanvasEngine implements GameController {
       agent.cooldownLeft =
         agent.cooldown *
         this.agentRateMultiplier *
+        (agent.id === "kairos"
+          ? Math.pow(
+              AGENT_COMPONENT_UPGRADES.kairos[0].bonuses.cooldownMultiplier,
+              getComponentRank(this.componentUpgradeRanks, "kairos", "stasis-array"),
+            )
+          : agent.id === "forge"
+            ? Math.pow(
+                AGENT_COMPONENT_UPGRADES.forge[0].bonuses.cooldownMultiplier,
+                getComponentRank(this.componentUpgradeRanks, "forge", "breach-ammo"),
+              )
+            : 1) *
         (agent.id === "forge" &&
         this.evolutions.forge === "suppression-loop"
           ? 0.68
@@ -5844,13 +6048,37 @@ class FreemanCanvasEngine implements GameController {
             : agent.id === "kira" && this.evolutions.kira === "rail-pierce"
               ? 1.22
               : 1;
+      const componentDamage =
+        agent.id === "kira"
+          ? Math.pow(
+              AGENT_COMPONENT_UPGRADES.kira[0].bonuses.damageMultiplier,
+              getComponentRank(
+                this.componentUpgradeRanks,
+                "kira",
+                "hunter-core",
+              ),
+            )
+          : agent.id === "forge"
+            ? Math.pow(
+                AGENT_COMPONENT_UPGRADES.forge[0].bonuses.damageMultiplier,
+                getComponentRank(
+                  this.componentUpgradeRanks,
+                  "forge",
+                  "breach-ammo",
+                ),
+              )
+            : 1;
       this.projectiles.push({
         x: agent.x,
         z: agent.z,
         vx: dx * (agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10),
         vz: dz * (agent.id === "kira" ? 15 : agent.id === "forge" ? 12 : 10),
         life: 2.2,
-        damage: agent.damage * this.agentDamageMultiplier * evolutionDamage,
+        damage:
+          agent.damage *
+          this.agentDamageMultiplier *
+          evolutionDamage *
+          componentDamage,
         radius: agent.id === "forge" ? 0.14 : 0.18,
         color: toCssColor(agent.color),
         faction: "agent",
@@ -7768,6 +7996,9 @@ class FreemanCanvasEngine implements GameController {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      armorId: this.armorId,
+      armorBonuses: getArmorBonuses(this.armorId),
+      componentUpgradeRanks: { ...this.componentUpgradeRanks },
       loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
@@ -8450,7 +8681,7 @@ export default function FreemanProtocol() {
               >
                 <small>{upgrade.index}</small>
                 <span>
-                  <em>APPLY UPGRADE</em>
+                  <em>{UPGRADE_CATEGORY_LABELS[upgrade.category]}</em>
                   <strong>{upgrade.name}</strong>
                   <p>{upgrade.detail}</p>
                 </span>
@@ -8471,9 +8702,110 @@ export default function FreemanProtocol() {
             <span className="eyebrow">OPTIONAL TEAM EVOLUTION</span>
             <h2>Specialize an AI agent.</h2>
             <p>
-              Spend Compute on one permanent protocol, or save it for the next
-              wave.
+              Spend Compute on protocols or install deeper component upgrades.
+              COMPONENTS AVAILABLE: {hud.loot.components}
             </p>
+          </div>
+          <div className="progression-section">
+            <div className="progression-section__heading">
+              <span>ARMOR PROFILE</span>
+              <strong>{hud.armorId?.toUpperCase() ?? "UNASSIGNED"}</strong>
+            </div>
+            <div className="protocol-grid progression-grid">
+              {(Object.entries(PLAYER_ARMORS) as Array<
+                [PlayerArmorId, (typeof PLAYER_ARMORS)[PlayerArmorId]]
+              >).map(([armorId, armor]) => {
+                const rank = getComponentRank(
+                  hud.componentUpgradeRanks,
+                  "player",
+                  armorId,
+                );
+                const locked = Boolean(hud.armorId && hud.armorId !== armorId);
+                const unaffordable = hud.loot.components < armor.cost;
+                return (
+                  <button
+                    type="button"
+                    key={armorId}
+                    disabled={locked || rank >= armor.maxRank || unaffordable}
+                    onClick={() =>
+                      engineRef.current?.purchaseComponentUpgrade(
+                        "player",
+                        armorId,
+                      )
+                    }
+                  >
+                    <small>{armorId.slice(0, 1).toUpperCase()}</small>
+                    <span>
+                      <em>PLAYER ARMOR</em>
+                      <strong>{armor.name}</strong>
+                      <p>{ARMOR_COPY[armorId]}</p>
+                    </span>
+                    <b>
+                      {locked
+                        ? `${hud.armorId?.toUpperCase()} ALREADY ACTIVE`
+                        : rank >= armor.maxRank
+                          ? "INSTALLED"
+                          : unaffordable
+                            ? `INSUFFICIENT COMPONENTS · ${armor.cost} REQUIRED`
+                            : `${armor.cost} COMPONENTS · RANK 0/1`}
+                    </b>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="progression-section">
+            <div className="progression-section__heading">
+              <span>AGENT COMPONENT UPGRADES</span>
+              <strong>{hud.loot.components} COMPONENTS</strong>
+            </div>
+            <div className="protocol-grid progression-grid">
+              {AGENTS.filter((agent) => hud.agents[agent.id]).flatMap((agent) =>
+                AGENT_COMPONENT_UPGRADES[agent.id].map(
+                  (upgrade: {
+                    id: string;
+                    name: string;
+                    cost: number;
+                    maxRank: number;
+                  }) => {
+                    const rank = getComponentRank(
+                      hud.componentUpgradeRanks,
+                      agent.id,
+                      upgrade.id,
+                    );
+                    const capped = rank >= upgrade.maxRank;
+                    const unaffordable = hud.loot.components < upgrade.cost;
+                    return (
+                      <button
+                        type="button"
+                        key={`${agent.id}:${upgrade.id}`}
+                        disabled={capped || unaffordable}
+                        onClick={() =>
+                          engineRef.current?.purchaseComponentUpgrade(
+                            agent.id,
+                            upgrade.id,
+                          )
+                        }
+                      >
+                        <small>{agent.code}</small>
+                        <span>
+                          <em>{agent.name} COMPONENT</em>
+                          <strong>{upgrade.name}</strong>
+                          <p>{COMPONENT_COPY[upgrade.id]}</p>
+                        </span>
+                        <b>
+                          {capped
+                            ? `MAX RANK ${rank}/${upgrade.maxRank}`
+                            : unaffordable
+                              ? `INSUFFICIENT COMPONENTS · ${upgrade.cost} REQUIRED`
+                              : `${upgrade.cost} COMPONENTS · RANK ${rank}/${upgrade.maxRank}`}
+                        </b>
+                      </button>
+                    );
+                  },
+                ),
+              )}
+            </div>
           </div>
           <div className="protocol-grid evolution-grid">
             {AGENTS.filter(

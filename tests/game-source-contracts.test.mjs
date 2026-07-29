@@ -135,6 +135,21 @@ test("player upgrades are capped and recruited agents can evolve", () => {
   }
 });
 
+test("hybrid progression exposes armor, component ranks, and categorized drafts", () => {
+  assert.match(game, /PLAYER_ARMORS/);
+  assert.match(game, /AGENT_COMPONENT_UPGRADES/);
+  assert.ok((game.match(/purchaseComponentUpgrade\(/g) ?? []).length >= 3);
+  assert.match(game, /armorId:/);
+  assert.match(game, /armorBonuses:/);
+  assert.match(game, /componentUpgradeRanks:/);
+  assert.match(game, /PLAYER DRAFT/);
+  assert.match(game, /AGENT DRAFT/);
+  assert.match(game, /DEFENSE DRAFT/);
+  assert.match(game, /ARMOR PROFILE/);
+  assert.match(game, /COMPONENTS/);
+  assert.match(game, /INSUFFICIENT COMPONENTS/);
+});
+
 test("streams a shuffled soundtrack through a crossfading audio manager", () => {
   assert.match(game, /new AudioManager/);
   assert.doesNotMatch(game, /new SynthAudio/);

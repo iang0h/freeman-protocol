@@ -12,9 +12,12 @@ import {
   selectAutoSentryPosition,
 } from "../app/game/sentry-placement.mjs";
 import {
+  AGENT_COMPONENT_UPGRADES,
   EVOLUTIONS,
+  PLAYER_ARMORS,
   applyUpgradeStack,
   getUpgradeDraft,
+  purchaseComponentUpgrade,
   purchaseEvolution,
 } from "../app/game/progression.mjs";
 import { takeNextTrack } from "../app/game/playlist.mjs";
@@ -172,6 +175,89 @@ test("permanent upgrades cap at two stacks and leave drafts", () => {
     "repair",
   );
   assert.equal(repair.stacks.repair, 9);
+});
+
+test("wave drafts offer one player, agent, and defense choice", () => {
+  assert.deepEqual(
+    getUpgradeDraft(1, {}).map((item) => item.category),
+    ["player", "agent", "defense"],
+  );
+});
+
+test("armor profiles expose mutually exclusive concrete player bonuses", () => {
+  assert.deepEqual(Object.keys(PLAYER_ARMORS), ["vanguard", "striker", "relay"]);
+  assert.equal(PLAYER_ARMORS.vanguard.bonuses.maxHealth, 35);
+  assert.equal(PLAYER_ARMORS.striker.bonuses.damageMultiplier, 1.2);
+  assert.equal(PLAYER_ARMORS.relay.bonuses.empMultiplier, 1.4);
+  assert.equal(PLAYER_ARMORS.relay.bonuses.healingMultiplier, 1.25);
+});
+
+test("each agent has a component-funded identity upgrade", () => {
+  assert.equal(AGENT_COMPONENT_UPGRADES.kairos[0].id, "stasis-array");
+  assert.equal(AGENT_COMPONENT_UPGRADES.kira[0].id, "hunter-core");
+  assert.equal(AGENT_COMPONENT_UPGRADES.forge[0].id, "breach-ammo");
+  assert.equal(AGENT_COMPONENT_UPGRADES.covenant[0].id, "nanite-reserve");
+  for (const upgrades of Object.values(AGENT_COMPONENT_UPGRADES)) {
+    assert.ok(upgrades[0].cost > 0);
+    assert.ok(Object.keys(upgrades[0].bonuses).length > 0);
+  }
+});
+
+test("component purchases deduct inventory only after valid validation", () => {
+  const state = {
+    components: 3,
+    armorId: null,
+    recruited: { kairos: true },
+    componentUpgradeRanks: {},
+  };
+  const purchased = purchaseComponentUpgrade(state, "kairos", "stasis-array");
+  assert.equal(purchased.components, 1);
+  assert.equal(purchased.componentUpgradeRanks["kairos:stasis-array"], 1);
+  assert.equal(state.components, 3);
+  assert.throws(
+    () => purchaseComponentUpgrade(state, "kairos", "not-real"),
+    /Unknown component upgrade/,
+  );
+  assert.deepEqual(state, {
+    components: 3,
+    armorId: null,
+    recruited: { kairos: true },
+    componentUpgradeRanks: {},
+  });
+  assert.throws(
+    () =>
+      purchaseComponentUpgrade(
+        { ...state, components: 1 },
+        "kairos",
+        "stasis-array",
+      ),
+    /Not enough Components/,
+  );
+});
+
+test("component upgrades cap ranks and armor selection stays exclusive", () => {
+  const base = {
+    components: 10,
+    armorId: null,
+    recruited: { kairos: true },
+    componentUpgradeRanks: { "kairos:stasis-array": 1 },
+  };
+  const rankTwo = purchaseComponentUpgrade(base, "kairos", "stasis-array");
+  assert.equal(rankTwo.componentUpgradeRanks["kairos:stasis-array"], 2);
+  assert.throws(
+    () => purchaseComponentUpgrade(rankTwo, "kairos", "stasis-array"),
+    /capped/,
+  );
+  const armored = purchaseComponentUpgrade(
+    { ...base, componentUpgradeRanks: {} },
+    "player",
+    "vanguard",
+  );
+  assert.equal(armored.armorId, "vanguard");
+  assert.throws(
+    () => purchaseComponentUpgrade(armored, "player", "relay"),
+    /already selected/,
+  );
 });
 
 test("shuffle bag plays every track and avoids boundary repeats", () => {

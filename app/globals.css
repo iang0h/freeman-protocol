@@ -545,6 +545,36 @@ canvas:focus-visible {
   cursor: not-allowed;
 }
 
+.progression-section {
+  width: min(1000px, 100%);
+  margin-top: 28px;
+}
+
+.progression-section__heading {
+  display: flex;
+  justify-content: space-between;
+  color: var(--steel);
+  font: 700 9px/1 var(--mono);
+  letter-spacing: 0.12em;
+}
+
+.progression-section__heading strong {
+  color: var(--signal);
+}
+
+.progression-grid {
+  margin-top: 10px;
+}
+
+.progression-grid button {
+  min-height: 190px;
+}
+
+.progression-grid button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .audio-settings {
   display: grid;
   gap: 10px;
