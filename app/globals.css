@@ -79,6 +79,13 @@ canvas:focus-visible {
   height: 100%;
   cursor: crosshair;
   touch-action: none;
+  filter: saturate(1.04) contrast(1.02);
+}
+
+@media (forced-colors: active) {
+  .game-canvas {
+    filter: contrast(1.12);
+  }
 }
 
 .atmosphere {

@@ -46,6 +46,101 @@ import {
   tickTemporarySubAgent,
   tickSubAgents,
 } from "../app/game/autonomy-rules.mjs";
+import {
+  getTerrainModifier,
+  getWaveModifiers,
+  resolveEmpDamage,
+} from "../app/game/encounter-rules.mjs";
+
+test("wave one preserves the unmodified encounter and EMP", () => {
+  const modifiers = getWaveModifiers(1);
+
+  assert.deepEqual(modifiers.resistance, {
+    shieldReduction: 0,
+    decoyReduction: 0,
+    armorReduction: 0,
+    jammerReduction: 0,
+  });
+  assert.deepEqual(modifiers.flagsByType, {
+    virus: [],
+    phisher: [],
+    trojan: [],
+    rootkit: [],
+  });
+  assert.equal(
+    resolveEmpDamage(
+      100,
+      { resistanceFlags: ["shield", "decoy", "armor", "jammer"] },
+      modifiers,
+    ),
+    100,
+  );
+  assert.equal(getTerrainModifier(1).id, "none");
+});
+
+test("later waves add bounded visible hacker counter-play", () => {
+  const waveTwo = getWaveModifiers(2);
+  const waveFour = getWaveModifiers(4);
+  const finalWave = getWaveModifiers(8);
+
+  assert.deepEqual(waveTwo.flagsByType.virus, ["shield"]);
+  assert.deepEqual(waveFour.flagsByType.phisher, ["decoy"]);
+  assert.deepEqual(waveFour.flagsByType.trojan, ["shield", "armor"]);
+  assert.deepEqual(finalWave.flagsByType.rootkit, ["shield", "jammer"]);
+  assert.ok(finalWave.resistance.shieldReduction <= 0.35);
+  assert.ok(finalWave.resistance.decoyReduction <= 0.7);
+  assert.ok(finalWave.resistance.armorReduction <= 0.45);
+  assert.ok(finalWave.resistance.jammerReduction <= 0.3);
+  assert.deepEqual(getWaveModifiers(99), finalWave);
+});
+
+test("EMP resolution composes only resistance flags visible on the target", () => {
+  const modifiers = getWaveModifiers(8);
+  const shielded = resolveEmpDamage(
+    100,
+    { resistanceFlags: ["shield"] },
+    modifiers,
+  );
+  const layered = resolveEmpDamage(
+    100,
+    { resistanceFlags: ["shield", "armor", "jammer"] },
+    modifiers,
+  );
+
+  assert.equal(shielded, 65);
+  assert.equal(layered, 25);
+  assert.equal(
+    resolveEmpDamage(100, { resistanceFlags: [] }, modifiers),
+    100,
+  );
+});
+
+test("terrain modifiers are deterministic, serializable, and cycle after wave one", () => {
+  const expected = [
+    "none",
+    "relay-storm",
+    "firewall-lanes",
+    "data-fog",
+    "split-breach",
+    "relay-storm",
+    "firewall-lanes",
+    "data-fog",
+  ];
+
+  assert.deepEqual(
+    expected.map((_, index) => getTerrainModifier(index + 1).id),
+    expected,
+  );
+  for (let wave = 1; wave <= 8; wave += 1) {
+    const first = getTerrainModifier(wave);
+    const repeated = getTerrainModifier(wave);
+    assert.deepEqual(first, repeated);
+    assert.doesNotThrow(() => JSON.stringify(first));
+    assert.ok(first.empMultiplier >= 0.75 && first.empMultiplier <= 1.15);
+    assert.ok(first.targetingRangeMultiplier >= 0.7);
+    assert.ok(Math.abs(first.routeBias) <= 0.35);
+  }
+});
 
 test("paces queued enemies without changing the remaining threat total", () => {
   assert.equal(getActiveEnemyLimit("webgl"), 36);

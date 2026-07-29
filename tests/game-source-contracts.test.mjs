@@ -51,7 +51,7 @@ test("dynamic WebGL objects use centralized cleanup and pooling", () => {
 test("WebGL targeting uses a spatial grid", () => {
   assert.match(game, /new SpatialGrid<EnemyRuntime>/);
   assert.match(game, /this\.enemyGrid\.rebuild\(this\.enemies\)/);
-  assert.match(game, /this\.enemyGrid\.query\(position, maxDistance\)/);
+  assert.match(game, /this\.enemyGrid\.query\(position, targetingRange\)/);
 });
 
 test("both renderers pace spawns and include queued threats in the HUD", () => {
@@ -316,6 +316,33 @@ test("recruitment advances directly to passive autonomous observation", () => {
       engine,
       /this\.emitTutorialEvent\("kairos-recruited"\)/,
     );
+  }
+});
+
+test("both renderers consume shared hacker and terrain encounter rules", () => {
+  assert.match(game, /getWaveModifiers/);
+  assert.match(game, /getTerrainModifier/);
+  assert.ok((game.match(/resolveEmpDamage\(/g) ?? []).length >= 2);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /resistanceFlags/);
+    assert.match(engine, /terrain\.spawnAngleOffset/);
+    assert.match(engine, /terrain\.targetingRangeMultiplier/);
+    assert.match(engine, /terrain\.routeBias/);
+  }
+});
+
+test("both renderers show resistance cues and deterministic terrain overlays", () => {
+  assert.match(webglGame, /enemy-resistance-cue/);
+  assert.match(webglGame, /terrain-overlay/);
+  assert.match(canvasGame, /private drawResistanceCues/);
+  assert.match(canvasGame, /private drawTerrainOverlay/);
+  for (const label of [
+    "RELAY STORM",
+    "FIREWALL LANES",
+    "DATA FOG",
+    "SPLIT BREACH",
+  ]) {
+    assert.match(game, new RegExp(label));
   }
 });
 
