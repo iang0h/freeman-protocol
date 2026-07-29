@@ -11228,6 +11228,20 @@ export default function FreemanProtocol() {
 
       {mode === "intro" && (
         <section className="intro-screen">
+          <video
+            className="hero-trailer"
+            autoPlay
+            muted
+            loop
+            playsInline
+            poster="/video/freeman-protocol-trailer-poster.jpg"
+            aria-hidden="true"
+          >
+            <source
+              src="/video/freeman-protocol-trailer.mp4"
+              type="video/mp4"
+            />
+          </video>
           <div className="intro-network" aria-hidden="true">
             <i /><i /><i /><i /><i /><i /><i />
           </div>

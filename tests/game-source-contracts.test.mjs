@@ -703,6 +703,20 @@ test("persists completion and offers a first-wave retry", () => {
   assert.match(game, /engineRef\.current\?\.retryWave\(\)/);
 });
 
+test("intro screen owns a muted autoplay trailer with a reduced-motion fallback", () => {
+  const intro = game.slice(game.indexOf('{mode === "intro" && ('), game.indexOf('{mode === "upgrade" && ('));
+  assert.match(intro, /className="hero-trailer"/);
+  assert.match(intro, /autoPlay/);
+  assert.match(intro, /muted/);
+  assert.match(intro, /loop/);
+  assert.match(intro, /playsInline/);
+  assert.match(intro, /poster="\/video\/freeman-protocol-trailer-poster\.jpg"/);
+  assert.match(intro, /src="\/video\/freeman-protocol-trailer\.mp4"/);
+  assert.match(intro, /mode === "intro"/);
+  assert.match(game, /prefers-reduced-motion: reduce/);
+  assert.match(game, /hero-trailer/);
+});
+
 test("documents the complete warband and EMP discipline catalog", () => {
   for (const label of [
     "EMP Discipline",
