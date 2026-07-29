@@ -717,6 +717,7 @@ class FreemanEngine {
   private readonly activeEnemyLimit = getActiveEnemyLimit("webgl");
   private reducedMotion = false;
   private hasPointerAim = false;
+  private touchAimActive = false;
   private squadCommand: SquadCommand = "follow";
   private placementActive = false;
   private placementGhost: THREE.Group | null = null;
@@ -2644,6 +2645,8 @@ class FreemanEngine {
   private resetInput() {
     this.keys.clear();
     this.touchMove.set(0, 0);
+    if (this.touchAimActive) this.hasPointerAim = false;
+    this.touchAimActive = false;
     if (
       this.dragPointer !== null &&
       this.canvas.hasPointerCapture(this.dragPointer)
@@ -2662,8 +2665,10 @@ class FreemanEngine {
     this.canvas.focus();
     if (event.pointerType === "touch" && event.button === 0) {
       const rect = this.canvas.getBoundingClientRect();
-      tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      this.touchAimActive = true;
       this.updateAim(event);
+      this.hasPointerAim = tap.x >= 0 && tap.y >= 0;
       if (this.placementActive) this.confirmDefensePlacement();
       else this.attack();
       return;
@@ -4495,6 +4500,7 @@ class FreemanCanvasEngine implements GameController {
   private reducedMotion = false;
   private shake = 0;
   private hasPointerAim = false;
+  private touchAimActive = false;
   private squadCommand: SquadCommand = "follow";
   private placementActive = false;
   private tutorialStep: TutorialStep | null = null;
@@ -5163,6 +5169,8 @@ class FreemanCanvasEngine implements GameController {
     this.keys.clear();
     this.touchMove.x = 0;
     this.touchMove.y = 0;
+    if (this.touchAimActive) this.hasPointerAim = false;
+    this.touchAimActive = false;
     if (
       this.dragPointer !== null &&
       this.canvas.hasPointerCapture(this.dragPointer)
@@ -5180,8 +5188,10 @@ class FreemanCanvasEngine implements GameController {
     this.canvas.focus();
     if (event.pointerType === "touch" && event.button === 0) {
       const rect = this.canvas.getBoundingClientRect();
-      tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      this.touchAimActive = true;
       this.updateAim(event);
+      this.hasPointerAim = tap.x >= 0 && tap.y >= 0;
       if (this.placementActive) this.confirmDefensePlacement();
       else this.attack();
       return;

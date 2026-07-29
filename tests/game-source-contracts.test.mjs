@@ -149,6 +149,14 @@ test("both engines support touch tap-to-fire without routing through movement", 
   }
 });
 
+test("touch cancellation clears temporary touch aim in both engines", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /touchAimActive = false/);
+    assert.match(engine, /if \(this\.touchAimActive\) this\.hasPointerAim = false/);
+    assert.match(engine, /private onPointerCancel[\s\S]*?this\.resetInput\(\)/);
+  }
+});
+
 test("WebGL engine runs the shared tutorial and checkpoints wave one", () => {
   assert.match(webglGame, /advanceTutorial/);
   assert.match(webglGame, /FIRST_WAVE\.initial/);
