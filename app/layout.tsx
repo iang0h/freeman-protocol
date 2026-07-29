@@ -16,6 +16,27 @@ export const metadata: Metadata = {
   title: "Freeman Protocol | A Kairos Field Experiment",
   description:
     "Recruit AI agents, defend the Covenant Core, and contain the NULL siege in a playable cyberpunk action RPG.",
+  openGraph: {
+    title: "Freeman Protocol | A Kairos Field Experiment",
+    description:
+      "Recruit an autonomous AI warband, deploy sentries, and survive the NULL siege.",
+    type: "website",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1731,
+        height: 909,
+        alt: "Freeman Protocol defender facing a corrupted network warboss with an AI squad and sentry towers.",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Freeman Protocol | A Kairos Field Experiment",
+    description:
+      "Recruit an autonomous AI warband, deploy sentries, and survive the NULL siege.",
+    images: ["/og-image.png"],
+  },
   other: {
     "codex-preview": "development",
   },
