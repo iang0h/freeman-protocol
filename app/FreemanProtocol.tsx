@@ -22,7 +22,7 @@ import {
   getUpgradeDraft,
   purchaseEvolution,
 } from "./game/progression.mjs";
-import { normalizeStickInput } from "./game/input-rules.mjs";
+import { normalizeStickInput, tapToFire } from "./game/input-rules.mjs";
 import {
   applyLootPickup,
   canCollectLoot,
@@ -2660,6 +2660,14 @@ class FreemanEngine {
 
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
+    if (event.pointerType === "touch" && event.button === 0) {
+      const rect = this.canvas.getBoundingClientRect();
+      tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      this.updateAim(event);
+      if (this.placementActive) this.confirmDefensePlacement();
+      else this.attack();
+      return;
+    }
     if (event.button === 1) {
       this.dragPointer = event.pointerId;
       this.dragX = event.clientX;
@@ -5170,6 +5178,14 @@ class FreemanCanvasEngine implements GameController {
 
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
+    if (event.pointerType === "touch" && event.button === 0) {
+      const rect = this.canvas.getBoundingClientRect();
+      tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      this.updateAim(event);
+      if (this.placementActive) this.confirmDefensePlacement();
+      else this.attack();
+      return;
+    }
     if (event.button === 1) {
       this.dragPointer = event.pointerId;
       this.dragX = event.clientX;

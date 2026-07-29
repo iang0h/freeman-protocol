@@ -27,7 +27,7 @@ import {
   canRetryFirstWave,
   isTutorialProtected,
 } from "../app/game/tutorial-rules.mjs";
-import { normalizeStickInput } from "../app/game/input-rules.mjs";
+import { normalizeStickInput, tapToFire } from "../app/game/input-rules.mjs";
 import {
   LOOT_TYPES,
   applyLootPickup,
@@ -270,6 +270,11 @@ test("virtual stick applies a dead zone and preserves direction", () => {
   const diagonal = normalizeStickInput(0.6, 0.8);
   assert.equal(diagonal.x, 0.6);
   assert.equal(diagonal.y, 0.8);
+});
+
+test("mobile tap-to-fire clamps normalized arena coordinates", () => {
+  assert.deepEqual(tapToFire(-0.2, 1.4), { x: 0, y: 1 });
+  assert.deepEqual(tapToFire(0.4, 0.6), { x: 0.4, y: 0.6 });
 });
 
 test("loot drops are deterministic and respect each enemy drop chance", () => {

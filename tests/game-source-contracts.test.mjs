@@ -141,6 +141,14 @@ test("both engines clear latched input across lifecycle boundaries", () => {
   assert.match(game, /normalizeStickInput/);
 });
 
+test("both engines support touch tap-to-fire without routing through movement", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /pointerType === "touch"/);
+    assert.match(engine, /tapToFire\(/);
+    assert.match(engine, /else this\.attack\(\)/);
+  }
+});
+
 test("WebGL engine runs the shared tutorial and checkpoints wave one", () => {
   assert.match(webglGame, /advanceTutorial/);
   assert.match(webglGame, /FIRST_WAVE\.initial/);
