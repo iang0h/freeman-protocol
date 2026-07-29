@@ -82,6 +82,15 @@ test("loot collection is overlap-gated in both renderers", () => {
   }
 });
 
+test("both renderers clear uncollected loot before every wave transition", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /private completeWave\(\) \{[\s\S]*?this\.clearLootPickups\(\);[\s\S]*?if \(this\.wave >= TOTAL_WAVES\)/,
+    );
+  }
+});
+
 test("sentries support automatic deployment and optional manual placement", () => {
   assert.match(game, /AUTO-DEPLOY SENTRY/);
   assert.match(game, /PLACE MANUALLY/);

@@ -3513,8 +3513,8 @@ class FreemanEngine {
   private completeWave() {
     this.resetInput();
     this.cancelDefensePlacement(false);
+    this.clearLootPickups();
     if (this.wave >= TOTAL_WAVES) {
-      this.clearLootPickups();
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
@@ -6043,8 +6043,8 @@ class FreemanCanvasEngine implements GameController {
   private completeWave() {
     this.resetInput();
     this.placementActive = false;
+    this.clearLootPickups();
     if (this.wave >= TOTAL_WAVES) {
-      this.clearLootPickups();
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
