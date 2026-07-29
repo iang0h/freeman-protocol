@@ -300,6 +300,20 @@ test("temporary autonomous sub-agents are bounded, rendered, expired, and reset"
   }
 });
 
+test("both renderers emit pooled visual feedback when a temporary sub-agent spawns", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const spawn = engine.slice(
+      engine.indexOf("private maybeSpawnTemporarySubAgent("),
+      engine.indexOf("private clearTemporarySubAgents("),
+    );
+    assert.match(
+      spawn,
+      /if \(!spawned\) return;[\s\S]*?this\.addRing\([\s\S]*?this\.addBurst\(/,
+    );
+  }
+  assert.match(webglGame, /this\.temporarySubAgentPool\.acquire/);
+});
+
 test("both engines consume shared temporary role actions and health cues", () => {
   assert.match(threeResources, /createTemporarySubAgentMarker/);
   assert.match(threeResources, /resetTemporarySubAgentMarker/);

@@ -3547,6 +3547,12 @@ class FreemanEngine {
       healthRatio: 1,
       lifetimeRatio: 1,
     });
+    this.addRing(agent.group.position, agent.color, 0.12, 1.4, 0.28);
+    this.addBurst(
+      agent.group.position.clone().add(new THREE.Vector3(0, 0.35, 0)),
+      agent.color,
+      8,
+    );
     this.autonomyState[agent.id] = intent;
     this.callbacks.onToast({
       eyebrow: "TEMPORARY SUB-AGENT DEPLOYED",
@@ -6673,6 +6679,8 @@ class FreemanCanvasEngine implements GameController {
       healthRatio: 1,
       lifetimeRatio: 1,
     });
+    this.addRing(agent.x, agent.z, agent.color, 0.12, 1.4, 0.28);
+    this.addBurst(agent.x, agent.z, agent.color, 8);
     this.autonomyState[agent.id] = intent;
     this.callbacks.onToast({
       eyebrow: "TEMPORARY SUB-AGENT DEPLOYED",

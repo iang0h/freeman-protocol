@@ -44,3 +44,23 @@
 - Lifetime upgrades are rule-driven through the supplied `upgrades` argument;
   no new upgrade purchase UI was introduced because Task 4 defines the lifetime
   interface but no additional purchasable upgrade definition.
+
+## Review follow-up: spawn feedback
+
+- Added immediate spawn feedback in both `maybeSpawnTemporarySubAgent` paths:
+  a deployment ring and an eight-particle burst at the parent location after a
+  child has been successfully created. The WebGL child marker continues to use
+  `temporarySubAgentPool`; its existing expiry ring and pooled release remain
+  unchanged.
+- Added a source-contract regression test that scopes each renderer's spawn
+  method and requires both ring and burst feedback, plus the WebGL marker pool
+  acquisition contract.
+
+### Follow-up verification
+
+- `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/*.test.mjs`
+  - Passed: 111 tests, 0 failures.
+- `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node ../../node_modules/typescript/bin/tsc --noEmit`
+  - Passed: exit 0.
+- `git diff --check`
+  - Passed: no whitespace errors.
