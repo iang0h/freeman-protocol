@@ -82,6 +82,21 @@ test("loot collection is overlap-gated in both renderers", () => {
   }
 });
 
+test("loot presentation is shared, pooled, touch-safe, and announced", () => {
+  assert.match(game, /getLootPresentation/);
+  assert.match(webglGame, /new BoundedPool<THREE\.Group>/);
+  assert.match(
+    webglGame,
+    /this\.lootPool\.release\(pickup\.mesh, \(mesh\) => resetLootPickupMesh/,
+  );
+  assert.match(webglGame, /mesh\.position\.y = 0\.62 \+ Math\.sin/);
+  assert.match(canvasGame, /getLootPresentation\(pickup\.type\)/);
+  assert.match(canvasGame, /presentation\.worldLabel/);
+  assert.match(game, /radius: TOUCH_SAFE_PICKUP_RADIUS/);
+  assert.match(game, /aria-live="polite"/);
+  assert.match(game, /presentation\.toastText/);
+});
+
 test("both renderers clear uncollected loot before every wave transition", () => {
   for (const engine of [webglGame, canvasGame]) {
     assert.match(

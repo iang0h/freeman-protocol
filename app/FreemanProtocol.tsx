@@ -26,6 +26,7 @@ import { normalizeStickInput, tapToFire } from "./game/input-rules.mjs";
 import {
   applyLootPickup,
   canCollectLoot,
+  getLootPresentation,
   rollLootDrop,
 } from "./game/loot-rules.mjs";
 import {
@@ -78,7 +79,14 @@ type AutonomyRole = "assault" | "support" | "defend";
 type AutonomyIntent = AutonomyRole | "improvise" | "follow";
 type StartOptions = { tutorial: boolean };
 type LootType = "repair" | "component" | "upgrade-shard";
-type LootRecord = { id: string; type: LootType; x: number; y: number; value: number };
+type LootRecord = {
+  id: string;
+  type: LootType;
+  x: number;
+  y: number;
+  value: number;
+  radius?: number;
+};
 type LootCounters = { repairs: number; components: number; shards: number };
 
 type FirstWaveCheckpoint = {
@@ -94,6 +102,7 @@ const ARENA_RADIUS = 17.5;
 const SPAWN_RADIUS = 15.2;
 const TUTORIAL_STORAGE_KEY = "freeman-tutorial-complete";
 const MAX_TEMPORARY_SUB_AGENTS_PER_WAVE = 3;
+const TOUCH_SAFE_PICKUP_RADIUS = 0.75;
 
 const AUTONOMY_ROLES: Record<AgentId, AutonomyRole> = {
   kairos: "defend",
@@ -251,7 +260,7 @@ type EffectRuntime = {
   kind: "ring" | "beam" | "burst" | "portal" | "text";
 };
 
-type LootRuntime = LootRecord & { mesh: THREE.Mesh };
+type LootRuntime = LootRecord & { mesh: THREE.Group };
 
 type AnimatedRig = {
   root: THREE.Group;
@@ -681,7 +690,7 @@ class FreemanEngine {
   private readonly enemyGrid = new SpatialGrid<EnemyRuntime>(3);
   private readonly disposedResources = new WeakSet<object>();
   private readonly projectilePool = new BoundedPool<THREE.Mesh>(128);
-  private readonly lootPool = new BoundedPool<THREE.Mesh>(48);
+  private readonly lootPool = new BoundedPool<THREE.Group>(48);
   private readonly pickups: LootRuntime[] = [];
   private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly aimPoint = new THREE.Vector3(0, 0, -4);
@@ -3587,7 +3596,11 @@ class FreemanEngine {
     for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
       const pickup = this.pickups[index];
       pickup.mesh.rotation.y += delta * 2.4;
-      pickup.mesh.position.y = 0.48 + Math.sin(this.elapsed * 3 + index) * 0.08;
+      pickup.mesh.position.y = 0.62 + Math.sin(this.elapsed * 3 + index) * 0.1;
+      pickup.mesh.scale.setScalar(
+        Math.min(1, pickup.mesh.scale.x + delta * 5) *
+          (1 + Math.sin(this.elapsed * 4 + index) * 0.035),
+      );
       if (!canCollectLoot({ x: this.player.group.position.x, y: this.player.group.position.z }, pickup)) continue;
       const next = applyLootPickup({ health: this.player.hp, maxHealth: this.player.maxHp, coreHealth: this.core.hp, maxCoreHealth: this.core.maxHp, components: this.loot.components, upgradeShards: this.loot.shards }, pickup);
       this.player.hp = next.health;
@@ -3596,7 +3609,8 @@ class FreemanEngine {
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
       if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
-      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
+      const presentation = getLootPresentation(pickup.type);
+      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: presentation.toastText, detail: "Recovered from a destroyed threat." });
       this.releaseLootPickup(pickup);
       this.pickups.splice(index, 1);
       this.emitHud(true);
@@ -3842,8 +3856,15 @@ class FreemanEngine {
     if (drop) {
       const mesh = this.lootPool.acquire(() => createLootPickupMesh(drop.type));
       resetLootPickupMesh(mesh, drop.type);
-      const pickup: LootRuntime = { ...drop, x: deathPosition.x + drop.x * 0.35, y: deathPosition.z + drop.y * 0.35, mesh };
-      mesh.position.set(pickup.x, 0.48, pickup.y);
+      const pickup: LootRuntime = {
+        ...drop,
+        x: deathPosition.x + drop.x * 0.35,
+        y: deathPosition.z + drop.y * 0.35,
+        radius: TOUCH_SAFE_PICKUP_RADIUS,
+        mesh,
+      };
+      mesh.position.set(pickup.x, 0.62, pickup.y);
+      mesh.scale.setScalar(0.15);
       this.scene.add(mesh);
       this.pickups.push(pickup);
     }
@@ -6445,7 +6466,14 @@ class FreemanCanvasEngine implements GameController {
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
     const drop = rollLootDrop(enemy.type, Math.random);
-    if (drop) this.pickups.push({ ...drop, x: enemy.x + drop.x * 0.35, y: enemy.z + drop.y * 0.35 });
+    if (drop) {
+      this.pickups.push({
+        ...drop,
+        x: enemy.x + drop.x * 0.35,
+        y: enemy.z + drop.y * 0.35,
+        radius: TOUCH_SAFE_PICKUP_RADIUS,
+      });
+    }
     this.addRing(enemy.x, enemy.z, 0xd9793f, 0.2, enemy.radius * 2.4, 0.42);
     this.addBurst(
       enemy.x,
@@ -6484,7 +6512,8 @@ class FreemanCanvasEngine implements GameController {
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
       if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
-      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
+      const presentation = getLootPresentation(pickup.type);
+      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: presentation.toastText, detail: "Recovered from a destroyed threat." });
       this.pickups.splice(index, 1);
       this.emitHud(true);
     }
@@ -6827,16 +6856,45 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private drawLootPickup(pickup: FlatLootRuntime) {
-    const point = this.project(pickup.x, pickup.y, 0.35 + Math.sin(this.elapsed * 3) * 0.08);
-    const color = pickup.type === "repair" ? "#78d6a5" : pickup.type === "component" ? "#f0a65a" : "#b9a4ff";
+    const presentation = getLootPresentation(pickup.type);
+    const point = this.project(
+      pickup.x,
+      pickup.y,
+      0.48 + Math.sin(this.elapsed * 3) * 0.1,
+    );
+    const ground = this.project(pickup.x, pickup.y, 0);
+    const beamTop = this.project(pickup.x, pickup.y, presentation.beamHeight);
+    const pulse = 1 + Math.sin(this.elapsed * 4) * 0.08;
     const context = this.context;
     context.save();
-    context.fillStyle = color;
-    context.shadowColor = color;
-    context.shadowBlur = 14;
+    context.strokeStyle = presentation.color;
+    context.globalAlpha = 0.5;
+    context.lineWidth = Math.max(2, point.scale * 0.08);
     context.beginPath();
-    context.arc(point.x, point.y, Math.max(4, point.scale * 0.2), 0, Math.PI * 2);
+    context.moveTo(ground.x, ground.y);
+    context.lineTo(beamTop.x, beamTop.y);
+    context.stroke();
+    context.globalAlpha = 1;
+    context.fillStyle = presentation.color;
+    context.shadowColor = presentation.color;
+    context.shadowBlur = 20;
+    context.beginPath();
+    context.arc(
+      point.x,
+      point.y,
+      Math.max(7, point.scale * 0.28) * pulse,
+      0,
+      Math.PI * 2,
+    );
     context.fill();
+    context.shadowBlur = 6;
+    context.font = `700 ${Math.max(11, point.scale * 0.22)}px system-ui`;
+    context.textAlign = "center";
+    context.textBaseline = "bottom";
+    context.lineWidth = 4;
+    context.strokeStyle = "#05080b";
+    context.strokeText(presentation.worldLabel, beamTop.x, beamTop.y - 6);
+    context.fillText(presentation.worldLabel, beamTop.x, beamTop.y - 6);
     context.restore();
   }
 
@@ -8295,7 +8353,12 @@ export default function FreemanProtocol() {
       )}
 
       {toast && (
-        <div className="mission-toast" key={toast.id} role="status">
+        <div
+          className="mission-toast"
+          key={toast.id}
+          role="status"
+          aria-live="polite"
+        >
           <small>{toast.eyebrow}</small>
           <strong>{toast.title}</strong>
           <span>{toast.detail}</span>

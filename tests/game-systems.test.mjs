@@ -287,11 +287,40 @@ test("loot drops are deterministic and respect each enemy drop chance", () => {
   assert.deepEqual(first, repeated);
   assert.deepEqual(first, {
     id: "loot-trojan-component-250-750",
-    type: LOOT_TYPES.component,
+    type: LOOT_TYPES.component.id,
     x: -0.5,
     y: 0.5,
     value: 2,
   });
+});
+
+test("common loot types publish readable presentation metadata", () => {
+  for (const loot of [
+    LOOT_TYPES.repair,
+    LOOT_TYPES.component,
+  ]) {
+    assert.equal(typeof loot.id, "string");
+    assert.ok(loot.label.length >= 4);
+    assert.match(loot.color, /^#[0-9a-f]{6}$/i);
+    assert.ok(loot.dropChance > 0 && loot.dropChance <= 1);
+    assert.ok(loot.value > 0);
+    assert.equal(loot.eliteOnly, false);
+  }
+});
+
+test("elite-only loot is never selected from common enemies", () => {
+  assert.equal(LOOT_TYPES.upgradeShard.eliteOnly, true);
+  const commonDrop = rollLootDrop(
+    "trojan",
+    sequence([0.1, 0.99, 0.25, 0.75]),
+  );
+  assert.notEqual(commonDrop?.type, LOOT_TYPES.upgradeShard.id);
+
+  const eliteDrop = rollLootDrop(
+    "rootkit",
+    sequence([0.1, 0.99, 0.25, 0.75]),
+  );
+  assert.equal(eliteDrop?.type, LOOT_TYPES.upgradeShard.id);
 });
 
 test("loot requires player overlap before it can be collected", () => {
@@ -310,7 +339,7 @@ test("repair loot clamps player and core health at their maxima", () => {
     upgradeShards: 0,
   };
   assert.deepEqual(
-    applyLootPickup(state, { type: LOOT_TYPES.repair, value: 25 }),
+    applyLootPickup(state, { type: LOOT_TYPES.repair.id, value: 25 }),
     { ...state, health: 100, coreHealth: 180 },
   );
   assert.deepEqual(state, {
@@ -333,7 +362,7 @@ test("component loot increments the component inventory", () => {
     upgradeShards: 0,
   };
   const result = applyLootPickup(state, {
-    type: LOOT_TYPES.component,
+    type: LOOT_TYPES.component.id,
     value: 2,
   });
   assert.equal(result.components, 5);
