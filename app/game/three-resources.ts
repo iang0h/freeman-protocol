@@ -98,3 +98,36 @@ export class BoundedPool<T> {
     return this.available.length;
   }
 }
+
+const LOOT_COLORS: Record<string, number> = {
+  repair: 0x78d6a5,
+  component: 0xf0a65a,
+  "upgrade-shard": 0xb9a4ff,
+};
+
+export function createLootPickupMesh(type: string) {
+  const color = LOOT_COLORS[type] ?? 0xffffff;
+  const mesh = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.28, 0),
+    new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 1.8,
+      metalness: 0.2,
+      roughness: 0.35,
+    }),
+  );
+  mesh.name = "loot-pickup";
+  return mesh;
+}
+
+export function resetLootPickupMesh(mesh: THREE.Mesh, type: string) {
+  const color = LOOT_COLORS[type] ?? 0xffffff;
+  const material = mesh.material as THREE.MeshStandardMaterial;
+  material.color.setHex(color);
+  material.emissive.setHex(color);
+  mesh.position.set(0, 0, 0);
+  mesh.rotation.set(0, 0, 0);
+  mesh.scale.setScalar(1);
+  mesh.removeFromParent();
+}

@@ -1151,6 +1151,43 @@ canvas:focus-visible {
     linear-gradient(to top, rgba(5, 9, 11, 0.68), transparent 38%);
 }
 
+.intro-network {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(58vw, 900px);
+  overflow: hidden;
+  opacity: 0.72;
+  background:
+    linear-gradient(28deg, transparent 49.8%, rgba(158, 191, 192, 0.22) 50%, transparent 50.2%),
+    linear-gradient(151deg, transparent 49.8%, rgba(220, 117, 64, 0.18) 50%, transparent 50.2%),
+    radial-gradient(circle at 56% 48%, rgba(43, 121, 132, 0.18), transparent 30%);
+  background-size: 260px 190px, 340px 260px, auto;
+  mask-image: linear-gradient(to right, transparent, #000 28%);
+  animation: intro-network-drift 22s linear infinite;
+  pointer-events: none;
+}
+
+.intro-network i {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--ice);
+  border-radius: 50%;
+  background: rgba(158, 191, 192, 0.12);
+  box-shadow: 0 0 18px rgba(158, 191, 192, 0.74);
+  animation: intro-node-pulse 3.1s ease-in-out infinite;
+}
+
+.intro-network i:nth-child(1) { top: 19%; left: 16%; }
+.intro-network i:nth-child(2) { top: 38%; left: 51%; animation-delay: -1.1s; }
+.intro-network i:nth-child(3) { top: 71%; left: 29%; animation-delay: -2.4s; }
+.intro-network i:nth-child(4) { top: 17%; right: 13%; border-color: var(--signal); box-shadow: 0 0 18px rgba(220, 117, 64, 0.72); animation-delay: -0.5s; }
+.intro-network i:nth-child(5) { top: 74%; right: 14%; animation-delay: -1.8s; }
+.intro-network i:nth-child(6) { top: 54%; right: 39%; border-color: #a78bfa; box-shadow: 0 0 18px rgba(167, 139, 250, 0.72); animation-delay: -2.8s; }
+.intro-network i:nth-child(7) { top: 43%; left: 4%; animation-delay: -1.4s; }
+
 .intro-copy {
   position: relative;
   z-index: 2;
@@ -2374,5 +2411,18 @@ canvas:focus-visible {
 @keyframes tutorial-pulse {
   to {
     filter: drop-shadow(0 0 10px rgba(220, 117, 64, 0.7));
+  }
+}
+
+@keyframes intro-network-drift {
+  to {
+    background-position: 260px 0, -340px 0, 0 0;
+  }
+}
+
+@keyframes intro-node-pulse {
+  50% {
+    opacity: 0.32;
+    transform: scale(0.68);
   }
 }

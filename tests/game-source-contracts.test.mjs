@@ -59,6 +59,38 @@ test("both renderers pace spawns and include queued threats in the HUD", () => {
   assert.ok((game.match(/canCompleteWave\(/g) ?? []).length >= 2);
 });
 
+test("enemy defeat creates a loot pickup in both renderers", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const damageEnemy = engine.slice(
+      engine.indexOf("private damageEnemy("),
+      engine.indexOf("private fireProjectile(") >= 0
+        ? engine.indexOf("private fireProjectile(")
+        : engine.indexOf("private removeProjectile("),
+    );
+    assert.match(damageEnemy, /rollLootDrop\(enemy\.type, Math\.random\)/);
+    assert.match(damageEnemy, /this\.pickups\.push/);
+  }
+});
+
+test("loot collection is overlap-gated in both renderers", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /private updateLootPickups\([\s\S]*?canCollectLoot\([\s\S]*?applyLootPickup\(/,
+    );
+    assert.match(engine, /private clearLootPickups\(\)/);
+  }
+});
+
+test("both renderers clear uncollected loot before every wave transition", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /private completeWave\(\) \{[\s\S]*?this\.clearLootPickups\(\);[\s\S]*?if \(this\.wave >= TOTAL_WAVES\)/,
+    );
+  }
+});
+
 test("sentries support automatic deployment and optional manual placement", () => {
   assert.match(game, /AUTO-DEPLOY SENTRY/);
   assert.match(game, /PLACE MANUALLY/);
@@ -109,6 +141,22 @@ test("both engines clear latched input across lifecycle boundaries", () => {
   assert.match(game, /normalizeStickInput/);
 });
 
+test("both engines support touch tap-to-fire without routing through movement", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /pointerType === "touch"/);
+    assert.match(engine, /tapToFire\(/);
+    assert.match(engine, /else this\.attack\(\)/);
+  }
+});
+
+test("touch cancellation clears temporary touch aim in both engines", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /touchAimActive = false/);
+    assert.match(engine, /if \(this\.touchAimActive\) this\.hasPointerAim = false/);
+    assert.match(engine, /private onPointerCancel[\s\S]*?this\.resetInput\(\)/);
+  }
+});
+
 test("WebGL engine runs the shared tutorial and checkpoints wave one", () => {
   assert.match(webglGame, /advanceTutorial/);
   assert.match(webglGame, /FIRST_WAVE\.initial/);
@@ -141,16 +189,13 @@ test("tutorial events are phase-gated instead of queued", () => {
   assert.match(webglGame, /this\.tutorialResolved = true;/);
 });
 
-test("both engines keep 79 Compute unchanged when KIRA is attempted during the KAIROS step", () => {
+test("both engines gate tutorial recruitment without blocking optional squad commands", () => {
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
       engine,
       /recruit\(id: AgentId\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, `recruit-\$\{id\}`\)\) return;\s*if \(this\.mode !== "playing"\) return;[\s\S]*?this\.addAgent/,
     );
-    assert.match(
-      engine,
-      /setSquadCommand\(command: SquadCommand\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, "guard-core"\) && command === "defend"\) return;/,
-    );
+    assert.doesNotMatch(engine, /canPerformTutorialAction\(this\.tutorialStep, "guard-core"\)/);
   }
 });
 
@@ -161,6 +206,65 @@ test("both engines consume the shared observe breach and clear replay placement"
     webglGame,
     /retryWave\(\) \{[\s\S]*?this\.resetInput\(\);[\s\S]*?this\.cancelDefensePlacement\(false\);/,
   );
+});
+
+test("both engines drive recruited agents from shared autonomous role intents", () => {
+  assert.match(game, /decideAgentIntent/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private autonomyState/);
+    assert.match(engine, /private temporarySubAgents/);
+    assert.match(
+      engine,
+      /private updateAgents\([\s\S]*?decideAgentIntent\([\s\S]*?intent === "assault"[\s\S]*?intent === "support"[\s\S]*?intent === "defend"/,
+    );
+  }
+});
+
+test("temporary autonomous sub-agents are bounded, rendered, expired, and reset", () => {
+  assert.match(game, /const MAX_TEMPORARY_SUB_AGENTS_PER_WAVE = 3/);
+  assert.match(game, /spawnTemporarySubAgent/);
+  assert.match(game, /tickSubAgents/);
+  assert.match(game, /clearSubAgents/);
+  assert.match(webglGame, /temporary-sub-agent/);
+  assert.match(canvasGame, /private drawTemporarySubAgent/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /subAgentsSpawnedThisWave/);
+    assert.match(engine, /private clearTemporarySubAgents\(\)/);
+    assert.match(
+      engine,
+      /private startNextWave\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
+    );
+    assert.match(
+      engine,
+      /retryWave\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
+    );
+    assert.match(
+      engine,
+      /private completeWave\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
+    );
+    assert.match(
+      engine,
+      /private defeat\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
+    );
+  }
+});
+
+test("follow command overrides autonomous roles and Canvas disposal clears sub-agents", () => {
+  assert.match(game, /this\.squadCommand === "follow"[\s\S]*?intent/);
+  const canvasDispose = canvasGame.slice(canvasGame.lastIndexOf("dispose()"));
+  assert.match(canvasDispose, /clearTemporarySubAgents\(\)/);
+});
+
+test("recruitment advances directly to passive autonomous observation", () => {
+  assert.doesNotMatch(game, /ORDER: GUARD CORE/);
+  assert.match(game, /AUTONOMOUS ROLE ACTIVE/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.doesNotMatch(engine, /emitTutorialEvent\("guard-selected"\)/);
+    assert.match(
+      engine,
+      /this\.emitTutorialEvent\("kairos-recruited"\)/,
+    );
+  }
 });
 
 test("game persistence always goes through safe in-memory-backed helpers", () => {

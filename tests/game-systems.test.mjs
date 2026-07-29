@@ -27,7 +27,21 @@ import {
   canRetryFirstWave,
   isTutorialProtected,
 } from "../app/game/tutorial-rules.mjs";
-import { normalizeStickInput } from "../app/game/input-rules.mjs";
+import { normalizeStickInput, tapToFire } from "../app/game/input-rules.mjs";
+import {
+  LOOT_TYPES,
+  applyLootPickup,
+  canCollectLoot,
+  rollLootDrop,
+} from "../app/game/loot-rules.mjs";
+import {
+  AGENT_ROLES,
+  clearSubAgents,
+  decideAgentIntent,
+  shouldImprovise,
+  spawnTemporarySubAgent,
+  tickSubAgents,
+} from "../app/game/autonomy-rules.mjs";
 
 test("paces queued enemies without changing the remaining threat total", () => {
   assert.equal(getActiveEnemyLimit("webgl"), 36);
@@ -179,7 +193,6 @@ test("tutorial advances only from the expected event", () => {
     "move",
     "shoot",
     "recruit",
-    "command",
     "observe",
     "complete",
     "skipped",
@@ -187,8 +200,7 @@ test("tutorial advances only from the expected event", () => {
   assert.equal(advanceTutorial("move", "enemy-defeated"), "move");
   assert.equal(advanceTutorial("move", "movement-complete"), "shoot");
   assert.equal(advanceTutorial("shoot", "training-cleared"), "recruit");
-  assert.equal(advanceTutorial("recruit", "kairos-recruited"), "command");
-  assert.equal(advanceTutorial("command", "guard-selected"), "observe");
+  assert.equal(advanceTutorial("recruit", "kairos-recruited"), "observe");
   assert.equal(advanceTutorial("observe", "breach-cleared"), "complete");
   assert.equal(advanceTutorial("complete", "movement-complete"), "complete");
 });
@@ -203,17 +215,15 @@ test("tutorial milestones are phase-gated and never replayed later", () => {
   step = advanceTutorial(step, "training-cleared");
   assert.equal(step, "recruit");
   assert.equal(advanceTutorial(step, "guard-selected"), "recruit");
-  assert.equal(advanceTutorial(step, "kairos-recruited"), "command");
-  assert.equal(advanceTutorial("command", "guard-selected"), "observe");
+  assert.equal(advanceTutorial(step, "kairos-recruited"), "observe");
 });
 
-test("tutorial action gates only allow the required recruitment and let GUARD CORE be restored during observe", () => {
+test("tutorial gates recruitment but never requires a squad-command click", () => {
   assert.equal(canPerformTutorialAction("move", "recruit-kairos"), false);
   assert.equal(canPerformTutorialAction("recruit", "recruit-kairos"), true);
   assert.equal(canPerformTutorialAction("recruit", "recruit-other"), false);
   assert.equal(canPerformTutorialAction("observe", "recruit-kairos"), false);
-  assert.equal(canPerformTutorialAction("shoot", "guard-core"), false);
-  assert.equal(canPerformTutorialAction("command", "guard-core"), true);
+  assert.equal(canPerformTutorialAction("shoot", "guard-core"), true);
   assert.equal(canPerformTutorialAction("observe", "guard-core"), true);
   assert.equal(canPerformTutorialAction(null, "recruit-kairos"), true);
 });
@@ -257,3 +267,231 @@ test("virtual stick applies a dead zone and preserves direction", () => {
   assert.equal(diagonal.x, 0.6);
   assert.equal(diagonal.y, 0.8);
 });
+
+test("mobile tap-to-fire clamps normalized arena coordinates", () => {
+  assert.deepEqual(tapToFire(-0.2, 1.4), { x: -10, z: 7 });
+  const tap = tapToFire(0.4, 0.6);
+  assert.ok(Math.abs(tap.x + 2) < 1e-9);
+  assert.ok(Math.abs(tap.z - 1.4) < 1e-9);
+});
+
+test("loot drops are deterministic and respect each enemy drop chance", () => {
+  const noDrop = rollLootDrop("virus", () => 0.99);
+  assert.equal(noDrop, null);
+
+  const first = rollLootDrop("trojan", sequence([0.1, 0.6, 0.25, 0.75]));
+  const repeated = rollLootDrop(
+    "trojan",
+    sequence([0.1, 0.6, 0.25, 0.75]),
+  );
+  assert.deepEqual(first, repeated);
+  assert.deepEqual(first, {
+    id: "loot-trojan-component-250-750",
+    type: LOOT_TYPES.component,
+    x: -0.5,
+    y: 0.5,
+    value: 2,
+  });
+});
+
+test("loot requires player overlap before it can be collected", () => {
+  const loot = { x: 2, y: 0, radius: 0.4 };
+  assert.equal(canCollectLoot({ x: 0, y: 0, radius: 0.5 }, loot), false);
+  assert.equal(canCollectLoot({ x: 1.2, y: 0, radius: 0.5 }, loot), true);
+});
+
+test("repair loot clamps player and core health at their maxima", () => {
+  const state = {
+    health: 92,
+    maxHealth: 100,
+    coreHealth: 174,
+    maxCoreHealth: 180,
+    components: 0,
+    upgradeShards: 0,
+  };
+  assert.deepEqual(
+    applyLootPickup(state, { type: LOOT_TYPES.repair, value: 25 }),
+    { ...state, health: 100, coreHealth: 180 },
+  );
+  assert.deepEqual(state, {
+    health: 92,
+    maxHealth: 100,
+    coreHealth: 174,
+    maxCoreHealth: 180,
+    components: 0,
+    upgradeShards: 0,
+  });
+});
+
+test("component loot increments the component inventory", () => {
+  const state = {
+    health: 60,
+    maxHealth: 100,
+    coreHealth: 120,
+    maxCoreHealth: 180,
+    components: 3,
+    upgradeShards: 0,
+  };
+  const result = applyLootPickup(state, {
+    type: LOOT_TYPES.component,
+    value: 2,
+  });
+  assert.equal(result.components, 5);
+  assert.equal(state.components, 3);
+});
+
+test("invalid loot is rejected", () => {
+  assert.throws(
+    () => applyLootPickup({}, { type: "malware", value: 1 }),
+    /Unknown loot type/,
+  );
+});
+
+test("autonomous agents use their role priorities when not improvising", () => {
+  assert.equal(AGENT_ROLES.assault.priority, "assault");
+  assert.equal(AGENT_ROLES.support.priority, "support");
+  assert.equal(AGENT_ROLES.defend.priority, "defend");
+  assert.equal(decideAgentIntent({ role: "assault" }, {}), "assault");
+  assert.equal(decideAgentIntent({ role: "support" }, {}), "support");
+  assert.equal(decideAgentIntent({ role: "defend" }, {}), "defend");
+});
+
+test("each role has a deterministic improvisation threshold", () => {
+  assert.equal(
+    shouldImprovise({ role: "assault" }, { enemyDensity: 6 }),
+    true,
+  );
+  assert.equal(
+    shouldImprovise({ role: "assault" }, { enemyDensity: 5 }),
+    false,
+  );
+  assert.equal(
+    shouldImprovise({ role: "support" }, { playerHealthRatio: 0.45 }),
+    true,
+  );
+  assert.equal(
+    shouldImprovise({ role: "support" }, { playerHealthRatio: 0.46 }),
+    false,
+  );
+  assert.equal(
+    shouldImprovise({ role: "defend" }, { wavePressure: 0.75 }),
+    true,
+  );
+  assert.equal(
+    shouldImprovise({ role: "defend" }, { wavePressure: 0.74 }),
+    false,
+  );
+  assert.equal(
+    decideAgentIntent({ role: "defend" }, { wavePressure: 0.75 }),
+    "improvise",
+  );
+});
+
+test("temporary sub-agents are capped and cannot spawn recursively", () => {
+  const agent = { id: "kairos", role: "assault" };
+  const context = {
+    enemyDensity: 6,
+    activeSubAgents: 2,
+    maxSubAgents: 3,
+    subAgentLifetimeMs: 5_000,
+  };
+  assert.deepEqual(spawnTemporarySubAgent(agent, context), {
+    id: "subagent-kairos-3",
+    parentId: "kairos",
+    role: "assault",
+    remainingMs: 5_000,
+    canSpawn: false,
+  });
+  assert.equal(
+    spawnTemporarySubAgent(agent, { ...context, activeSubAgents: 3 }),
+    null,
+  );
+  assert.equal(
+    spawnTemporarySubAgent({ ...agent, canSpawn: false }, context),
+    null,
+  );
+});
+
+test("temporary sub-agent bounds normalize invalid context values", () => {
+  const agent = { id: "kairos", role: "assault" };
+  const improvisingContext = { enemyDensity: 6 };
+  assert.equal(
+    spawnTemporarySubAgent(agent, {
+      ...improvisingContext,
+      activeSubAgents: 3,
+      maxSubAgents: Infinity,
+    }),
+    null,
+  );
+  assert.equal(
+    spawnTemporarySubAgent(agent, {
+      ...improvisingContext,
+      maxSubAgents: NaN,
+      subAgentLifetimeMs: Infinity,
+    }).remainingMs,
+    5_000,
+  );
+  assert.equal(
+    spawnTemporarySubAgent(agent, {
+      ...improvisingContext,
+      maxSubAgents: -1,
+      subAgentLifetimeMs: 0,
+    }).remainingMs,
+    5_000,
+  );
+  assert.equal(
+    spawnTemporarySubAgent(agent, {
+      ...improvisingContext,
+      maxSubAgents: 1.5,
+    }).remainingMs,
+    5_000,
+  );
+});
+
+test("temporary sub-agent IDs remain unique after prior agents expire", () => {
+  const agent = { id: "kairos", role: "assault" };
+  const context = {
+    enemyDensity: 6,
+    maxSubAgents: 3,
+    subAgents: [
+      { id: "subagent-kairos-1", remainingMs: 4_000 },
+      { id: "subagent-kairos-3", remainingMs: 4_000 },
+    ],
+  };
+  assert.equal(
+    spawnTemporarySubAgent(agent, context).id,
+    "subagent-kairos-4",
+  );
+});
+
+test("temporary sub-agents expire and are cleared between waves", () => {
+  const subAgents = [
+    {
+      parentId: "kairos",
+      role: "assault",
+      remainingMs: 1_000,
+      canSpawn: false,
+    },
+    {
+      parentId: "kira",
+      role: "support",
+      remainingMs: 250,
+      canSpawn: false,
+    },
+  ];
+  assert.deepEqual(tickSubAgents(subAgents, 250), [
+    {
+      parentId: "kairos",
+      role: "assault",
+      remainingMs: 750,
+      canSpawn: false,
+    },
+  ]);
+  assert.deepEqual(clearSubAgents(subAgents), []);
+  assert.equal(subAgents.length, 2);
+});
+
+function sequence(values) {
+  let index = 0;
+  return () => values[index++];
+}

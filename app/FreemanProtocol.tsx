@@ -22,7 +22,18 @@ import {
   getUpgradeDraft,
   purchaseEvolution,
 } from "./game/progression.mjs";
-import { normalizeStickInput } from "./game/input-rules.mjs";
+import { normalizeStickInput, tapToFire } from "./game/input-rules.mjs";
+import {
+  applyLootPickup,
+  canCollectLoot,
+  rollLootDrop,
+} from "./game/loot-rules.mjs";
+import {
+  clearSubAgents,
+  decideAgentIntent,
+  spawnTemporarySubAgent,
+  tickSubAgents,
+} from "./game/autonomy-rules.mjs";
 import {
   FIRST_WAVE,
   OBSERVE_BREACH,
@@ -33,14 +44,19 @@ import {
 } from "./game/tutorial-rules.mjs";
 import { readStoredNumber, readStoredValue, writeStoredValue } from "./game/storage.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
-import { BoundedPool, disposeObject3D } from "./game/three-resources";
+import {
+  BoundedPool,
+  createLootPickupMesh,
+  disposeObject3D,
+  resetLootPickupMesh,
+} from "./game/three-resources";
 import { AudioManager } from "./game/AudioManager";
 
 type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
 
 type AgentId = "kairos" | "kira" | "forge" | "covenant";
-type SquadCommand = "follow" | "defend" | "focus";
+type SquadCommand = "auto" | "follow" | "defend" | "focus";
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type UpgradeId =
   "overclock" | "bastion" | "bandwidth" | "voltage" | "repair" | "command";
@@ -53,12 +69,17 @@ type EvolutionId =
 type UpgradeStacks = Record<UpgradeId, number>;
 type Evolutions = Record<AgentId, EvolutionId | null>;
 type TutorialStep =
-  | "move" | "shoot" | "recruit" | "command"
+  | "move" | "shoot" | "recruit"
   | "observe" | "complete" | "skipped";
 type TutorialEvent =
   | "movement-complete" | "training-cleared" | "kairos-recruited"
-  | "guard-selected" | "breach-cleared";
+  | "breach-cleared";
+type AutonomyRole = "assault" | "support" | "defend";
+type AutonomyIntent = AutonomyRole | "improvise" | "follow";
 type StartOptions = { tutorial: boolean };
+type LootType = "repair" | "component" | "upgrade-shard";
+type LootRecord = { id: string; type: LootType; x: number; y: number; value: number };
+type LootCounters = { repairs: number; components: number; shards: number };
 
 type FirstWaveCheckpoint = {
   data: number;
@@ -72,6 +93,14 @@ const TOTAL_WAVES = 8;
 const ARENA_RADIUS = 17.5;
 const SPAWN_RADIUS = 15.2;
 const TUTORIAL_STORAGE_KEY = "freeman-tutorial-complete";
+const MAX_TEMPORARY_SUB_AGENTS_PER_WAVE = 3;
+
+const AUTONOMY_ROLES: Record<AgentId, AutonomyRole> = {
+  kairos: "defend",
+  kira: "assault",
+  forge: "assault",
+  covenant: "support",
+};
 
 type HudState = {
   hp: number;
@@ -96,6 +125,7 @@ type HudState = {
   evolutions: Evolutions;
   tutorialStep: TutorialStep | null;
   canRetryWave: boolean;
+  loot: LootCounters;
 };
 
 type ToastState = {
@@ -160,6 +190,19 @@ type AgentRuntime = AgentDefinition & {
   moving: boolean;
 };
 
+type TemporarySubAgent = {
+  id: string;
+  parentId: AgentId;
+  role: AutonomyRole;
+  remainingMs: number;
+  canSpawn: false;
+};
+
+type WebglTemporarySubAgent = TemporarySubAgent & {
+  marker: THREE.Group;
+  cooldownLeft: number;
+};
+
 type DefenseRuntime = {
   group: THREE.Group;
   turret: THREE.Group;
@@ -207,6 +250,8 @@ type EffectRuntime = {
   maxLife: number;
   kind: "ring" | "beam" | "burst" | "portal" | "text";
 };
+
+type LootRuntime = LootRecord & { mesh: THREE.Mesh };
 
 type AnimatedRig = {
   root: THREE.Group;
@@ -396,6 +441,7 @@ const INITIAL_HUD: HudState = {
   evolutions: { ...EMPTY_EVOLUTIONS },
   tutorialStep: null,
   canRetryWave: false,
+  loot: { repairs: 0, components: 0, shards: 0 },
 };
 
 const TUTORIAL_COPY: Record<
@@ -417,14 +463,9 @@ const TUTORIAL_COPY: Record<
     detail: "Spend Compute to add your first AI agent.",
     target: "agents",
   },
-  command: {
-    title: "ORDER: GUARD CORE",
-    detail: "Tell KAIROS where the army should fight.",
-    target: "agents",
-  },
   observe: {
     title: "FIGHT WITH YOUR AI ARMY",
-    detail: "Help KAIROS contain the breach.",
+    detail: "KAIROS is acting autonomously. Help contain the breach.",
     target: "arena",
   },
 };
@@ -631,12 +672,18 @@ class FreemanEngine {
   private readonly keys = new Set<string>();
   private readonly enemies: EnemyRuntime[] = [];
   private readonly agents: AgentRuntime[] = [];
+  private autonomyState: Partial<Record<AgentId, AutonomyIntent>> = {};
+  private temporarySubAgents: WebglTemporarySubAgent[] = [];
+  private subAgentsSpawnedThisWave = 0;
   private readonly defenses: DefenseRuntime[] = [];
   private readonly projectiles: ProjectileRuntime[] = [];
   private readonly effects: EffectRuntime[] = [];
   private readonly enemyGrid = new SpatialGrid<EnemyRuntime>(3);
   private readonly disposedResources = new WeakSet<object>();
   private readonly projectilePool = new BoundedPool<THREE.Mesh>(128);
+  private readonly lootPool = new BoundedPool<THREE.Mesh>(48);
+  private readonly pickups: LootRuntime[] = [];
+  private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly aimPoint = new THREE.Vector3(0, 0, -4);
   private readonly lastMove = new THREE.Vector3(0, 0, -1);
   private readonly touchMove = new THREE.Vector2();
@@ -697,7 +744,8 @@ class FreemanEngine {
   private readonly activeEnemyLimit = getActiveEnemyLimit("webgl");
   private reducedMotion = false;
   private hasPointerAim = false;
-  private squadCommand: SquadCommand = "follow";
+  private touchAimActive = false;
+  private squadCommand: SquadCommand = "auto";
   private placementActive = false;
   private placementGhost: THREE.Group | null = null;
   private playerMoving = false;
@@ -777,6 +825,7 @@ class FreemanEngine {
 
   private resetMissionState() {
     this.clearDynamic();
+    this.loot = { repairs: 0, components: 0, shards: 0 };
     this.clearTutorialMarker();
     this.wave = 1;
     this.score = 0;
@@ -787,7 +836,7 @@ class FreemanEngine {
     this.empMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
-    this.squadCommand = "follow";
+    this.squadCommand = "auto";
     this.firstWaveCheckpoint = null;
     this.tutorialStep = null;
     this.tutorialMoveDistance = 0;
@@ -931,10 +980,13 @@ class FreemanEngine {
   }
 
   setSquadCommand(command: SquadCommand) {
-    if (!canPerformTutorialAction(this.tutorialStep, "guard-core") && command === "defend") return;
     if (this.squadCommand === command) return;
     this.squadCommand = command;
     const copy: Record<SquadCommand, { title: string; detail: string }> = {
+      auto: {
+        title: "AUTONOMOUS NETWORK ONLINE",
+        detail: "Agents choose their own role priorities and improvise together.",
+      },
       follow: {
         title: "SQUAD FOLLOWING YOU",
         detail: "Agents stay close and attack enemies around your position.",
@@ -952,7 +1004,6 @@ class FreemanEngine {
       eyebrow: "SQUAD ORDER UPDATED",
       ...copy[command],
     });
-    if (command === "defend") this.emitTutorialEvent("guard-selected");
     this.emitHud(true);
   }
 
@@ -1027,9 +1078,9 @@ class FreemanEngine {
       this.addBurst(group.position, definition.color, 13);
       this.audio.play("recruit");
       this.callbacks.onToast({
-        eyebrow: `AI AGENT ${definition.code} RECRUITED`,
+        eyebrow: "AUTONOMOUS ROLE ACTIVE",
         title: `${definition.name} JOINED YOUR TEAM`,
-        detail: definition.detail,
+        detail: `${definition.detail} Optional squad orders can override this role.`,
       });
       this.emitHud(true);
     }
@@ -1221,7 +1272,7 @@ class FreemanEngine {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
-        compute: this.data,
+        compute: this.data + this.loot.components * 20,
         recruited: Object.fromEntries(
           (Object.keys(this.evolutions) as AgentId[]).map((id) => [
             id,
@@ -1231,6 +1282,7 @@ class FreemanEngine {
         evolutions: this.evolutions,
       }, agentId, evolutionId);
       this.data = next.compute;
+      this.loot.components = Math.max(0, this.loot.components - 1);
       this.evolutions = next.evolutions;
       const evolution = EVOLUTIONS[agentId].find(
         (item: { id: string }) => item.id === evolutionId,
@@ -1256,6 +1308,7 @@ class FreemanEngine {
 
   private startNextWave() {
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.wave += 1;
     this.mode = "playing";
     this.callbacks.onMode("playing");
@@ -1288,9 +1341,11 @@ class FreemanEngine {
     this.resizeObserver.disconnect();
     this.unbindEvents();
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.audio.dispose();
     this.clearDynamic();
     this.projectilePool.clear((mesh) => this.disposeDynamicObject(mesh));
+    this.lootPool.clear((mesh) => this.disposeDynamicObject(mesh));
     this.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh || object instanceof THREE.Line))
         return;
@@ -2456,6 +2511,7 @@ class FreemanEngine {
     })) return;
     const checkpoint = this.firstWaveCheckpoint!;
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.clearDynamic();
     this.cancelDefensePlacement(false);
     this.data = checkpoint.data;
@@ -2599,7 +2655,7 @@ class FreemanEngine {
       else this.buildDefense();
     }
     if (event.code === "KeyE") {
-      const commands: SquadCommand[] = ["follow", "defend", "focus"];
+      const commands: SquadCommand[] = ["auto", "follow", "defend", "focus"];
       this.setSquadCommand(
         commands[(commands.indexOf(this.squadCommand) + 1) % commands.length],
       );
@@ -2622,6 +2678,8 @@ class FreemanEngine {
   private resetInput() {
     this.keys.clear();
     this.touchMove.set(0, 0);
+    if (this.touchAimActive) this.hasPointerAim = false;
+    this.touchAimActive = false;
     if (
       this.dragPointer !== null &&
       this.canvas.hasPointerCapture(this.dragPointer)
@@ -2638,6 +2696,17 @@ class FreemanEngine {
 
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
+    if (event.pointerType === "touch" && event.button === 0) {
+      const rect = this.canvas.getBoundingClientRect();
+      const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      this.updateAimFromScreen(event.clientX, event.clientY);
+      this.touchAimActive = true;
+      void tap;
+      this.hasPointerAim = true;
+      if (this.placementActive) this.confirmDefensePlacement();
+      else this.attack();
+      return;
+    }
     if (event.button === 1) {
       this.dragPointer = event.pointerId;
       this.dragX = event.clientX;
@@ -2700,6 +2769,18 @@ class FreemanEngine {
     const rect = this.canvas.getBoundingClientRect();
     this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hit = new THREE.Vector3();
+    if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
+      this.aimPoint.copy(hit);
+      this.hasPointerAim = true;
+      this.updateDefenseGhost();
+    }
+  }
+
+  private updateAimFromScreen(clientX: number, clientY: number) {
+    const rect = this.canvas.getBoundingClientRect();
+    this.pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hit = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
@@ -2785,6 +2866,7 @@ class FreemanEngine {
     this.updateEnemies(delta);
     this.enemyGrid.rebuild(this.enemies);
     this.updateProjectiles(delta);
+    this.updateLootPickups(delta);
     this.releaseQueuedEnemies();
     this.player.attackCooldown = Math.max(
       0,
@@ -2906,23 +2988,143 @@ class FreemanEngine {
     }
   }
 
+  private updateTemporarySubAgents(delta: number) {
+    const active = tickSubAgents(
+      this.temporarySubAgents,
+      delta * 1_000,
+    ) as WebglTemporarySubAgent[];
+    const activeIds = new Set(active.map((subAgent) => subAgent.id));
+    for (const subAgent of this.temporarySubAgents) {
+      if (!activeIds.has(subAgent.id)) {
+        this.disposeDynamicObject(subAgent.marker);
+      }
+    }
+    this.temporarySubAgents = active;
+    this.temporarySubAgents.forEach((subAgent, index) => {
+      const parent = this.agents.find((agent) => agent.id === subAgent.parentId);
+      if (!parent) return;
+      const angle = this.elapsed * 1.8 + index * 2.1;
+      subAgent.marker.position
+        .copy(parent.group.position)
+        .add(new THREE.Vector3(Math.cos(angle) * 0.75, 0.3, Math.sin(angle) * 0.75));
+      subAgent.marker.rotation.y += delta * 2.5;
+      subAgent.cooldownLeft = Math.max(0, subAgent.cooldownLeft - delta);
+      if (subAgent.cooldownLeft <= 0) {
+        const target = this.enemies.find((enemy) => enemy.group.position.distanceTo(subAgent.marker.position) < 6);
+        if (target) {
+          subAgent.cooldownLeft = 1.4;
+          if (subAgent.role === "support") {
+            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
+            this.core.hp = Math.min(this.core.maxHp, this.core.hp + 2);
+          } else {
+            this.damageEnemy(target, 8, subAgent.marker.position);
+          }
+        }
+      }
+    });
+  }
+
+  private maybeSpawnTemporarySubAgent(
+    agent: AgentRuntime,
+    intent: AutonomyIntent,
+  ) {
+    const previous = this.autonomyState[agent.id];
+    this.autonomyState[agent.id] = intent;
+    if (
+      intent !== "improvise" ||
+      previous === "improvise" ||
+      this.subAgentsSpawnedThisWave >= MAX_TEMPORARY_SUB_AGENTS_PER_WAVE
+    ) return;
+    const spawned = spawnTemporarySubAgent(
+      { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
+      {
+        enemyDensity: this.enemies.length,
+        playerHealthRatio: this.player.hp / this.player.maxHp,
+        coreHealthRatio: this.core.hp / this.core.maxHp,
+        wavePressure: this.enemies.length / this.activeEnemyLimit,
+        subAgents: this.temporarySubAgents,
+        maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_WAVE,
+      },
+    ) as TemporarySubAgent | null;
+    if (!spawned) return;
+    const marker = new THREE.Group();
+    marker.name = "temporary-sub-agent";
+    const signal = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.2),
+      new THREE.MeshBasicMaterial({
+        color: agent.color,
+        transparent: true,
+        opacity: 0.82,
+      }),
+    );
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.36, 0.025, 6, 20),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.65,
+      }),
+    );
+    ring.rotation.x = Math.PI / 2;
+    marker.add(signal, ring);
+    this.scene.add(marker);
+    this.temporarySubAgents.push({ ...spawned, marker, cooldownLeft: 0.35 });
+    this.subAgentsSpawnedThisWave += 1;
+  }
+
+  private clearTemporarySubAgents() {
+    for (const subAgent of this.temporarySubAgents) {
+      this.disposeDynamicObject(subAgent.marker);
+    }
+    this.temporarySubAgents = clearSubAgents() as WebglTemporarySubAgent[];
+    this.autonomyState = {};
+    this.subAgentsSpawnedThisWave = 0;
+  }
+
   private updateAgents(delta: number) {
+    this.updateTemporarySubAgents(delta);
     const count = this.agents.length;
     const priority = this.getPriorityEnemy();
     this.agents.forEach((agent, index) => {
+      const roleIntent = decideAgentIntent(
+        { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
+        {
+          enemyDensity: this.enemies.length,
+          playerHealthRatio: this.player.hp / this.player.maxHp,
+          coreHealthRatio: this.core.hp / this.core.maxHp,
+          wavePressure: this.enemies.length / this.activeEnemyLimit,
+        },
+      ) as AutonomyIntent;
+      this.maybeSpawnTemporarySubAgent(agent, roleIntent);
+      const intent: AutonomyIntent =
+        this.squadCommand === "auto"
+          ? roleIntent
+          : this.squadCommand === "follow"
+          ? "follow"
+          : this.squadCommand === "focus"
+          ? "assault"
+          : this.squadCommand === "defend"
+            ? "defend"
+            : roleIntent;
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
-        (this.squadCommand === "follow" ? this.elapsed * 0.18 : 0);
+        (intent === "support" ? this.elapsed * 0.18 : 0);
       const anchor =
-        this.squadCommand === "defend"
-          ? this.core.group.position
-          : this.squadCommand === "focus" && priority
-            ? priority.group.position
-            : this.player.group.position;
+        intent === "follow"
+          ? this.player.group.position
+          : intent === "assault" && priority
+          ? priority.group.position
+          : intent === "support"
+            ? this.player.hp / this.player.maxHp <= this.core.hp / this.core.maxHp
+              ? this.player.group.position
+              : this.core.group.position
+            : intent === "defend"
+              ? this.core.group.position
+              : priority?.group.position ?? this.player.group.position;
       const radius =
-        this.squadCommand === "defend"
+        intent === "defend"
           ? 2.75
-          : this.squadCommand === "focus"
+          : intent === "assault" || intent === "improvise"
             ? Math.max(2.6, agent.range * 0.46)
             : 1.45 + (index % 2) * 0.38;
       const targetPosition = anchor
@@ -3014,9 +3216,11 @@ class FreemanEngine {
       }
 
       let target: EnemyRuntime | null = null;
-      if (this.squadCommand === "focus") {
+      if (intent === "assault" || intent === "improvise") {
         target = priority;
-      } else if (this.squadCommand === "defend") {
+      } else if (intent === "follow" || intent === "support") {
+        target = this.getNearestEnemy(agent.group.position, agent.range);
+      } else if (intent === "defend") {
         const coreThreat = this.getNearestEnemy(this.core.group.position, 9.5);
         if (
           coreThreat &&
@@ -3025,8 +3229,6 @@ class FreemanEngine {
         ) {
           target = coreThreat;
         }
-      } else {
-        target = this.getNearestEnemy(agent.group.position, agent.range);
       }
       if (
         target &&
@@ -3381,6 +3583,35 @@ class FreemanEngine {
     }
   }
 
+  private updateLootPickups(delta: number) {
+    for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
+      const pickup = this.pickups[index];
+      pickup.mesh.rotation.y += delta * 2.4;
+      pickup.mesh.position.y = 0.48 + Math.sin(this.elapsed * 3 + index) * 0.08;
+      if (!canCollectLoot({ x: this.player.group.position.x, y: this.player.group.position.z }, pickup)) continue;
+      const next = applyLootPickup({ health: this.player.hp, maxHealth: this.player.maxHp, coreHealth: this.core.hp, maxCoreHealth: this.core.maxHp, components: this.loot.components, upgradeShards: this.loot.shards }, pickup);
+      this.player.hp = next.health;
+      this.core.hp = next.coreHealth;
+      if (pickup.type === "repair") this.loot.repairs += pickup.value;
+      this.loot.components = next.components ?? 0;
+      this.loot.shards = next.upgradeShards ?? 0;
+      if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
+      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
+      this.releaseLootPickup(pickup);
+      this.pickups.splice(index, 1);
+      this.emitHud(true);
+    }
+  }
+
+  private releaseLootPickup(pickup: LootRuntime) {
+    this.lootPool.release(pickup.mesh, (mesh) => resetLootPickupMesh(mesh, pickup.type), (mesh) => this.disposeDynamicObject(mesh));
+  }
+
+  private clearLootPickups() {
+    for (const pickup of this.pickups) this.releaseLootPickup(pickup);
+    this.pickups.length = 0;
+  }
+
   private updateEffects(delta: number) {
     for (let index = this.effects.length - 1; index >= 0; index -= 1) {
       const effect = this.effects[index];
@@ -3461,7 +3692,9 @@ class FreemanEngine {
 
   private completeWave() {
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.cancelDefensePlacement(false);
+    this.clearLootPickups();
     if (this.wave >= TOTAL_WAVES) {
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
@@ -3534,8 +3767,10 @@ class FreemanEngine {
   private defeat() {
     if (this.mode === "defeat") return;
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.mode = "defeat";
     this.waveActive = false;
+    this.clearLootPickups();
     if (this.player.hp <= 0) {
       this.triggerRig(this.player.rig, "death", 2.8);
     }
@@ -3603,6 +3838,15 @@ class FreemanEngine {
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
+    const drop = rollLootDrop(enemy.type, Math.random);
+    if (drop) {
+      const mesh = this.lootPool.acquire(() => createLootPickupMesh(drop.type));
+      resetLootPickupMesh(mesh, drop.type);
+      const pickup: LootRuntime = { ...drop, x: deathPosition.x + drop.x * 0.35, y: deathPosition.z + drop.y * 0.35, mesh };
+      mesh.position.set(pickup.x, 0.48, pickup.y);
+      this.scene.add(mesh);
+      this.pickups.push(pickup);
+    }
     this.addRing(deathPosition, 0xd9793f, 0.2, enemy.radius * 2.4, 0.42);
     this.addBurst(
       deathPosition.clone().add(new THREE.Vector3(0, enemy.radius, 0)),
@@ -4181,6 +4425,7 @@ class FreemanEngine {
   }
 
   private clearDynamic() {
+    this.clearTemporarySubAgents();
     for (const enemy of this.enemies) this.disposeDynamicObject(enemy.group);
     for (const agent of this.agents) this.disposeDynamicObject(agent.group);
     for (const defense of this.defenses) this.disposeDynamicObject(defense.group);
@@ -4190,6 +4435,7 @@ class FreemanEngine {
     for (const effect of this.effects) {
       this.disposeDynamicObject(effect.object);
     }
+    this.clearLootPickups();
     this.enemies.length = 0;
     this.agents.length = 0;
     this.defenses.length = 0;
@@ -4262,6 +4508,7 @@ class FreemanEngine {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
         wave: this.wave,
@@ -4302,6 +4549,13 @@ type FlatAgent = AgentDefinition & {
   disabledLeft: number;
 };
 
+type FlatTemporarySubAgent = TemporarySubAgent & {
+  x: number;
+  z: number;
+  color: number;
+  cooldownLeft: number;
+};
+
 type FlatDefense = {
   x: number;
   z: number;
@@ -4322,6 +4576,8 @@ type FlatProjectile = {
   faction: "operator" | "agent" | "null";
   slow: number;
 };
+
+type FlatLootRuntime = LootRecord;
 
 type FlatParticle = {
   x: number;
@@ -4356,9 +4612,14 @@ class FreemanCanvasEngine implements GameController {
   private readonly keys = new Set<string>();
   private readonly enemies: FlatEnemy[] = [];
   private readonly agents: FlatAgent[] = [];
+  private autonomyState: Partial<Record<AgentId, AutonomyIntent>> = {};
+  private temporarySubAgents: FlatTemporarySubAgent[] = [];
+  private subAgentsSpawnedThisWave = 0;
   private readonly defenses: FlatDefense[] = [];
   private readonly projectiles: FlatProjectile[] = [];
   private readonly effects: FlatEffect[] = [];
+  private readonly pickups: FlatLootRuntime[] = [];
+  private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly touchMove = { x: 0, y: 0 };
   private readonly aim = { x: 0, z: -4 };
   private readonly lastMove = { x: 0, z: -1 };
@@ -4419,6 +4680,7 @@ class FreemanCanvasEngine implements GameController {
   private reducedMotion = false;
   private shake = 0;
   private hasPointerAim = false;
+  private touchAimActive = false;
   private squadCommand: SquadCommand = "follow";
   private placementActive = false;
   private tutorialStep: TutorialStep | null = null;
@@ -4475,6 +4737,8 @@ class FreemanCanvasEngine implements GameController {
     this.defenses.length = 0;
     this.projectiles.length = 0;
     this.effects.length = 0;
+    this.clearLootPickups();
+    this.loot = { repairs: 0, components: 0, shards: 0 };
     this.wave = 1;
     this.score = 0;
     this.data = 55;
@@ -4484,7 +4748,7 @@ class FreemanCanvasEngine implements GameController {
     this.empMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
-    this.squadCommand = "follow";
+    this.squadCommand = "auto";
     this.firstWaveCheckpoint = null;
     this.tutorialStep = null;
     this.tutorialMarker = null;
@@ -4612,10 +4876,10 @@ class FreemanCanvasEngine implements GameController {
   }
 
   setSquadCommand(command: SquadCommand) {
-    if (!canPerformTutorialAction(this.tutorialStep, "guard-core") && command === "defend") return;
     if (this.squadCommand === command) return;
     this.squadCommand = command;
     const titles: Record<SquadCommand, string> = {
+      auto: "AUTONOMOUS NETWORK ONLINE",
       follow: "SQUAD FOLLOWING YOU",
       defend: "SQUAD GUARDING THE CORE",
       focus: "SQUAD FOCUSING PRIORITY TARGETS",
@@ -4624,13 +4888,14 @@ class FreemanCanvasEngine implements GameController {
       eyebrow: "SQUAD ORDER UPDATED",
       title: titles[command],
       detail:
-        command === "follow"
+        command === "auto"
+          ? "Agents choose their own role priorities and improvise together."
+          : command === "follow"
           ? "Agents stay close to your position."
           : command === "defend"
             ? "Agents hold the center and protect the Core."
             : "Agents hunt the boss or strongest enemy.",
     });
-    if (command === "defend") this.emitTutorialEvent("guard-selected");
     this.emitHud(true);
   }
 
@@ -4703,9 +4968,9 @@ class FreemanCanvasEngine implements GameController {
     this.addBurst(this.player.x, this.player.z, definition.color, 13);
     this.audio.play("recruit");
     this.callbacks.onToast({
-      eyebrow: `AI AGENT ${definition.code} RECRUITED`,
+      eyebrow: "AUTONOMOUS ROLE ACTIVE",
       title: `${definition.name} JOINED YOUR TEAM`,
-      detail: definition.detail,
+      detail: `${definition.detail} Optional squad orders can override this role.`,
     });
     this.emitHud(true);
     return true;
@@ -4899,7 +5164,7 @@ class FreemanCanvasEngine implements GameController {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
-        compute: this.data,
+        compute: this.data + this.loot.components * 20,
         recruited: Object.fromEntries(
           (Object.keys(this.evolutions) as AgentId[]).map((id) => [
             id,
@@ -4909,6 +5174,7 @@ class FreemanCanvasEngine implements GameController {
         evolutions: this.evolutions,
       }, agentId, evolutionId);
       this.data = next.compute;
+      this.loot.components = Math.max(0, this.loot.components - 1);
       this.evolutions = next.evolutions;
       const evolution = EVOLUTIONS[agentId].find(
         (item: { id: string }) => item.id === evolutionId,
@@ -4934,6 +5200,7 @@ class FreemanCanvasEngine implements GameController {
 
   private startNextWave() {
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.wave += 1;
     this.mode = "playing";
     this.callbacks.onMode("playing");
@@ -4965,6 +5232,7 @@ class FreemanCanvasEngine implements GameController {
     this.resizeObserver.disconnect();
     this.unbindEvents();
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.audio.dispose();
   }
 
@@ -5057,7 +5325,7 @@ class FreemanCanvasEngine implements GameController {
       else this.buildDefense();
     }
     if (event.code === "KeyE") {
-      const commands: SquadCommand[] = ["follow", "defend", "focus"];
+      const commands: SquadCommand[] = ["auto", "follow", "defend", "focus"];
       this.setSquadCommand(
         commands[(commands.indexOf(this.squadCommand) + 1) % commands.length],
       );
@@ -5085,6 +5353,8 @@ class FreemanCanvasEngine implements GameController {
     this.keys.clear();
     this.touchMove.x = 0;
     this.touchMove.y = 0;
+    if (this.touchAimActive) this.hasPointerAim = false;
+    this.touchAimActive = false;
     if (
       this.dragPointer !== null &&
       this.canvas.hasPointerCapture(this.dragPointer)
@@ -5100,6 +5370,17 @@ class FreemanCanvasEngine implements GameController {
 
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
+    if (event.pointerType === "touch" && event.button === 0) {
+      const rect = this.canvas.getBoundingClientRect();
+      const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      this.updateAimFromScreen(event.clientX, event.clientY);
+      this.touchAimActive = true;
+      void tap;
+      this.hasPointerAim = true;
+      if (this.placementActive) this.confirmFlatDefensePlacement();
+      else this.attack();
+      return;
+    }
     if (event.button === 1) {
       this.dragPointer = event.pointerId;
       this.dragX = event.clientX;
@@ -5165,6 +5446,14 @@ class FreemanCanvasEngine implements GameController {
     this.hasPointerAim = true;
   }
 
+  private updateAimFromScreen(clientX: number, clientY: number) {
+    const rect = this.canvas.getBoundingClientRect();
+    const world = this.unproject(clientX - rect.left, clientY - rect.top);
+    this.aim.x = world.x;
+    this.aim.z = world.z;
+    this.hasPointerAim = true;
+  }
+
   private animate = (time: number) => {
     this.animationFrame = requestAnimationFrame(this.animate);
     const delta = Math.min((time - this.lastFrame) / 1000, 0.05);
@@ -5182,6 +5471,7 @@ class FreemanCanvasEngine implements GameController {
     this.updateDefenses(delta);
     this.updateEnemies(delta);
     this.updateProjectiles(delta);
+    this.updateLootPickups();
     this.releaseQueuedEnemies();
     this.player.attackCooldown = Math.max(
       0,
@@ -5306,29 +5596,128 @@ class FreemanCanvasEngine implements GameController {
     }
   }
 
+  private updateTemporarySubAgents(delta: number) {
+    this.temporarySubAgents = tickSubAgents(
+      this.temporarySubAgents,
+      delta * 1_000,
+    ) as FlatTemporarySubAgent[];
+    this.temporarySubAgents.forEach((subAgent, index) => {
+      const parent = this.agents.find((agent) => agent.id === subAgent.parentId);
+      if (!parent) return;
+      const angle = this.elapsed * 1.8 + index * 2.1;
+      subAgent.x = parent.x + Math.cos(angle) * 0.75;
+      subAgent.z = parent.z + Math.sin(angle) * 0.75;
+      subAgent.cooldownLeft = Math.max(0, subAgent.cooldownLeft - delta);
+      if (subAgent.cooldownLeft <= 0) {
+        const target = this.enemies.find((enemy) => this.distance(enemy.x, enemy.z, subAgent.x, subAgent.z) < 6);
+        if (target) {
+          subAgent.cooldownLeft = 1.4;
+          if (subAgent.role === "support") {
+            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
+            this.core.hp = Math.min(this.core.maxHp, this.core.hp + 2);
+          } else {
+            this.damageEnemy(target, 8);
+          }
+        }
+      }
+    });
+  }
+
+  private maybeSpawnTemporarySubAgent(
+    agent: FlatAgent,
+    intent: AutonomyIntent,
+  ) {
+    const previous = this.autonomyState[agent.id];
+    this.autonomyState[agent.id] = intent;
+    if (
+      intent !== "improvise" ||
+      previous === "improvise" ||
+      this.subAgentsSpawnedThisWave >= MAX_TEMPORARY_SUB_AGENTS_PER_WAVE
+    ) return;
+    const spawned = spawnTemporarySubAgent(
+      { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
+      {
+        enemyDensity: this.enemies.length,
+        playerHealthRatio: this.player.hp / this.player.maxHp,
+        coreHealthRatio: this.core.hp / this.core.maxHp,
+        wavePressure: this.enemies.length / this.activeEnemyLimit,
+        subAgents: this.temporarySubAgents,
+        maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_WAVE,
+      },
+    ) as TemporarySubAgent | null;
+    if (!spawned) return;
+    this.temporarySubAgents.push({
+      ...spawned,
+      x: agent.x,
+      z: agent.z,
+      color: agent.color,
+      cooldownLeft: 0.35,
+    });
+    this.subAgentsSpawnedThisWave += 1;
+  }
+
+  private clearTemporarySubAgents() {
+    this.temporarySubAgents = clearSubAgents() as FlatTemporarySubAgent[];
+    this.autonomyState = {};
+    this.subAgentsSpawnedThisWave = 0;
+  }
+
   private updateAgents(delta: number) {
+    this.updateTemporarySubAgents(delta);
     const count = this.agents.length;
     const priority = this.getFlatPriorityEnemy();
     this.agents.forEach((agent, index) => {
+      const roleIntent = decideAgentIntent(
+        { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
+        {
+          enemyDensity: this.enemies.length,
+          playerHealthRatio: this.player.hp / this.player.maxHp,
+          coreHealthRatio: this.core.hp / this.core.maxHp,
+          wavePressure: this.enemies.length / this.activeEnemyLimit,
+        },
+      ) as AutonomyIntent;
+      this.maybeSpawnTemporarySubAgent(agent, roleIntent);
+      const intent: AutonomyIntent =
+        this.squadCommand === "auto"
+          ? roleIntent
+          : this.squadCommand === "follow"
+          ? "follow"
+          : this.squadCommand === "focus"
+          ? "assault"
+          : this.squadCommand === "defend"
+            ? "defend"
+            : roleIntent;
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
-        (this.squadCommand === "follow" ? this.elapsed * 0.18 : 0);
+        (intent === "support" ? this.elapsed * 0.18 : 0);
       const anchorX =
-        this.squadCommand === "defend"
-          ? this.core.x
-          : this.squadCommand === "focus" && priority
-            ? priority.x
-            : this.player.x;
+        intent === "follow"
+          ? this.player.x
+          : intent === "assault" && priority
+          ? priority.x
+          : intent === "support"
+            ? this.player.hp / this.player.maxHp <= this.core.hp / this.core.maxHp
+              ? this.player.x
+              : this.core.x
+            : intent === "defend"
+              ? this.core.x
+              : priority?.x ?? this.player.x;
       const anchorZ =
-        this.squadCommand === "defend"
-          ? this.core.z
-          : this.squadCommand === "focus" && priority
-            ? priority.z
-            : this.player.z;
+        intent === "follow"
+          ? this.player.z
+          : intent === "assault" && priority
+          ? priority.z
+          : intent === "support"
+            ? this.player.hp / this.player.maxHp <= this.core.hp / this.core.maxHp
+              ? this.player.z
+              : this.core.z
+            : intent === "defend"
+              ? this.core.z
+              : priority?.z ?? this.player.z;
       const radius =
-        this.squadCommand === "defend"
+        intent === "defend"
           ? 2.75
-          : this.squadCommand === "focus"
+          : intent === "assault" || intent === "improvise"
             ? Math.max(2.6, agent.range * 0.46)
             : 1.45 + (index % 2) * 0.38;
       let targetX = anchorX + Math.cos(angle) * radius;
@@ -5365,9 +5754,11 @@ class FreemanCanvasEngine implements GameController {
         this.addRing(this.player.x, this.player.z, agent.color, 0.4, 3.2, 0.72);
       }
       let target: FlatEnemy | null = null;
-      if (this.squadCommand === "focus") {
+      if (intent === "assault" || intent === "improvise") {
         target = priority;
-      } else if (this.squadCommand === "defend") {
+      } else if (intent === "follow" || intent === "support") {
+        target = this.getNearestEnemy(agent.x, agent.z, agent.range);
+      } else if (intent === "defend") {
         const coreThreat = this.getNearestEnemy(this.core.x, this.core.z, 9.5);
         if (
           coreThreat &&
@@ -5376,8 +5767,6 @@ class FreemanCanvasEngine implements GameController {
         ) {
           target = coreThreat;
         }
-      } else {
-        target = this.getNearestEnemy(agent.x, agent.z, agent.range);
       }
       if (
         target &&
@@ -5939,6 +6328,7 @@ class FreemanCanvasEngine implements GameController {
     })) return;
     const checkpoint = this.firstWaveCheckpoint!;
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.clearDynamic();
     this.data = checkpoint.data;
     this.score = checkpoint.score;
@@ -5955,11 +6345,13 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private clearDynamic() {
+    this.clearTemporarySubAgents();
     this.enemies.length = 0;
     this.agents.length = 0;
     this.defenses.length = 0;
     this.projectiles.length = 0;
     this.effects.length = 0;
+    this.clearLootPickups();
     this.spawnQueue = [];
     this.nextQueueReleaseAt = 0;
     this.scheduledReinforcementThreats = 0;
@@ -5970,7 +6362,9 @@ class FreemanCanvasEngine implements GameController {
 
   private completeWave() {
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.placementActive = false;
+    this.clearLootPickups();
     if (this.wave >= TOTAL_WAVES) {
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
@@ -6019,8 +6413,10 @@ class FreemanCanvasEngine implements GameController {
   private defeat() {
     if (this.mode === "defeat") return;
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.mode = "defeat";
     this.waveActive = false;
+    this.clearLootPickups();
     this.callbacks.onMode("defeat");
     this.audio.play("defeat");
     this.callbacks.onToast({
@@ -6048,6 +6444,8 @@ class FreemanCanvasEngine implements GameController {
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
     this.player.ultimate = Math.min(100, this.player.ultimate + 9);
+    const drop = rollLootDrop(enemy.type, Math.random);
+    if (drop) this.pickups.push({ ...drop, x: enemy.x + drop.x * 0.35, y: enemy.z + drop.y * 0.35 });
     this.addRing(enemy.x, enemy.z, 0xd9793f, 0.2, enemy.radius * 2.4, 0.42);
     this.addBurst(
       enemy.x,
@@ -6073,6 +6471,27 @@ class FreemanCanvasEngine implements GameController {
   private removeProjectile(projectile: FlatProjectile) {
     const index = this.projectiles.indexOf(projectile);
     if (index >= 0) this.projectiles.splice(index, 1);
+  }
+
+  private updateLootPickups() {
+    for (let index = this.pickups.length - 1; index >= 0; index -= 1) {
+      const pickup = this.pickups[index];
+      if (!canCollectLoot({ x: this.player.x, y: this.player.z }, pickup)) continue;
+      const next = applyLootPickup({ health: this.player.hp, maxHealth: this.player.maxHp, coreHealth: this.core.hp, maxCoreHealth: this.core.maxHp, components: this.loot.components, upgradeShards: this.loot.shards }, pickup);
+      this.player.hp = next.health;
+      this.core.hp = next.coreHealth;
+      if (pickup.type === "repair") this.loot.repairs += pickup.value;
+      this.loot.components = next.components ?? 0;
+      this.loot.shards = next.upgradeShards ?? 0;
+      if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
+      this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
+      this.pickups.splice(index, 1);
+      this.emitHud(true);
+    }
+  }
+
+  private clearLootPickups() {
+    this.pickups.length = 0;
   }
 
   private addRing(
@@ -6377,6 +6796,12 @@ class FreemanCanvasEngine implements GameController {
         draw: () => this.drawAgent(agent),
       });
     }
+    for (const subAgent of this.temporarySubAgents) {
+      drawables.push({
+        depth: this.project(subAgent.x, subAgent.z).depth,
+        draw: () => this.drawTemporarySubAgent(subAgent),
+      });
+    }
     for (const defense of this.defenses) {
       drawables.push({
         depth: this.project(defense.x, defense.z).depth,
@@ -6389,10 +6814,30 @@ class FreemanCanvasEngine implements GameController {
         draw: () => this.drawEnemy(enemy),
       });
     }
+    for (const pickup of this.pickups) {
+      drawables.push({
+        depth: this.project(pickup.x, pickup.y).depth,
+        draw: () => this.drawLootPickup(pickup),
+      });
+    }
     drawables.sort((a, b) => a.depth - b.depth);
     drawables.forEach((drawable) => drawable.draw());
     this.drawProjectiles();
     this.drawEffects();
+  }
+
+  private drawLootPickup(pickup: FlatLootRuntime) {
+    const point = this.project(pickup.x, pickup.y, 0.35 + Math.sin(this.elapsed * 3) * 0.08);
+    const color = pickup.type === "repair" ? "#78d6a5" : pickup.type === "component" ? "#f0a65a" : "#b9a4ff";
+    const context = this.context;
+    context.save();
+    context.fillStyle = color;
+    context.shadowColor = color;
+    context.shadowBlur = 14;
+    context.beginPath();
+    context.arc(point.x, point.y, Math.max(4, point.scale * 0.2), 0, Math.PI * 2);
+    context.fill();
+    context.restore();
   }
 
   private drawGrid() {
@@ -6806,6 +7251,44 @@ class FreemanCanvasEngine implements GameController {
       this.player.hp / this.player.maxHp,
       "#e77d44",
     );
+    context.restore();
+  }
+
+  private drawTemporarySubAgent(subAgent: FlatTemporarySubAgent) {
+    const context = this.context;
+    const floor = this.project(subAgent.x, subAgent.z, 0);
+    const signal = this.project(
+      subAgent.x,
+      subAgent.z,
+      0.55 + Math.sin(this.elapsed * 7) * 0.08,
+    );
+    const size = floor.scale * 0.22;
+    context.save();
+    context.setLineDash([3, 3]);
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 1.5;
+    context.beginPath();
+    context.ellipse(
+      floor.x,
+      floor.y,
+      size * 1.5,
+      size * 0.55,
+      0,
+      0,
+      Math.PI * 2,
+    );
+    context.stroke();
+    context.setLineDash([]);
+    context.fillStyle = toCssColor(subAgent.color);
+    context.shadowColor = toCssColor(subAgent.color);
+    context.shadowBlur = 14;
+    context.beginPath();
+    context.moveTo(signal.x, signal.y - size);
+    context.lineTo(signal.x + size, signal.y);
+    context.lineTo(signal.x, signal.y + size);
+    context.lineTo(signal.x - size, signal.y);
+    context.closePath();
+    context.fill();
     context.restore();
   }
 
@@ -7227,6 +7710,7 @@ class FreemanCanvasEngine implements GameController {
       },
       upgradeStacks: { ...this.upgradeStacks },
       evolutions: { ...this.evolutions },
+      loot: { ...this.loot },
       tutorialStep: this.tutorialStep,
       canRetryWave: canRetryFirstWave({
         wave: this.wave,
@@ -7406,7 +7890,7 @@ export default function FreemanProtocol() {
 
   useEffect(() => {
     const open =
-      hud.tutorialStep === "recruit" || hud.tutorialStep === "command"
+      hud.tutorialStep === "recruit"
         ? true
         : hud.tutorialStep === "observe" || hud.tutorialStep === "complete"
           ? false
@@ -7559,6 +8043,10 @@ export default function FreemanProtocol() {
               <span>
                 <small>SCORE</small>
                 <strong>{hud.score.toLocaleString()}</strong>
+              </span>
+              <span>
+                <small>LOOT R/C/S</small>
+                <strong>{hud.loot.repairs}/{hud.loot.components}/{hud.loot.shards}</strong>
               </span>
             </div>
             <button
@@ -7816,6 +8304,9 @@ export default function FreemanProtocol() {
 
       {mode === "intro" && (
         <section className="intro-screen">
+          <div className="intro-network" aria-hidden="true">
+            <i /><i /><i /><i /><i /><i /><i />
+          </div>
           <div className="intro-copy">
             <span className="eyebrow">ISOMETRIC CYBER DEFENSE ACTION RPG</span>
             <div className="intro-mark">
