@@ -249,6 +249,12 @@ test("temporary autonomous sub-agents are bounded, rendered, expired, and reset"
   }
 });
 
+test("follow command overrides autonomous roles and Canvas disposal clears sub-agents", () => {
+  assert.match(game, /this\.squadCommand === "follow"[\s\S]*?intent/);
+  const canvasDispose = canvasGame.slice(canvasGame.lastIndexOf("dispose()"));
+  assert.match(canvasDispose, /clearTemporarySubAgents\(\)/);
+});
+
 test("recruitment advances directly to passive autonomous observation", () => {
   assert.doesNotMatch(game, /ORDER: GUARD CORE/);
   assert.match(game, /AUTONOMOUS ROLE ACTIVE/);

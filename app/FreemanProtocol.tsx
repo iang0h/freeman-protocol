@@ -75,7 +75,7 @@ type TutorialEvent =
   | "movement-complete" | "training-cleared" | "kairos-recruited"
   | "breach-cleared";
 type AutonomyRole = "assault" | "support" | "defend";
-type AutonomyIntent = AutonomyRole | "improvise";
+type AutonomyIntent = AutonomyRole | "improvise" | "follow";
 type StartOptions = { tutorial: boolean };
 type LootType = "repair" | "component" | "upgrade-shard";
 type LootRecord = { id: string; type: LootType; x: number; y: number; value: number };
@@ -1335,6 +1335,7 @@ class FreemanEngine {
     this.resizeObserver.disconnect();
     this.unbindEvents();
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.audio.dispose();
     this.clearDynamic();
     this.projectilePool.clear((mesh) => this.disposeDynamicObject(mesh));
@@ -3064,7 +3065,9 @@ class FreemanEngine {
       ) as AutonomyIntent;
       this.maybeSpawnTemporarySubAgent(agent, roleIntent);
       const intent: AutonomyIntent =
-        this.squadCommand === "focus"
+        this.squadCommand === "follow"
+          ? "follow"
+          : this.squadCommand === "focus"
           ? "assault"
           : this.squadCommand === "defend"
             ? "defend"
@@ -3073,7 +3076,9 @@ class FreemanEngine {
         (index / Math.max(1, count)) * Math.PI * 2 +
         (intent === "support" ? this.elapsed * 0.18 : 0);
       const anchor =
-        intent === "assault" && priority
+        intent === "follow"
+          ? this.player.group.position
+          : intent === "assault" && priority
           ? priority.group.position
           : intent === "support"
             ? this.player.hp / this.player.maxHp <= this.core.hp / this.core.maxHp
@@ -5187,6 +5192,7 @@ class FreemanCanvasEngine implements GameController {
     this.resizeObserver.disconnect();
     this.unbindEvents();
     this.resetInput();
+    this.clearTemporarySubAgents();
     this.audio.dispose();
   }
 
@@ -5610,7 +5616,9 @@ class FreemanCanvasEngine implements GameController {
       ) as AutonomyIntent;
       this.maybeSpawnTemporarySubAgent(agent, roleIntent);
       const intent: AutonomyIntent =
-        this.squadCommand === "focus"
+        this.squadCommand === "follow"
+          ? "follow"
+          : this.squadCommand === "focus"
           ? "assault"
           : this.squadCommand === "defend"
             ? "defend"
@@ -5619,7 +5627,9 @@ class FreemanCanvasEngine implements GameController {
         (index / Math.max(1, count)) * Math.PI * 2 +
         (intent === "support" ? this.elapsed * 0.18 : 0);
       const anchorX =
-        intent === "assault" && priority
+        intent === "follow"
+          ? this.player.x
+          : intent === "assault" && priority
           ? priority.x
           : intent === "support"
             ? this.player.hp / this.player.maxHp <= this.core.hp / this.core.maxHp
@@ -5629,7 +5639,9 @@ class FreemanCanvasEngine implements GameController {
               ? this.core.x
               : priority?.x ?? this.player.x;
       const anchorZ =
-        intent === "assault" && priority
+        intent === "follow"
+          ? this.player.z
+          : intent === "assault" && priority
           ? priority.z
           : intent === "support"
             ? this.player.hp / this.player.maxHp <= this.core.hp / this.core.maxHp
