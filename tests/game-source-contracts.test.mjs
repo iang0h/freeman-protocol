@@ -239,14 +239,32 @@ test("tutorial events are phase-gated instead of queued", () => {
   assert.match(webglGame, /this\.tutorialResolved = true;/);
 });
 
-test("both engines gate tutorial recruitment without blocking optional squad commands", () => {
+test("both engines retain workshop recruitment through wave seven before wave eight", () => {
+  assert.match(
+    game,
+    /canRecruitPersistentWarband,[\s\S]*?from "\.\/game\/warband-rules\.mjs"/,
+  );
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
       engine,
-      /recruit\(id: AgentId\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, `recruit-\$\{id\}`\)\) return;\s*if \(this\.mode !== "playing"\) return;[\s\S]*?this\.addAgent/,
+      /private completeWave\(\) \{[\s\S]*?this\.mode = "upgrade";[\s\S]*?callbacks\.onMode\("upgrade"\)/,
+    );
+    assert.match(
+      engine,
+      /recruit\(id: AgentId\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, `recruit-\$\{id\}`\)\) return;\s*if \(!canRecruitPersistentWarband\(this\.mode\)\) return;[\s\S]*?this\.addAgent/,
+    );
+    assert.match(
+      engine,
+      /private startNextWave\(\) \{[\s\S]*?this\.mode = "playing";[\s\S]*?callbacks\.onMode\("playing"\)/,
     );
     assert.doesNotMatch(engine, /canPerformTutorialAction\(this\.tutorialStep, "guard-core"\)/);
   }
+  assert.match(game, /const canRecruitWarband = canRecruitPersistentWarband\(mode\);/);
+  assert.match(game, /disabled=\{recruited \|\| !canRecruitWarband\}/);
+  assert.match(
+    game,
+    /useAgentSkill\(id: EvolutionAgentId\) \{\s*if \(this\.mode !== "playing"\) return;/,
+  );
 });
 
 test("both engines consume the shared observe breach and clear replay placement", () => {

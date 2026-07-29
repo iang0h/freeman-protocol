@@ -71,6 +71,7 @@ import {
 import {
   WARBAND_SLOTS,
   canRecruitWarbandSlot,
+  canRecruitPersistentWarband,
   collectMaterials,
   getRecruitCost,
   getReservedWarbandMaterials,
@@ -242,6 +243,45 @@ test("warband recruitment keeps starter costs and escalates material costs after
     assert.ok(lateCosts[index].components > lateCosts[index - 1].components);
     assert.ok(lateCosts[index].shards > lateCosts[index - 1].shards);
   }
+});
+
+test("wave-seven workshop keeps persistent recruitment open until wave eight starts", () => {
+  assert.equal(canRecruitPersistentWarband("upgrade"), true);
+  assert.equal(canRecruitPersistentWarband("evolution"), true);
+  for (const mode of ["intro", "paused", "defeat", "victory"]) {
+    assert.equal(canRecruitPersistentWarband(mode), false);
+  }
+
+  const rendererCampaigns = {
+    webgl: {
+      mode: "upgrade",
+      compute: 10_000,
+      components: 21,
+      shards: 13,
+      warband: WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id),
+    },
+    canvas: {
+      mode: "upgrade",
+      compute: 10_000,
+      components: 21,
+      shards: 13,
+      warband: WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id),
+    },
+  };
+
+  for (const campaign of Object.values(rendererCampaigns)) {
+    for (const slot of WARBAND_SLOTS.slice(4)) {
+      assert.equal(campaign.mode, "upgrade");
+      assert.equal(canRecruitPersistentWarband(campaign.mode), true);
+      assert.equal(canRecruitWarbandSlot(campaign, slot), true);
+      Object.assign(campaign, recruitWarbandSlot(campaign, slot));
+    }
+    assert.deepEqual(campaign.warband, WARBAND_SLOTS.map((slot) => slot.id));
+    campaign.mode = "playing";
+    assert.equal(canRecruitPersistentWarband(campaign.mode), true);
+  }
+
+  assert.deepEqual(rendererCampaigns.canvas, rendererCampaigns.webgl);
 });
 
 test("warband recruitment is atomic and rejects an unavailable ninth slot", () => {

@@ -73,6 +73,10 @@ export const WARBAND_SLOTS = Object.freeze([
   }),
 ]);
 
+export function canRecruitPersistentWarband(mode) {
+  return mode === "playing" || mode === "upgrade" || mode === "evolution";
+}
+
 function resolveSlot(slot) {
   if (typeof slot === "number") {
     return WARBAND_SLOTS.find((definition) => definition.slot === slot) ?? null;

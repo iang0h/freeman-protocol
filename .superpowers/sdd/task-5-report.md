@@ -205,3 +205,38 @@ and Sites artifact validation; all passed.
 - Bundled Node TypeScript `tsc --noEmit --incremental false`: passed.
 - Bundled Node ESLint: passed with no warnings or errors.
 - `git diff --check`: passed.
+
+---
+
+## Final review fix: persistent recruitment in the post-wave workshop
+
+- Added the shared `canRecruitPersistentWarband(mode)` policy. Persistent
+  roster recruitment is allowed during active play, the wave-clear upgrade
+  screen, and the optional evolution screen; it remains unavailable from the
+  intro, pause, defeat, and victory states.
+- Both WebGL and Canvas `recruit()` paths now use that policy after the existing
+  tutorial-action guard, so tutorial-invalid recruits remain rejected. Combat
+  and agent-skill methods remain `playing`-only.
+- The shared agent-card UI now uses the same policy, so a funded late-slot card
+  is enabled while the workshop overlay is shown.
+- Added an integration regression that starts with the four starter agents,
+  enters the simulated wave-seven upgrade workshop with the exact 21 Components
+  and 13 Shards, recruits slots five through eight for independent WebGL and
+  Canvas campaign states, and checks their matching wave-eight-ready roster.
+  A source contract verifies both production renderers follow
+  `completeWave()` → `upgrade` → `recruit()` → `startNextWave()` and that the
+  UI and skill gates retain their respective policies.
+
+### Final review-fix TDD evidence
+
+1. The new focused tests initially failed because the workshop policy export
+   and renderer/UI use sites did not exist.
+2. Added the minimal shared policy and replaced only the recruitment gates.
+3. The focused systems and source-contract suite then passed 109 tests.
+
+### Final review-fix verification
+
+- Bundled Node `node --test tests/*.test.mjs`: 124 passed, 0 failed.
+- Bundled Node TypeScript `tsc --noEmit --incremental false`: passed.
+- Bundled Node ESLint: passed with no warnings or errors.
+- `git diff --check`: passed.

@@ -27,6 +27,7 @@ import {
 } from "./game/progression.mjs";
 import {
   WARBAND_SLOTS,
+  canRecruitPersistentWarband,
   canRecruitWarbandSlot,
   collectMaterials,
   getRecruitCost,
@@ -1423,7 +1424,7 @@ class FreemanEngine {
 
   recruit(id: AgentId) {
     if (!canPerformTutorialAction(this.tutorialStep, `recruit-${id}`)) return;
-    if (this.mode !== "playing") return;
+    if (!canRecruitPersistentWarband(this.mode)) return;
     if (this.addAgent(id, { charge: true, notify: true }) && id === "kairos") {
       this.emitTutorialEvent("kairos-recruited");
     }
@@ -6485,7 +6486,7 @@ class FreemanCanvasEngine implements GameController {
 
   recruit(id: AgentId) {
     if (!canPerformTutorialAction(this.tutorialStep, `recruit-${id}`)) return;
-    if (this.mode !== "playing") return;
+    if (!canRecruitPersistentWarband(this.mode)) return;
     if (this.addAgent(id, { charge: true, notify: true }) && id === "kairos") {
       this.emitTutorialEvent("kairos-recruited");
     }
@@ -10433,6 +10434,7 @@ export default function FreemanProtocol() {
   };
 
   const isOverlay = mode !== "playing";
+  const canRecruitWarband = canRecruitPersistentWarband(mode);
   const agentRankSummary = AGENTS.filter((agent) => hud.agents[agent.id])
     .map((agent) => {
       const componentRanks = (AGENT_COMPONENT_UPGRADES[agent.id as EvolutionAgentId] ?? []).reduce(
@@ -10829,7 +10831,7 @@ export default function FreemanProtocol() {
                     key={agent.id}
                     className={`agent-card ${recruited ? "is-recruited" : ""}`}
                     onClick={() => engineRef.current?.recruit(agent.id)}
-                    disabled={recruited || mode !== "playing"}
+                    disabled={recruited || !canRecruitWarband}
                     aria-label={
                       recruited
                         ? `${agent.name} recruited`
