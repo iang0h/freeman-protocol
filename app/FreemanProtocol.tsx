@@ -56,7 +56,7 @@ type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
 
 type AgentId = "kairos" | "kira" | "forge" | "covenant";
-type SquadCommand = "follow" | "defend" | "focus";
+type SquadCommand = "auto" | "follow" | "defend" | "focus";
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type UpgradeId =
   "overclock" | "bastion" | "bandwidth" | "voltage" | "repair" | "command";
@@ -200,6 +200,7 @@ type TemporarySubAgent = {
 
 type WebglTemporarySubAgent = TemporarySubAgent & {
   marker: THREE.Group;
+  cooldownLeft: number;
 };
 
 type DefenseRuntime = {
@@ -744,7 +745,7 @@ class FreemanEngine {
   private reducedMotion = false;
   private hasPointerAim = false;
   private touchAimActive = false;
-  private squadCommand: SquadCommand = "follow";
+  private squadCommand: SquadCommand = "auto";
   private placementActive = false;
   private placementGhost: THREE.Group | null = null;
   private playerMoving = false;
@@ -835,7 +836,7 @@ class FreemanEngine {
     this.empMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
-    this.squadCommand = "follow";
+    this.squadCommand = "auto";
     this.firstWaveCheckpoint = null;
     this.tutorialStep = null;
     this.tutorialMoveDistance = 0;
@@ -982,6 +983,10 @@ class FreemanEngine {
     if (this.squadCommand === command) return;
     this.squadCommand = command;
     const copy: Record<SquadCommand, { title: string; detail: string }> = {
+      auto: {
+        title: "AUTONOMOUS NETWORK ONLINE",
+        detail: "Agents choose their own role priorities and improvise together.",
+      },
       follow: {
         title: "SQUAD FOLLOWING YOU",
         detail: "Agents stay close and attack enemies around your position.",
@@ -1267,7 +1272,7 @@ class FreemanEngine {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
-        compute: this.data,
+        compute: this.data + this.loot.components * 20,
         recruited: Object.fromEntries(
           (Object.keys(this.evolutions) as AgentId[]).map((id) => [
             id,
@@ -1277,6 +1282,7 @@ class FreemanEngine {
         evolutions: this.evolutions,
       }, agentId, evolutionId);
       this.data = next.compute;
+      this.loot.components = Math.max(0, this.loot.components - 1);
       this.evolutions = next.evolutions;
       const evolution = EVOLUTIONS[agentId].find(
         (item: { id: string }) => item.id === evolutionId,
@@ -2649,7 +2655,7 @@ class FreemanEngine {
       else this.buildDefense();
     }
     if (event.code === "KeyE") {
-      const commands: SquadCommand[] = ["follow", "defend", "focus"];
+      const commands: SquadCommand[] = ["auto", "follow", "defend", "focus"];
       this.setSquadCommand(
         commands[(commands.indexOf(this.squadCommand) + 1) % commands.length],
       );
@@ -2693,8 +2699,9 @@ class FreemanEngine {
     if (event.pointerType === "touch" && event.button === 0) {
       const rect = this.canvas.getBoundingClientRect();
       const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      this.updateAimFromScreen(event.clientX, event.clientY);
       this.touchAimActive = true;
-      this.aimPoint.set(tap.x, 0, tap.z);
+      void tap;
       this.hasPointerAim = true;
       if (this.placementActive) this.confirmDefensePlacement();
       else this.attack();
@@ -2762,6 +2769,18 @@ class FreemanEngine {
     const rect = this.canvas.getBoundingClientRect();
     this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hit = new THREE.Vector3();
+    if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
+      this.aimPoint.copy(hit);
+      this.hasPointerAim = true;
+      this.updateDefenseGhost();
+    }
+  }
+
+  private updateAimFromScreen(clientX: number, clientY: number) {
+    const rect = this.canvas.getBoundingClientRect();
+    this.pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hit = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
@@ -2989,6 +3008,19 @@ class FreemanEngine {
         .copy(parent.group.position)
         .add(new THREE.Vector3(Math.cos(angle) * 0.75, 0.3, Math.sin(angle) * 0.75));
       subAgent.marker.rotation.y += delta * 2.5;
+      subAgent.cooldownLeft = Math.max(0, subAgent.cooldownLeft - delta);
+      if (subAgent.cooldownLeft <= 0) {
+        const target = this.enemies.find((enemy) => enemy.group.position.distanceTo(subAgent.marker.position) < 6);
+        if (target) {
+          subAgent.cooldownLeft = 1.4;
+          if (subAgent.role === "support") {
+            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
+            this.core.hp = Math.min(this.core.maxHp, this.core.hp + 2);
+          } else {
+            this.damageEnemy(target, 8, subAgent.marker.position);
+          }
+        }
+      }
     });
   }
 
@@ -3036,7 +3068,7 @@ class FreemanEngine {
     ring.rotation.x = Math.PI / 2;
     marker.add(signal, ring);
     this.scene.add(marker);
-    this.temporarySubAgents.push({ ...spawned, marker });
+    this.temporarySubAgents.push({ ...spawned, marker, cooldownLeft: 0.35 });
     this.subAgentsSpawnedThisWave += 1;
   }
 
@@ -3065,7 +3097,9 @@ class FreemanEngine {
       ) as AutonomyIntent;
       this.maybeSpawnTemporarySubAgent(agent, roleIntent);
       const intent: AutonomyIntent =
-        this.squadCommand === "follow"
+        this.squadCommand === "auto"
+          ? roleIntent
+          : this.squadCommand === "follow"
           ? "follow"
           : this.squadCommand === "focus"
           ? "assault"
@@ -3561,6 +3595,7 @@ class FreemanEngine {
       if (pickup.type === "repair") this.loot.repairs += pickup.value;
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
+      if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
       this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
       this.releaseLootPickup(pickup);
       this.pickups.splice(index, 1);
@@ -4518,6 +4553,7 @@ type FlatTemporarySubAgent = TemporarySubAgent & {
   x: number;
   z: number;
   color: number;
+  cooldownLeft: number;
 };
 
 type FlatDefense = {
@@ -4712,7 +4748,7 @@ class FreemanCanvasEngine implements GameController {
     this.empMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
-    this.squadCommand = "follow";
+    this.squadCommand = "auto";
     this.firstWaveCheckpoint = null;
     this.tutorialStep = null;
     this.tutorialMarker = null;
@@ -4843,6 +4879,7 @@ class FreemanCanvasEngine implements GameController {
     if (this.squadCommand === command) return;
     this.squadCommand = command;
     const titles: Record<SquadCommand, string> = {
+      auto: "AUTONOMOUS NETWORK ONLINE",
       follow: "SQUAD FOLLOWING YOU",
       defend: "SQUAD GUARDING THE CORE",
       focus: "SQUAD FOCUSING PRIORITY TARGETS",
@@ -4851,7 +4888,9 @@ class FreemanCanvasEngine implements GameController {
       eyebrow: "SQUAD ORDER UPDATED",
       title: titles[command],
       detail:
-        command === "follow"
+        command === "auto"
+          ? "Agents choose their own role priorities and improvise together."
+          : command === "follow"
           ? "Agents stay close to your position."
           : command === "defend"
             ? "Agents hold the center and protect the Core."
@@ -5125,7 +5164,7 @@ class FreemanCanvasEngine implements GameController {
     if (this.mode !== "evolution") return;
     try {
       const next = purchaseEvolution({
-        compute: this.data,
+        compute: this.data + this.loot.components * 20,
         recruited: Object.fromEntries(
           (Object.keys(this.evolutions) as AgentId[]).map((id) => [
             id,
@@ -5135,6 +5174,7 @@ class FreemanCanvasEngine implements GameController {
         evolutions: this.evolutions,
       }, agentId, evolutionId);
       this.data = next.compute;
+      this.loot.components = Math.max(0, this.loot.components - 1);
       this.evolutions = next.evolutions;
       const evolution = EVOLUTIONS[agentId].find(
         (item: { id: string }) => item.id === evolutionId,
@@ -5285,7 +5325,7 @@ class FreemanCanvasEngine implements GameController {
       else this.buildDefense();
     }
     if (event.code === "KeyE") {
-      const commands: SquadCommand[] = ["follow", "defend", "focus"];
+      const commands: SquadCommand[] = ["auto", "follow", "defend", "focus"];
       this.setSquadCommand(
         commands[(commands.indexOf(this.squadCommand) + 1) % commands.length],
       );
@@ -5333,11 +5373,11 @@ class FreemanCanvasEngine implements GameController {
     if (event.pointerType === "touch" && event.button === 0) {
       const rect = this.canvas.getBoundingClientRect();
       const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+      this.updateAimFromScreen(event.clientX, event.clientY);
       this.touchAimActive = true;
-      this.aim.x = tap.x;
-      this.aim.z = tap.z;
+      void tap;
       this.hasPointerAim = true;
-      if (this.placementActive) this.confirmDefensePlacement();
+      if (this.placementActive) this.confirmFlatDefensePlacement();
       else this.attack();
       return;
     }
@@ -5401,6 +5441,14 @@ class FreemanCanvasEngine implements GameController {
       event.clientX - rect.left,
       event.clientY - rect.top,
     );
+    this.aim.x = world.x;
+    this.aim.z = world.z;
+    this.hasPointerAim = true;
+  }
+
+  private updateAimFromScreen(clientX: number, clientY: number) {
+    const rect = this.canvas.getBoundingClientRect();
+    const world = this.unproject(clientX - rect.left, clientY - rect.top);
     this.aim.x = world.x;
     this.aim.z = world.z;
     this.hasPointerAim = true;
@@ -5559,6 +5607,19 @@ class FreemanCanvasEngine implements GameController {
       const angle = this.elapsed * 1.8 + index * 2.1;
       subAgent.x = parent.x + Math.cos(angle) * 0.75;
       subAgent.z = parent.z + Math.sin(angle) * 0.75;
+      subAgent.cooldownLeft = Math.max(0, subAgent.cooldownLeft - delta);
+      if (subAgent.cooldownLeft <= 0) {
+        const target = this.enemies.find((enemy) => this.distance(enemy.x, enemy.z, subAgent.x, subAgent.z) < 6);
+        if (target) {
+          subAgent.cooldownLeft = 1.4;
+          if (subAgent.role === "support") {
+            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
+            this.core.hp = Math.min(this.core.maxHp, this.core.hp + 2);
+          } else {
+            this.damageEnemy(target, 8);
+          }
+        }
+      }
     });
   }
 
@@ -5590,6 +5651,7 @@ class FreemanCanvasEngine implements GameController {
       x: agent.x,
       z: agent.z,
       color: agent.color,
+      cooldownLeft: 0.35,
     });
     this.subAgentsSpawnedThisWave += 1;
   }
@@ -5616,7 +5678,9 @@ class FreemanCanvasEngine implements GameController {
       ) as AutonomyIntent;
       this.maybeSpawnTemporarySubAgent(agent, roleIntent);
       const intent: AutonomyIntent =
-        this.squadCommand === "follow"
+        this.squadCommand === "auto"
+          ? roleIntent
+          : this.squadCommand === "follow"
           ? "follow"
           : this.squadCommand === "focus"
           ? "assault"
@@ -6419,6 +6483,7 @@ class FreemanCanvasEngine implements GameController {
       if (pickup.type === "repair") this.loot.repairs += pickup.value;
       this.loot.components = next.components ?? 0;
       this.loot.shards = next.upgradeShards ?? 0;
+      if (pickup.type === "upgrade-shard") this.data += pickup.value * 15;
       this.callbacks.onToast({ eyebrow: "LOOT COLLECTED", title: `${pickup.type.replace("upgrade-", "").toUpperCase()} +${pickup.value}`, detail: "Recovered from a destroyed threat." });
       this.pickups.splice(index, 1);
       this.emitHud(true);
