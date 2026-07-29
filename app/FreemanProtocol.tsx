@@ -27,6 +27,7 @@ import {
 } from "./game/progression.mjs";
 import {
   WARBAND_SLOTS,
+  advanceWarbandWorkshopMode,
   canRecruitPersistentWarband,
   canRecruitWarbandSlot,
   collectMaterials,
@@ -1953,7 +1954,7 @@ class FreemanEngine {
     this.resetInput();
     this.clearTemporarySubAgents();
     this.wave += 1;
-    this.mode = "playing";
+    this.mode = advanceWarbandWorkshopMode(this.mode, "start-next-wave");
     this.callbacks.onMode("playing");
     this.spawnWave(this.wave);
     this.audio.play("wave");
@@ -4955,7 +4956,7 @@ class FreemanEngine {
       this.emitHud(true);
       return;
     }
-    this.mode = "upgrade";
+    this.mode = advanceWarbandWorkshopMode(this.mode, "wave-complete");
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.callbacks.onMode("upgrade");
     this.callbacks.onToast({
@@ -6959,7 +6960,7 @@ class FreemanCanvasEngine implements GameController {
     this.resetInput();
     this.clearTemporarySubAgents();
     this.wave += 1;
-    this.mode = "playing";
+    this.mode = advanceWarbandWorkshopMode(this.mode, "start-next-wave");
     this.callbacks.onMode("playing");
     this.spawnWave(this.wave);
     this.audio.play("wave");
@@ -8588,7 +8589,7 @@ class FreemanCanvasEngine implements GameController {
       this.emitHud(true);
       return;
     }
-    this.mode = "upgrade";
+    this.mode = advanceWarbandWorkshopMode(this.mode, "wave-complete");
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.callbacks.onMode("upgrade");
     this.callbacks.onToast({

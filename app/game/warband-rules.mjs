@@ -77,6 +77,17 @@ export function canRecruitPersistentWarband(mode) {
   return mode === "playing" || mode === "upgrade" || mode === "evolution";
 }
 
+export function advanceWarbandWorkshopMode(mode, event) {
+  if (event === "wave-complete" && mode === "playing") return "upgrade";
+  if (
+    event === "start-next-wave" &&
+    (mode === "upgrade" || mode === "evolution")
+  ) {
+    return "playing";
+  }
+  return mode;
+}
+
 function resolveSlot(slot) {
   if (typeof slot === "number") {
     return WARBAND_SLOTS.find((definition) => definition.slot === slot) ?? null;

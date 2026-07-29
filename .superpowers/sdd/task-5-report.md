@@ -238,5 +238,38 @@ and Sites artifact validation; all passed.
 
 - Bundled Node `node --test tests/*.test.mjs`: 124 passed, 0 failed.
 - Bundled Node TypeScript `tsc --noEmit --incremental false`: passed.
+
+---
+
+## Lifecycle review correction: production workshop transitions
+
+- Added `advanceWarbandWorkshopMode(mode, event)` to the shared warband rules.
+  A completed playing wave enters `upgrade`; only `upgrade` and `evolution`
+  can start the next wave and return to `playing`.
+- Both WebGL and Canvas `completeWave()` and `startNextWave()` paths now use
+  that shared transition. Existing recruitment mode gates, tutorial action
+  guards, child-material economy, and temporary-child cleanup remain intact.
+- Replaced the synthetic workshop state assignment with a behavioral
+  regression that advances independent WebGL and Canvas models through
+  `playing` → wave-complete → `upgrade`, recruits slots five through eight,
+  then starts wave eight. The same test covers the evolution-to-playing branch.
+- Updated renderer source contracts so both production implementations must
+  consume the shared lifecycle transition.
+
+### Lifecycle correction TDD evidence
+
+1. The behavioral test initially failed because `warband-rules.mjs` did not
+   export `advanceWarbandWorkshopMode`.
+2. The updated renderer contract then failed because neither renderer imported
+   or called the transition helper.
+3. After the minimal helper and four lifecycle call-site changes, both focused
+   regressions passed.
+
+### Lifecycle correction verification
+
+- Bundled Node `node --test tests/*.test.mjs`: 124 passed, 0 failed.
+- Bundled Node TypeScript `tsc --noEmit --tsBuildInfoFile /tmp/freeman-warband-tsconfig-final.tsbuildinfo`: passed.
+- Bundled Node ESLint: passed with no warnings or errors.
+- `git diff --check`: passed.
 - Bundled Node ESLint: passed with no warnings or errors.
 - `git diff --check`: passed.

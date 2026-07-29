@@ -70,6 +70,7 @@ import {
 } from "../app/game/emp-rules.mjs";
 import {
   WARBAND_SLOTS,
+  advanceWarbandWorkshopMode,
   canRecruitWarbandSlot,
   canRecruitPersistentWarband,
   collectMaterials,
@@ -245,23 +246,26 @@ test("warband recruitment keeps starter costs and escalates material costs after
   }
 });
 
-test("wave-seven workshop keeps persistent recruitment open until wave eight starts", () => {
+test("renderer workshop lifecycle recruits slots five through eight before wave eight", () => {
   assert.equal(canRecruitPersistentWarband("upgrade"), true);
   assert.equal(canRecruitPersistentWarband("evolution"), true);
+  assert.equal(advanceWarbandWorkshopMode("playing", "wave-complete"), "upgrade");
+  assert.equal(advanceWarbandWorkshopMode("upgrade", "start-next-wave"), "playing");
+  assert.equal(advanceWarbandWorkshopMode("evolution", "start-next-wave"), "playing");
   for (const mode of ["intro", "paused", "defeat", "victory"]) {
     assert.equal(canRecruitPersistentWarband(mode), false);
   }
 
   const rendererCampaigns = {
     webgl: {
-      mode: "upgrade",
+      mode: "playing",
       compute: 10_000,
       components: 21,
       shards: 13,
       warband: WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id),
     },
     canvas: {
-      mode: "upgrade",
+      mode: "playing",
       compute: 10_000,
       components: 21,
       shards: 13,
@@ -270,6 +274,8 @@ test("wave-seven workshop keeps persistent recruitment open until wave eight sta
   };
 
   for (const campaign of Object.values(rendererCampaigns)) {
+    campaign.mode = advanceWarbandWorkshopMode(campaign.mode, "wave-complete");
+    assert.equal(campaign.mode, "upgrade");
     for (const slot of WARBAND_SLOTS.slice(4)) {
       assert.equal(campaign.mode, "upgrade");
       assert.equal(canRecruitPersistentWarband(campaign.mode), true);
@@ -277,7 +283,7 @@ test("wave-seven workshop keeps persistent recruitment open until wave eight sta
       Object.assign(campaign, recruitWarbandSlot(campaign, slot));
     }
     assert.deepEqual(campaign.warband, WARBAND_SLOTS.map((slot) => slot.id));
-    campaign.mode = "playing";
+    campaign.mode = advanceWarbandWorkshopMode(campaign.mode, "start-next-wave");
     assert.equal(canRecruitPersistentWarband(campaign.mode), true);
   }
 

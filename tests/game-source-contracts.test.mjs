@@ -242,12 +242,12 @@ test("tutorial events are phase-gated instead of queued", () => {
 test("both engines retain workshop recruitment through wave seven before wave eight", () => {
   assert.match(
     game,
-    /canRecruitPersistentWarband,[\s\S]*?from "\.\/game\/warband-rules\.mjs"/,
+    /advanceWarbandWorkshopMode,[\s\S]*?canRecruitPersistentWarband,[\s\S]*?from "\.\/game\/warband-rules\.mjs"/,
   );
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
       engine,
-      /private completeWave\(\) \{[\s\S]*?this\.mode = "upgrade";[\s\S]*?callbacks\.onMode\("upgrade"\)/,
+      /private completeWave\(\) \{[\s\S]*?this\.mode = advanceWarbandWorkshopMode\(this\.mode, "wave-complete"\);[\s\S]*?callbacks\.onMode\("upgrade"\)/,
     );
     assert.match(
       engine,
@@ -255,7 +255,7 @@ test("both engines retain workshop recruitment through wave seven before wave ei
     );
     assert.match(
       engine,
-      /private startNextWave\(\) \{[\s\S]*?this\.mode = "playing";[\s\S]*?callbacks\.onMode\("playing"\)/,
+      /private startNextWave\(\) \{[\s\S]*?this\.mode = advanceWarbandWorkshopMode\(this\.mode, "start-next-wave"\);[\s\S]*?callbacks\.onMode\("playing"\)/,
     );
     assert.doesNotMatch(engine, /canPerformTutorialAction\(this\.tutorialStep, "guard-core"\)/);
   }
