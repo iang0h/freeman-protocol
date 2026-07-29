@@ -143,7 +143,7 @@ test("both engines charge evolution Compute without changing component inventory
   for (const engine of [webglGame, canvasGame]) {
     const evolve = engine.slice(
       engine.indexOf("evolveAgent("),
-      engine.indexOf("purchaseComponentUpgrade("),
+      engine.indexOf("continueWithoutEvolution()", engine.indexOf("evolveAgent(")),
     );
     assert.match(evolve, /compute: this\.data/);
     assert.doesNotMatch(evolve, /compute: this\.data \+ this\.loot\.components/);
