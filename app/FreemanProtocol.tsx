@@ -30,6 +30,7 @@ import {
   canRecruitWarbandSlot,
   collectMaterials,
   getRecruitCost,
+  getSpendableWarbandMaterials,
   recruitWarbandSlot,
   tickAgentGathering,
 } from "./game/warband-rules.mjs";
@@ -55,6 +56,7 @@ import { normalizeStickInput, tapToFire } from "./game/input-rules.mjs";
 import {
   applyLootPickup,
   canCollectLoot,
+  creditPendingMaterialLoot,
   getLootPresentation,
   rollLootDrop,
 } from "./game/loot-rules.mjs";
@@ -3879,6 +3881,11 @@ class FreemanEngine {
       return;
     }
     if (previous === "improvise") return;
+    const spendableMaterials = getSpendableWarbandMaterials({
+      components: this.loot.components,
+      shards: this.loot.shards,
+      warband: this.agents.map((candidate) => candidate.id),
+    });
     const spawned = spawnTemporarySubAgent(
       { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
       {
@@ -3888,11 +3895,13 @@ class FreemanEngine {
         wavePressure: this.enemies.length / this.activeEnemyLimit,
         subAgents: this.temporarySubAgents,
         maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
-        materials: this.loot,
+        materials: spendableMaterials,
         upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
       },
     ) as TemporarySubAgent | null;
     if (!spawned) return;
+    this.loot.components -= SUB_AGENT_MATERIAL_COST.components;
+    this.loot.shards -= SUB_AGENT_MATERIAL_COST.shards;
     const marker = this.temporarySubAgentPool.acquire(() =>
       createTemporarySubAgentMarker(agent.color),
     );
@@ -4919,6 +4928,10 @@ class FreemanEngine {
     this.resetInput();
     this.clearTemporarySubAgents();
     this.cancelDefensePlacement(false);
+    this.loot = creditPendingMaterialLoot(
+      this.loot,
+      this.pickups,
+    ) as LootCounters;
     this.clearLootPickups();
     if (this.wave >= TOTAL_WAVES) {
       this.mode = "victory";
@@ -7402,6 +7415,11 @@ class FreemanCanvasEngine implements GameController {
       return;
     }
     if (previous === "improvise") return;
+    const spendableMaterials = getSpendableWarbandMaterials({
+      components: this.loot.components,
+      shards: this.loot.shards,
+      warband: this.agents.map((candidate) => candidate.id),
+    });
     const spawned = spawnTemporarySubAgent(
       { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
       {
@@ -7411,11 +7429,13 @@ class FreemanCanvasEngine implements GameController {
         wavePressure: this.enemies.length / this.activeEnemyLimit,
         subAgents: this.temporarySubAgents,
         maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
-        materials: this.loot,
+        materials: spendableMaterials,
         upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
       },
     ) as TemporarySubAgent | null;
     if (!spawned) return;
+    this.loot.components -= SUB_AGENT_MATERIAL_COST.components;
+    this.loot.shards -= SUB_AGENT_MATERIAL_COST.shards;
     this.temporarySubAgents.push({
       ...spawned,
       x: agent.x,
@@ -8545,6 +8565,10 @@ class FreemanCanvasEngine implements GameController {
     this.resetInput();
     this.clearTemporarySubAgents();
     this.placementActive = false;
+    this.loot = creditPendingMaterialLoot(
+      this.loot,
+      this.pickups,
+    ) as LootCounters;
     this.clearLootPickups();
     if (this.wave >= TOTAL_WAVES) {
       this.mode = "victory";

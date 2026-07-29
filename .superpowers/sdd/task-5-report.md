@@ -113,3 +113,55 @@
 Final verification after these corrections repeated the full 119-test suite,
 typecheck, ESLint, `git diff --check`, Vinext production build for both routes,
 and Sites artifact validation; all passed.
+
+## Formal review fix: preserve the persistent-warband reward economy
+
+- Added pure `getReservedWarbandMaterials(state)` and
+  `getSpendableWarbandMaterials(state)` rules. They reserve the scaled
+  Component and Shard costs of every unrecruited persistent slot from five
+  through eight, while exposing any true surplus to sentient temporary-agent
+  behavior.
+- Exposed `canSpendTemporarySubAgent(materials)` and kept the existing atomic
+  child-spawn rule. Both renderers now pass only the unreserved wallet into
+  automatic child construction, then deduct the successful spend from the
+  live wallet.
+- Added `creditPendingMaterialLoot(state, pendingLoot)` and call it before
+  both renderers clear arena loot on wave completion. Already-collected drops
+  have left the pickup list, so rewards are credited exactly once; uncollected
+  boss rewards can no longer disappear after the 1.25-second completion
+  window.
+- Added a cross-module lifecycle regression that runs boss waves three through
+  eight, credits pending drops at each transition, attempts automatic child
+  spending, recruits slots five through eight whenever affordable, and proves
+  Nova is recruited with the exact 21 Components and 13 Shards. It also proves
+  automatic child spawning resumes with surplus materials after the persistent
+  warband is complete.
+- Strengthened renderer source contracts so WebGL and Canvas must both pass a
+  spendable wallet and credit pending material drops before cleanup.
+
+### Review-fix TDD evidence
+
+1. The focused systems test first failed because
+   `creditPendingMaterialLoot` was not exported.
+2. The renderer contract independently failed because both engines still
+   passed `this.loot` directly and cleared pickups without crediting them.
+3. After the focused implementation, the lifecycle regression passed 1/1 and
+   the two renderer contracts passed 2/2.
+
+### Review-fix corrections
+
+- Preserved `shards`-only, `upgradeShards`-only, and dual-key wallet shapes
+  while crediting pending material loot; dual-key wallets update both aliases
+  from the same canonical balance.
+- Made `canSpendTemporarySubAgent` return a strict boolean for absent and
+  invalid wallets.
+- Tightened renderer contracts to require assignment of the credited wallet
+  from the live pickup list before cleanup and live-wallet deduction after a
+  successful temporary spawn.
+
+### Review-fix verification
+
+- Bundled Node `node --test tests/*.test.mjs`: 122 passed, 0 failed.
+- `tsc --noEmit --incremental false`: passed.
+- ESLint: passed with no warnings or errors.
+- `git diff --check`: passed.

@@ -121,6 +121,40 @@ export function applyLootPickup(state, loot) {
   };
 }
 
+export function creditPendingMaterialLoot(state = {}, pendingLoot = []) {
+  const usesShards = Object.prototype.hasOwnProperty.call(state, "shards");
+  const usesUpgradeShards = Object.prototype.hasOwnProperty.call(
+    state,
+    "upgradeShards",
+  );
+  let credited = {
+    components: state.components ?? 0,
+    upgradeShards: usesShards
+      ? state.shards
+      : state.upgradeShards ?? 0,
+  };
+  let creditedShard = false;
+  for (const loot of Array.isArray(pendingLoot) ? pendingLoot : []) {
+    if (
+      loot?.type !== LOOT_TYPES.component.id &&
+      loot?.type !== LOOT_TYPES.upgradeShard.id
+    ) {
+      continue;
+    }
+    credited = applyLootPickup(credited, loot);
+    if (loot.type === LOOT_TYPES.upgradeShard.id) creditedShard = true;
+  }
+  const result = {
+    ...state,
+    components: credited.components,
+  };
+  if (usesShards) result.shards = credited.upgradeShards;
+  if (usesUpgradeShards || (!usesShards && creditedShard)) {
+    result.upgradeShards = credited.upgradeShards;
+  }
+  return result;
+}
+
 function clampRepair(health, maximum, value) {
   if (!Number.isFinite(health) || !Number.isFinite(maximum)) return health;
   return Math.min(maximum, health + value);

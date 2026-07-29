@@ -60,8 +60,8 @@ export function getSubAgentLifetime(agent, upgrades = {}) {
   return SUB_AGENT_LIFETIME_MS[getLifetimeUpgradeRank(agent, upgrades)];
 }
 
-function canAffordSubAgent(materials) {
-  return (
+export function canSpendTemporarySubAgent(materials) {
+  return Boolean(
     materials &&
     Number.isFinite(materials.components) &&
     Number.isFinite(materials.shards) &&
@@ -121,7 +121,7 @@ export function spawnTemporarySubAgent(agent, context = {}) {
     agent.parentId ||
     !shouldImprovise(agent, context) ||
     active >= maximum ||
-    !canAffordSubAgent(context.materials)
+    !canSpendTemporarySubAgent(context.materials)
   ) {
     return null;
   }

@@ -109,6 +109,29 @@ export function getRecruitCost(slot, progression = {}) {
   return scaleMaterialCost(definition.cost, progression);
 }
 
+export function getReservedWarbandMaterials(state = {}) {
+  const ids = new Set(recruitedIds(state));
+  return WARBAND_SLOTS.slice(4)
+    .filter((definition) => !ids.has(definition.id))
+    .map((definition) => getRecruitCost(definition, state.progression))
+    .reduce(
+      (reserved, cost) => ({
+        components: reserved.components + cost.components,
+        shards: reserved.shards + cost.shards,
+      }),
+      { components: 0, shards: 0 },
+    );
+}
+
+export function getSpendableWarbandMaterials(state = {}) {
+  const reserved = getReservedWarbandMaterials(state);
+  const wallet = materialWallet(state);
+  return {
+    components: Math.max(0, wallet.components - reserved.components),
+    shards: Math.max(0, wallet.shards - reserved.shards),
+  };
+}
+
 export function canRecruitWarbandSlot(state, slot) {
   const definition = resolveSlot(slot);
   const ids = recruitedIds(state);

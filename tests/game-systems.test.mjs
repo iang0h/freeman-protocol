@@ -37,6 +37,7 @@ import {
   LOOT_TYPES,
   applyLootPickup,
   canCollectLoot,
+  creditPendingMaterialLoot,
   rollLootDrop,
 } from "../app/game/loot-rules.mjs";
 import {
@@ -71,6 +72,8 @@ import {
   canRecruitWarbandSlot,
   collectMaterials,
   getRecruitCost,
+  getReservedWarbandMaterials,
+  getSpendableWarbandMaterials,
   recruitWarbandSlot,
   tickAgentGathering,
 } from "../app/game/warband-rules.mjs";
@@ -963,6 +966,34 @@ test("component loot increments the component inventory", () => {
   assert.equal(state.components, 3);
 });
 
+test("pending material credit preserves shard wallet aliases", () => {
+  const pending = [
+    { type: LOOT_TYPES.component.id, value: 2 },
+    { type: LOOT_TYPES.upgradeShard.id, value: 1 },
+  ];
+  assert.deepEqual(
+    creditPendingMaterialLoot(
+      { repairs: 0, components: 3, shards: 2 },
+      pending,
+    ),
+    { repairs: 0, components: 5, shards: 3 },
+  );
+  assert.deepEqual(
+    creditPendingMaterialLoot(
+      { components: 3, upgradeShards: 2 },
+      pending,
+    ),
+    { components: 5, upgradeShards: 3 },
+  );
+  assert.deepEqual(
+    creditPendingMaterialLoot(
+      { components: 3, shards: 2, upgradeShards: 2 },
+      pending,
+    ),
+    { components: 5, shards: 3, upgradeShards: 3 },
+  );
+});
+
 test("invalid loot is rejected", () => {
   assert.throws(
     () => applyLootPickup({}, { type: "malware", value: 1 }),
@@ -1042,6 +1073,8 @@ test("temporary sub-agents are capped at four children per parent and inherit th
     spawnTemporarySubAgent({ ...agent, canSpawn: false }, context),
     null,
   );
+  assert.equal(autonomyRules.canSpendTemporarySubAgent(), false);
+  assert.equal(autonomyRules.canSpendTemporarySubAgent(null), false);
 });
 
 test("temporary sub-agent bounds normalize invalid context values", () => {
@@ -1501,6 +1534,95 @@ test("warboss armor scaling and guaranteed rewards cover warband slots five thro
   );
   assert.ok(guaranteed.components >= required.components);
   assert.ok(guaranteed.shards >= required.shards);
+});
+
+test("boss rewards survive wave cleanup while automatic children preserve sequential slots five through eight", () => {
+  let state = {
+    compute: 10_000,
+    components: 0,
+    shards: 0,
+    warband: WARBAND_SLOTS.slice(0, 4).map((slot) => slot.id),
+  };
+  assert.deepEqual(
+    getReservedWarbandMaterials(state),
+    { components: 21, shards: 13 },
+  );
+  assert.deepEqual(
+    getSpendableWarbandMaterials({
+      ...state,
+      components: 22,
+      shards: 14,
+    }),
+    { components: 1, shards: 1 },
+  );
+
+  for (let wave = 3; wave <= 8; wave += 1) {
+    const boss = getBossEncounter(wave, `mission-wave-${wave}`);
+    const pendingDrops = [
+      {
+        id: `boss-component-${wave}`,
+        type: LOOT_TYPES.component.id,
+        value: boss.rewards.components,
+      },
+      {
+        id: `boss-shard-${wave}`,
+        type: LOOT_TYPES.upgradeShard.id,
+        value: boss.rewards.shards,
+      },
+    ];
+
+    state = creditPendingMaterialLoot(state, pendingDrops);
+    pendingDrops.length = 0;
+    assert.deepEqual(pendingDrops, []);
+
+    const spendable = getSpendableWarbandMaterials(state);
+    assert.deepEqual(spendable, { components: 0, shards: 0 });
+    assert.equal(
+      autonomyRules.canSpendTemporarySubAgent(spendable),
+      false,
+    );
+    assert.equal(
+      spawnTemporarySubAgent(
+        { id: "forge", role: "assault" },
+        { enemyDensity: 6, materials: spendable },
+      ),
+      null,
+    );
+
+    let nextSlot = WARBAND_SLOTS[state.warband.length];
+    while (nextSlot && canRecruitWarbandSlot(state, nextSlot)) {
+      state = recruitWarbandSlot(state, nextSlot);
+      nextSlot = WARBAND_SLOTS[state.warband.length];
+    }
+  }
+
+  assert.deepEqual(
+    state.warband,
+    WARBAND_SLOTS.map((slot) => slot.id),
+  );
+  assert.deepEqual(
+    getReservedWarbandMaterials(state),
+    { components: 0, shards: 0 },
+  );
+  assert.equal(state.components, 0);
+  assert.equal(state.shards, 0);
+
+  const postRecruitmentWallet = getSpendableWarbandMaterials({
+    ...state,
+    components: 1,
+    shards: 1,
+  });
+  assert.equal(
+    autonomyRules.canSpendTemporarySubAgent(postRecruitmentWallet),
+    true,
+  );
+  assert.ok(
+    spawnTemporarySubAgent(
+      { id: "forge", role: "assault" },
+      { enemyDensity: 6, materials: postRecruitmentWallet },
+    ),
+  );
+  assert.deepEqual(postRecruitmentWallet, { components: 0, shards: 0 });
 });
 
 test("both renderers consume skill slow strength, boss armor, and accurate final-wave copy", () => {

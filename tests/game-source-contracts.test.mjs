@@ -279,7 +279,13 @@ test("temporary autonomous sub-agents are bounded, rendered, expired, and reset"
   assert.match(canvasGame, /private drawTemporarySubAgent/);
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT/);
-    assert.match(engine, /materials: this\.loot/);
+    assert.match(engine, /getSpendableWarbandMaterials\(/);
+    assert.match(engine, /materials: spendableMaterials/);
+    assert.doesNotMatch(engine, /materials: this\.loot/);
+    assert.match(
+      engine,
+      /if \(!spawned\) return;[\s\S]*?this\.loot\.components -= SUB_AGENT_MATERIAL_COST\.components;[\s\S]*?this\.loot\.shards -= SUB_AGENT_MATERIAL_COST\.shards;/,
+    );
     assert.match(engine, /private clearTemporarySubAgents\(\)/);
     assert.match(
       engine,
@@ -296,6 +302,15 @@ test("temporary autonomous sub-agents are bounded, rendered, expired, and reset"
     assert.match(
       engine,
       /private defeat\(\) \{[\s\S]*?this\.clearTemporarySubAgents\(\);/,
+    );
+  }
+});
+
+test("both renderers credit pending material drops before wave cleanup", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /private completeWave\(\) \{[\s\S]*?this\.loot = creditPendingMaterialLoot\(\s*this\.loot,\s*this\.pickups,\s*\) as LootCounters;\s*this\.clearLootPickups\(\);/,
     );
   }
 });
