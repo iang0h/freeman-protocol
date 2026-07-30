@@ -20,6 +20,10 @@ test("root metadata declares the canonical game identity", () => {
   assert.match(layout, /alternates/);
   assert.match(layout, /canonical/);
   assert.match(layout, /VideoGame/);
+  assert.match(layout, /VideoObject/);
+  assert.match(layout, /thumbnailUrl/);
+  assert.match(layout, /contentUrl/);
+  assert.match(layout, /duration/);
   assert.match(layout, /WebSite/);
   assert.match(layout, /applicationCategory/);
   assert.match(layout, /GameApplication/);

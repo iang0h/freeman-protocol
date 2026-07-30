@@ -38,6 +38,20 @@ const structuredData = [
     description:
       "Recruit AI agents, defend the Covenant Core, and contain the NULL siege.",
   },
+  {
+    "@context": "https://schema.org",
+    "@type": "VideoObject",
+    name: "Freeman Protocol — Cinematic Trailer",
+    description:
+      "A cinematic trailer for Freeman Protocol, a cyber-defense action RPG about building an autonomous AI warband and surviving the NULL siege.",
+    thumbnailUrl: `${siteUrl}/video/freeman-protocol-trailer-poster.jpg`,
+    uploadDate: "2026-07-29T00:00:00+08:00",
+    duration: "PT10S",
+    contentUrl: `${siteUrl}/video/freeman-protocol-trailer.mp4`,
+    inLanguage: "en",
+    isFamilyFriendly: true,
+    mainEntityOfPage: siteUrl,
+  },
 ];
 
 const geistSans = Geist({
