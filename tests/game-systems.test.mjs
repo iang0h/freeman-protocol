@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import * as autonomyRules from "../app/game/autonomy-rules.mjs";
+import {
+  CORE_REPAIR_AMOUNT,
+  CORE_REPAIR_COMPONENT_COST,
+  chooseAutonomousNetworkAction,
+  repairCore,
+} from "../app/game/autonomous-network-rules.mjs";
 
 import {
   canCompleteWave,
@@ -347,16 +353,22 @@ test("agents deterministically collect visible materials and respect gathering c
   const nearbyLoot = [
     { id: "shard-b", type: "upgrade-shard", x: 0.1, y: 0, value: 2 },
     { id: "component-a", type: "component", x: 0.1, y: 0, value: 3 },
-    { id: "repair-c", type: "repair", x: 0, y: 0, value: 25 },
+    { id: "repair-c", type: "repair", x: 0.3, y: 0, value: 25 },
   ];
   const collection = collectMaterials(agent, nearbyLoot);
-  assert.deepEqual(collection.collected, { components: 3, shards: 0 });
+  assert.deepEqual(collection.collected, { repairs: 0, components: 3, shards: 0 });
   assert.equal(collection.agent.gatheringCooldownMs, 750);
   assert.equal(collection.agent.gatheredLootId, "component-a");
 
   const cooling = collectMaterials(collection.agent, nearbyLoot);
-  assert.deepEqual(cooling.collected, { components: 0, shards: 0 });
+  assert.deepEqual(cooling.collected, { repairs: 0, components: 0, shards: 0 });
   assert.equal(cooling.agent.gatheringCooldownMs, 750);
+
+  const repairCollection = collectMaterials(
+    { id: "relay", x: 0, y: 0, gatheringCooldownMs: 0 },
+    [{ id: "repair-c", type: "repair", x: 0, y: 0, value: 25 }],
+  );
+  assert.deepEqual(repairCollection.collected, { repairs: 25, components: 0, shards: 0 });
 
   const ready = tickAgentGathering(collection.agent, {
     hostileTargetInRange: false,
@@ -1421,6 +1433,49 @@ test("sub-agent construction spends gathered Components and Shards atomically", 
     null,
   );
   assert.deepEqual(insufficient, { components: 0, shards: 1 });
+});
+
+test("autonomous network prioritizes Core repair before defenses and upgrades", () => {
+  assert.equal(
+    chooseAutonomousNetworkAction({
+      mode: "playing",
+      coreDamaged: true,
+      components: CORE_REPAIR_COMPONENT_COST,
+      damagedAgent: true,
+      repairKits: 2,
+      defenses: 0,
+      maxDefenses: 3,
+      compute: 120,
+      defenseCost: 80,
+    }),
+    "repair-core",
+  );
+  const result = repairCore({ hp: 100, maxHp: 180 }, CORE_REPAIR_COMPONENT_COST);
+  assert.equal(result.core.hp, 100 + CORE_REPAIR_AMOUNT);
+  assert.equal(result.components, 0);
+  assert.equal(result.repaired, true);
+});
+
+test("autonomous network can build and upgrade when higher priorities are clear", () => {
+  assert.equal(
+    chooseAutonomousNetworkAction({
+      mode: "playing",
+      coreDamaged: false,
+      components: 0,
+      damagedAgent: false,
+      repairKits: 0,
+      damagedTurret: false,
+      defenses: 0,
+      maxDefenses: 3,
+      compute: 80,
+      defenseCost: 80,
+    }),
+    "build-sentry",
+  );
+  assert.equal(
+    chooseAutonomousNetworkAction({ mode: "upgrade", upgradeAvailable: true }),
+    "upgrade",
+  );
 });
 
 test("temporary sub-agents expire and are cleared between waves", () => {

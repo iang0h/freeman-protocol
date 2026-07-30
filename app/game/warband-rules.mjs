@@ -216,7 +216,7 @@ function gatheringCooldown(agent) {
 }
 
 function materialLoot(loot) {
-  return loot?.type === "component" || loot?.type === "upgrade-shard";
+  return loot?.type === "repair" || loot?.type === "component" || loot?.type === "upgrade-shard";
 }
 
 function hasPosition(value) {
@@ -242,14 +242,16 @@ function visibleMaterials(agent, nearbyLoot) {
 }
 
 export function collectMaterials(agent, nearbyLoot) {
-  const empty = { components: 0, shards: 0 };
+  const empty = { repairs: 0, components: 0, shards: 0 };
   if (gatheringCooldown(agent) > 0) return { agent, collected: empty };
   const loot = visibleMaterials(agent, nearbyLoot)[0];
   if (!loot) return { agent, collected: empty };
   const value = Number.isFinite(loot.value) && loot.value > 0 ? loot.value : 0;
-  const collected = loot.type === "component"
-    ? { components: value, shards: 0 }
-    : { components: 0, shards: value };
+  const collected = loot.type === "repair"
+    ? { repairs: value, components: 0, shards: 0 }
+    : loot.type === "component"
+      ? { repairs: 0, components: value, shards: 0 }
+      : { repairs: 0, components: 0, shards: value };
   return {
     agent: {
       ...agent,

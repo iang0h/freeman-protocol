@@ -783,3 +783,15 @@ test("both renderers expose a presentation-only macro camera mode", () => {
   assert.match(canvasGame, /setCameraPresentation\(presentation: CameraPresentation\)/);
   assert.match(game, /const \[cameraPresentation, setCameraPresentation\] = useState<CameraPresentation>\("macro"\)/);
 });
+
+test("desktop starts in macro map presentation", () => {
+  assert.match(game, /isMobile \? cameraPresentation : "macro"/);
+});
+
+test("both renderers give agents autonomous network management", () => {
+  assert.equal((game.match(/runAutonomousNetwork\(delta\)/g) ?? []).length, 2);
+  assert.match(game, /chooseAutonomousNetworkAction/);
+  assert.match(game, /repairCore\(this\.core, this\.loot\.components\)/);
+  assert.match(game, /this\.buildDefense\(\)/);
+  assert.equal((game.match(/getUpgradeChoices\(this\.wave, this\.upgradeStacks\)\[0\]/g) ?? []).length, 2);
+});

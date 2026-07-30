@@ -84,6 +84,13 @@ import {
   tickTemporarySubAgent,
 } from "./game/autonomy-rules.mjs";
 import {
+  AUTONOMOUS_ACTION_INTERVAL_MS,
+  CORE_REPAIR_AMOUNT,
+  CORE_REPAIR_COMPONENT_COST,
+  chooseAutonomousNetworkAction,
+  repairCore,
+} from "./game/autonomous-network-rules.mjs";
+import {
   JAMMER_ZONE_RADIUS,
   applyTerrainRouteBias,
   getEffectiveResistanceFlags,
@@ -1061,6 +1068,7 @@ class FreemanEngine {
   private readonly enemies: EnemyRuntime[] = [];
   private readonly agents: AgentRuntime[] = [];
   private autonomyState: Partial<Record<AgentId, AutonomyIntent>> = {};
+  private autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
   private temporarySubAgents: WebglTemporarySubAgent[] = [];
   private readonly defenses: DefenseRuntime[] = [];
   private readonly projectiles: ProjectileRuntime[] = [];
@@ -3790,6 +3798,7 @@ class FreemanEngine {
 
   private updateGame(delta: number) {
     this.empState = tickEmp(this.empState, delta * 1_000) as EmpState;
+    this.runAutonomousNetwork(delta);
     this.updatePlayer(delta);
     this.updateRig(this.player.rig, delta, this.playerMoving ? "run" : "idle");
     this.enemyGrid.rebuild(this.enemies);
@@ -3867,6 +3876,42 @@ class FreemanEngine {
     if (this.hudClock <= 0) {
       this.hudClock = 0.1;
       this.emitHud();
+    }
+  }
+
+  private runAutonomousNetwork(delta: number) {
+    this.autonomousActionClock -= delta * 1_000;
+    if (this.autonomousActionClock > 0 || this.agents.length === 0) return;
+    this.autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
+    const damagedAgent = this.agents.some((agent) => agent.hp < agent.maxHp);
+    const damagedTurret = this.defenses.some((defense) => defense.hp < defense.maxHp);
+    const action = chooseAutonomousNetworkAction({
+      mode: this.mode,
+      coreDamaged: this.core.hp < this.core.maxHp,
+      components: this.loot.components,
+      damagedAgent,
+      repairKits: this.loot.repairs,
+      damagedTurret,
+      defenses: this.defenses.length,
+      maxDefenses: 3,
+      compute: this.data,
+      defenseCost: 80 + this.defenses.length * 35,
+    });
+    if (action === "repair-core") {
+      const result = repairCore(this.core, this.loot.components);
+      if (!result.repaired) return;
+      this.core.hp = result.core.hp;
+      this.loot.components = result.components;
+      this.callbacks.onToast({
+        eyebrow: "AUTONOMOUS CORE REPAIR",
+        title: `CORE RESTORED +${CORE_REPAIR_AMOUNT}`,
+        detail: `Agents spent ${CORE_REPAIR_COMPONENT_COST} Components to stabilize the network core.`,
+      });
+      this.emitHud(true);
+    } else if (action === "repair-agent" || action === "repair-sentry") {
+      this.useFieldKit();
+    } else if (action === "build-sentry") {
+      this.buildDefense();
     }
   }
 
@@ -4258,7 +4303,8 @@ class FreemanEngine {
           this.pickups,
         );
         agent.gatheringCooldownMs = collection.agent.gatheringCooldownMs;
-        if (collection.collected.components || collection.collected.shards) {
+        if (collection.collected.repairs || collection.collected.components || collection.collected.shards) {
+          this.loot.repairs += collection.collected.repairs;
           this.loot.components += collection.collected.components;
           this.loot.shards += collection.collected.shards;
           const pickupIndex = this.pickups.findIndex(
@@ -5109,6 +5155,12 @@ class FreemanEngine {
     this.mode = advanceWarbandWorkshopMode(this.mode, "wave-complete");
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.callbacks.onMode("upgrade");
+    const autonomousUpgrade = getUpgradeChoices(this.wave, this.upgradeStacks)[0];
+    if (autonomousUpgrade) {
+      this.applyUpgrade(autonomousUpgrade.id);
+      this.continueWithoutEvolution();
+      return;
+    }
     this.callbacks.onToast({
       eyebrow: `WAVE ${this.wave} CLEARED`,
       title: "CHOOSE ONE UPGRADE",
@@ -6294,6 +6346,7 @@ class FreemanCanvasEngine implements GameController {
   private readonly enemies: FlatEnemy[] = [];
   private readonly agents: FlatAgent[] = [];
   private autonomyState: Partial<Record<AgentId, AutonomyIntent>> = {};
+  private autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
   private temporarySubAgents: FlatTemporarySubAgent[] = [];
   private readonly defenses: FlatDefense[] = [];
   private readonly projectiles: FlatProjectile[] = [];
@@ -7451,6 +7504,7 @@ class FreemanCanvasEngine implements GameController {
 
   private updateGame(delta: number) {
     this.empState = tickEmp(this.empState, delta * 1_000) as EmpState;
+    this.runAutonomousNetwork(delta);
     this.updatePlayer(delta);
     this.updateAgents(delta);
     this.updateDefenses(delta);
@@ -7524,6 +7578,42 @@ class FreemanCanvasEngine implements GameController {
     if (this.hudClock <= 0) {
       this.hudClock = 0.1;
       this.emitHud();
+    }
+  }
+
+  private runAutonomousNetwork(delta: number) {
+    this.autonomousActionClock -= delta * 1_000;
+    if (this.autonomousActionClock > 0 || this.agents.length === 0) return;
+    this.autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
+    const damagedAgent = this.agents.some((agent) => agent.hp < agent.maxHp);
+    const damagedTurret = this.defenses.some((defense) => defense.hp < defense.maxHp);
+    const action = chooseAutonomousNetworkAction({
+      mode: this.mode,
+      coreDamaged: this.core.hp < this.core.maxHp,
+      components: this.loot.components,
+      damagedAgent,
+      repairKits: this.loot.repairs,
+      damagedTurret,
+      defenses: this.defenses.length,
+      maxDefenses: 3,
+      compute: this.data,
+      defenseCost: 80 + this.defenses.length * 35,
+    });
+    if (action === "repair-core") {
+      const result = repairCore(this.core, this.loot.components);
+      if (!result.repaired) return;
+      this.core.hp = result.core.hp;
+      this.loot.components = result.components;
+      this.callbacks.onToast({
+        eyebrow: "AUTONOMOUS CORE REPAIR",
+        title: `CORE RESTORED +${CORE_REPAIR_AMOUNT}`,
+        detail: `Agents spent ${CORE_REPAIR_COMPONENT_COST} Components to stabilize the network core.`,
+      });
+      this.emitHud(true);
+    } else if (action === "repair-agent" || action === "repair-sentry") {
+      this.useFieldKit();
+    } else if (action === "build-sentry") {
+      this.buildDefense();
     }
   }
 
@@ -7841,7 +7931,8 @@ class FreemanCanvasEngine implements GameController {
           this.pickups,
         );
         agent.gatheringCooldownMs = collection.agent.gatheringCooldownMs;
-        if (collection.collected.components || collection.collected.shards) {
+        if (collection.collected.repairs || collection.collected.components || collection.collected.shards) {
+          this.loot.repairs += collection.collected.repairs;
           this.loot.components += collection.collected.components;
           this.loot.shards += collection.collected.shards;
           const pickupIndex = this.pickups.findIndex(
@@ -8862,6 +8953,12 @@ class FreemanCanvasEngine implements GameController {
     this.mode = advanceWarbandWorkshopMode(this.mode, "wave-complete");
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.callbacks.onMode("upgrade");
+    const autonomousUpgrade = getUpgradeChoices(this.wave, this.upgradeStacks)[0];
+    if (autonomousUpgrade) {
+      this.applyUpgrade(autonomousUpgrade.id);
+      this.continueWithoutEvolution();
+      return;
+    }
     this.callbacks.onToast({
       eyebrow: `WAVE ${this.wave} CLEARED`,
       title: "CHOOSE ONE UPGRADE",
@@ -10673,7 +10770,7 @@ export default function FreemanProtocol() {
     const applyCameraPresentation = () => {
       const isMobile = window.matchMedia("(max-width: 820px)").matches;
       engineRef.current?.setCameraPresentation(
-        isMobile ? cameraPresentation : "tactical",
+        isMobile ? cameraPresentation : "macro",
       );
     };
     applyCameraPresentation();
