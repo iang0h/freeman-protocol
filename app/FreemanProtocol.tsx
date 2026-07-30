@@ -104,6 +104,7 @@ import {
   canRetryFirstWave,
   isTutorialProtected,
 } from "./game/tutorial-rules.mjs";
+import { getCommanderObjective } from "./game/objective-director.mjs";
 import { readStoredNumber, readStoredValue, writeStoredValue } from "./game/storage.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
 import {
@@ -131,7 +132,8 @@ type AgentSkillId =
   | "repair-barrier";
 type AgentSkillAvailability = "ready" | "disabled" | "repair" | "retreat" | "offline";
 type SquadCommand = "auto" | "follow" | "defend" | "focus";
-type MobilePanel = "fight" | "skills" | "warband";
+type MobilePanel = "command" | "defend" | "skills";
+type CameraPresentation = "macro" | "tactical";
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type UpgradeId =
   "overclock" | "bastion" | "bandwidth" | "voltage" | "repair" | "command";
@@ -352,6 +354,7 @@ interface GameController {
   zoomCamera(direction: -1 | 1): void;
   resetCamera(): void;
   setTouchMovement(x: number, y: number): void;
+  setCameraPresentation(presentation: CameraPresentation): void;
   dispose(): void;
 }
 
@@ -796,23 +799,23 @@ const TUTORIAL_COPY: Record<
   { title: string; detail: string; target: string }
 > = {
   move: {
-    title: "MOVE INTO THE RING",
-    detail: "Use WASD or the left stick.",
+    title: "THE CORE IS YOUR WIN CONDITION",
+    detail: "Stay near the ring and use the macro map to see every breach.",
     target: "move",
   },
   shoot: {
-    title: "CLEAR 3 TRAINING THREATS",
-    detail: "Shoot with left click, Space, or the attack button.",
+    title: "AGENTS FIGHT AUTOMATICALLY",
+    detail: "Clear the training threats, then let your AI army hold the perimeter.",
     target: "attack",
   },
   recruit: {
-    title: "RECRUIT KAIROS",
-    detail: "Spend Compute to add your first AI agent.",
+    title: "RECRUIT YOUR FIRST AGENT",
+    detail: "Spend Compute to add a specialist. Agents gather materials between fights.",
     target: "agents",
   },
   observe: {
-    title: "FIGHT WITH YOUR AI ARMY",
-    detail: "KAIROS is acting autonomously. Help contain the breach.",
+    title: "AGENTS GATHER MATERIALS",
+    detail: "Repair offline agents, build sentries, and upgrade between waves.",
     target: "arena",
   },
 };
@@ -1078,6 +1081,7 @@ class FreemanEngine {
   private readonly touchMove = new THREE.Vector2();
   private readonly cameraTarget = new THREE.Vector3();
   private readonly desiredCameraTarget = new THREE.Vector3();
+  private cameraPresentation: CameraPresentation = "tactical";
   private readonly player: {
     group: THREE.Group;
     weapon: THREE.Group;
@@ -2045,6 +2049,11 @@ class FreemanEngine {
 
   zoomCamera(direction: -1 | 1) {
     this.zoom = THREE.MathUtils.clamp(this.zoom + direction * 0.12, 0.7, 1.42);
+    this.resize();
+  }
+
+  setCameraPresentation(presentation: CameraPresentation) {
+    this.cameraPresentation = presentation;
     this.resize();
   }
 
@@ -6007,7 +6016,8 @@ class FreemanEngine {
     const aspect = width / height;
     const portraitPullback =
       aspect < 0.58 ? 1.5 : aspect < 0.78 ? 1.28 : aspect < 1 ? 1.12 : 1;
-    const viewHeight = 15.8 * this.zoom * portraitPullback;
+    const presentationPullback = this.cameraPresentation === "macro" ? 1.34 : 1;
+    const viewHeight = 15.8 * this.zoom * portraitPullback * presentationPullback;
     this.camera.left = (-viewHeight * aspect) / 2;
     this.camera.right = (viewHeight * aspect) / 2;
     this.camera.top = viewHeight / 2;
@@ -6303,6 +6313,7 @@ class FreemanCanvasEngine implements GameController {
   private enemySequence = 0;
   private yaw = Math.PI / 4;
   private zoom = 1;
+  private cameraPresentation: CameraPresentation = "tactical";
   private cameraX = 0;
   private cameraZ = 0;
   private width = 1;
@@ -7135,6 +7146,10 @@ class FreemanCanvasEngine implements GameController {
 
   zoomCamera(direction: -1 | 1) {
     this.zoom = Math.min(1.42, Math.max(0.7, this.zoom + direction * 0.12));
+  }
+
+  setCameraPresentation(presentation: CameraPresentation) {
+    this.cameraPresentation = presentation;
   }
 
   resetCamera() {
@@ -9252,7 +9267,8 @@ class FreemanCanvasEngine implements GameController {
     const sine = Math.sin(this.yaw);
     const cameraSpaceX = cosine * dx - sine * dz;
     const cameraSpaceZ = sine * dx + cosine * dz;
-    const scale = Math.min(this.width, this.height) / (25 * this.zoom);
+    const presentationPullback = this.cameraPresentation === "macro" ? 1.34 : 1;
+    const scale = Math.min(this.width, this.height) / (25 * this.zoom * presentationPullback);
     return {
       x: this.width / 2 + cameraSpaceX * scale + shakeX,
       y: this.height * 0.49 + cameraSpaceZ * scale * 0.55 - y * scale + shakeY,
@@ -9262,7 +9278,8 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private unproject(screenX: number, screenY: number) {
-    const scale = Math.min(this.width, this.height) / (25 * this.zoom);
+    const presentationPullback = this.cameraPresentation === "macro" ? 1.34 : 1;
+    const scale = Math.min(this.width, this.height) / (25 * this.zoom * presentationPullback);
     const cameraSpaceX = (screenX - this.width / 2) / scale;
     const cameraSpaceZ = (screenY - this.height * 0.49) / (scale * 0.55);
     const cosine = Math.cos(this.yaw);
@@ -10579,8 +10596,9 @@ export default function FreemanProtocol() {
   const [musicVolume, setMusicVolume] = useState(0.42);
   const [sfxVolume, setSfxVolume] = useState(0.72);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
-  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("fight");
+  const [mobileSquadOpen, setMobileSquadOpen] = useState(true);
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("command");
+  const [cameraPresentation, setCameraPresentation] = useState<CameraPresentation>("macro");
   const [tutorialComplete, setTutorialComplete] = useState(false);
 
   useEffect(() => {
@@ -10651,6 +10669,56 @@ export default function FreemanProtocol() {
   const isOverlay = mode !== "playing";
   const canRecruitWarband = canRecruitPersistentWarband(mode);
   const workshopActive = mode === "upgrade" || mode === "evolution";
+  const offlineAgents = AGENTS.filter((agent) => {
+    if (!hud.agents[agent.id]) return false;
+    const skill = hud.skills[agent.id as EvolutionAgentId];
+    return skill?.status === "offline" || skill?.status === "repair" || skill?.status === "retreat";
+  }).length;
+  const canBuildSentry =
+    mode === "playing" &&
+    hud.defenses < hud.maxDefenses &&
+    hud.data >= hud.defenseCost;
+  const canRecruitAgent = Boolean(
+    mode === "playing" && canRecruitWarband && hud.nextRecruitCost,
+  );
+  const commanderObjective = getCommanderObjective({
+    core: hud.core,
+    maxCore: hud.maxCore,
+    offlineAgents,
+    repairBayOnline: true,
+    canRecruit: canRecruitAgent,
+    canBuild: canBuildSentry,
+    workshopActive,
+    placingDefense: hud.placingDefense,
+  });
+  const getAgentStatus = (agentId: AgentId) => {
+    if (!hud.agents[agentId]) return "AVAILABLE";
+    const skill = hud.skills[agentId as EvolutionAgentId];
+    if (skill?.status === "offline") return "OFFLINE";
+    if (skill?.status === "repair" || skill?.status === "retreat") return "REPAIRING";
+    if (hud.command === "auto") return "GATHERING";
+    return "FIGHTING";
+  };
+  const handleCommanderObjective = () => {
+    switch (commanderObjective.action) {
+      case "defend":
+        engineRef.current?.setSquadCommand("defend");
+        setMobilePanel("command");
+        break;
+      case "repair":
+        engineRef.current?.useFieldKit();
+        setMobilePanel("command");
+        break;
+      case "build":
+        engineRef.current?.buildDefense();
+        setMobilePanel("command");
+        break;
+      case "recruit":
+      case "upgrade":
+        setMobilePanel("command");
+        break;
+    }
+  };
   const agentRankSummary = AGENTS.filter((agent) => hud.agents[agent.id])
     .map((agent) => {
       const componentRanks = (AGENT_COMPONENT_UPGRADES[agent.id] ?? []).reduce(
@@ -10669,9 +10737,21 @@ export default function FreemanProtocol() {
       : null;
 
   useEffect(() => {
+    const applyCameraPresentation = () => {
+      const isMobile = window.matchMedia("(max-width: 820px)").matches;
+      engineRef.current?.setCameraPresentation(
+        isMobile ? cameraPresentation : "tactical",
+      );
+    };
+    applyCameraPresentation();
+    window.addEventListener("resize", applyCameraPresentation);
+    return () => window.removeEventListener("resize", applyCameraPresentation);
+  }, [cameraPresentation]);
+
+  useEffect(() => {
     if (mode !== "playing") {
       const timer = window.setTimeout(() => {
-        setMobilePanel("fight");
+        setMobilePanel("command");
         setMobileSquadOpen(false);
       }, 0);
       return () => window.clearTimeout(timer);
@@ -10688,7 +10768,7 @@ export default function FreemanProtocol() {
     if (open === null) return;
     const timer = window.setTimeout(() => {
       setMobileSquadOpen(open);
-      if (open) setMobilePanel("warband");
+      if (open) setMobilePanel("command");
     }, 0);
     return () => window.clearTimeout(timer);
   }, [hud.tutorialStep]);
@@ -10971,6 +11051,23 @@ export default function FreemanProtocol() {
             </span>
           </aside>
 
+          <aside className="mobile-objective-card" aria-label="Current commander objective">
+            <small>OBJECTIVE:</small>
+            <strong>{commanderObjective.label}</strong>
+            <span>{commanderObjective.detail}</span>
+            <button type="button" onClick={handleCommanderObjective}>
+              {commanderObjective.action === "recruit"
+                ? "RECRUIT AGENT"
+                : commanderObjective.action === "build"
+                  ? "BUILD SENTRY"
+                  : commanderObjective.action === "repair"
+                    ? "REPAIR NETWORK"
+                    : commanderObjective.action === "upgrade"
+                      ? "OPEN UPGRADES"
+                      : "SET GUARD CORE"}
+            </button>
+          </aside>
+
           <aside className="camera-panel" aria-label="Camera controls">
             <button
               type="button"
@@ -11011,9 +11108,9 @@ export default function FreemanProtocol() {
 
           <nav className="mobile-panel-switcher" aria-label="Mobile command trays">
             {([
-              ["fight", "FIGHT"],
+              ["command", "COMMAND"],
+              ["defend", "DEFEND"],
               ["skills", "SKILLS"],
-              ["warband", "WARBAND"],
             ] as Array<[MobilePanel, string]>).map(([panel, label]) => (
               <button
                 type="button"
@@ -11021,7 +11118,7 @@ export default function FreemanProtocol() {
                 aria-pressed={mobilePanel === panel}
                 onClick={() => {
                   setMobilePanel(panel);
-                  setMobileSquadOpen(panel === "warband");
+                  setMobileSquadOpen(panel === "command");
                 }}
               >
                 {label}
@@ -11029,25 +11126,52 @@ export default function FreemanProtocol() {
             ))}
           </nav>
 
+          <button
+            type="button"
+            className="mobile-camera-toggle"
+            aria-pressed={cameraPresentation === "macro"}
+            onClick={() =>
+              setCameraPresentation((presentation) =>
+                presentation === "macro" ? "tactical" : "macro",
+              )
+            }
+          >
+            {cameraPresentation === "macro" ? "TACTICAL VIEW" : "MACRO MAP"}
+          </button>
+
           <section
-            className={`agent-dock mobile-action-tray mobile-panel--warband ${mobilePanel === "warband" ? "mobile-panel--active" : "mobile-panel--inactive"} ${workshopActive ? "is-workshop" : ""} ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
+            className={`agent-dock mobile-action-tray mobile-panel--command ${mobilePanel === "command" ? "mobile-panel--active" : "mobile-panel--inactive"} ${workshopActive ? "is-workshop" : ""} ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
             aria-label="AI agent recruitment"
           >
             <button
               type="button"
               className="mobile-squad-toggle"
               onClick={() => {
-                setMobilePanel("warband");
+                setMobilePanel("command");
                 setMobileSquadOpen((open) => !open);
               }}
-              aria-expanded={mobilePanel === "warband" && mobileSquadOpen}
+              aria-expanded={mobilePanel === "command" && mobileSquadOpen}
               aria-controls="mobile-squad-panel"
             >
               <span>
-                WARband <b>{hud.warbandCount}/{hud.maxWarband}</b>
+                COMMAND <b>{hud.warbandCount}/{hud.maxWarband}</b>
               </span>
-              <strong>{mobileSquadOpen ? "CLOSE" : "MANAGE"}</strong>
+              <strong>{mobileSquadOpen ? "CLOSE" : "OPEN"}</strong>
             </button>
+            <div className="commander-actions" aria-label="Commander actions">
+              <small className="commander-explainer">
+                AGENTS FIGHT AUTOMATICALLY · AGENTS GATHER MATERIALS · REPAIR OFFLINE AGENTS · UPGRADE BETWEEN WAVES
+              </small>
+              <button type="button" onClick={() => setMobileSquadOpen(true)} disabled={!canRecruitAgent}>
+                RECRUIT AGENT
+              </button>
+              <button type="button" onClick={() => engineRef.current?.buildDefense()} disabled={!canBuildSentry}>
+                BUILD SENTRY
+              </button>
+              <button type="button" onClick={() => engineRef.current?.useFieldKit()} disabled={mode !== "playing" || hud.loot.repairs < 1}>
+                REPAIR NETWORK
+              </button>
+            </div>
             <div className="agent-dock__heading">
               <span>
                 <small>YOUR WARBAND</small>
@@ -11140,6 +11264,7 @@ export default function FreemanProtocol() {
                         </em>
                       )}
                     </span>
+                    <span className="agent-card__status">{getAgentStatus(agent.id)}</span>
                     <span
                       className={`agent-card__cost ${!affordable && !recruited ? "is-low" : ""}`}
                     >
@@ -11205,7 +11330,7 @@ export default function FreemanProtocol() {
           </div>
 
           <div
-            className={`combat-actions mobile-action-tray mobile-panel--fight ${mobilePanel === "fight" ? "mobile-panel--active" : "mobile-panel--inactive"}`}
+            className={`combat-actions mobile-action-tray mobile-panel--defend ${mobilePanel === "defend" ? "mobile-panel--active" : "mobile-panel--inactive"}`}
           >
             <button
               type="button"
@@ -11261,7 +11386,7 @@ export default function FreemanProtocol() {
 
           <button
             type="button"
-            className={`repair-field-kit mobile-action-tray mobile-panel--fight ${mobilePanel === "fight" ? "mobile-panel--active" : "mobile-panel--inactive"}`}
+            className={`repair-field-kit mobile-action-tray mobile-panel--defend ${mobilePanel === "defend" ? "mobile-panel--active" : "mobile-panel--inactive"}`}
             onClick={() => engineRef.current?.useFieldKit()}
             disabled={mode !== "playing"}
             aria-label="Repair damaged agents with a field kit or sentries with Components"

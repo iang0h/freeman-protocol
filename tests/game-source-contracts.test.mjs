@@ -772,3 +772,10 @@ test("the player-facing HUD preserves EMP, Core, roster, touch, and pooled-clean
   assert.match(webglGame, /private readonly lootPool = new BoundedPool<THREE\.Group>\(48\)/);
   assert.match(webglGame, /this\.lootPool\.release\(/);
 });
+
+test("both renderers expose a presentation-only macro camera mode", () => {
+  assert.match(game, /setCameraPresentation\(presentation: CameraPresentation\)/);
+  assert.match(webglGame, /setCameraPresentation\(presentation: CameraPresentation\)/);
+  assert.match(canvasGame, /setCameraPresentation\(presentation: CameraPresentation\)/);
+  assert.match(game, /const \[cameraPresentation, setCameraPresentation\] = useState<CameraPresentation>\("macro"\)/);
+});

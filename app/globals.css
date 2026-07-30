@@ -2765,7 +2765,9 @@ canvas:focus-visible {
 
 /* Mobile commander mode: keep the arena visible and expose one tray at a time. */
 .mobile-status-strip,
-.mobile-panel-switcher {
+.mobile-panel-switcher,
+.mobile-objective-card,
+.mobile-camera-toggle {
   display: none;
 }
 
@@ -2824,6 +2826,76 @@ canvas:focus-visible {
     white-space: nowrap;
   }
 
+  .mobile-objective-card {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 150px);
+    right: 10px;
+    left: 10px;
+    z-index: 22;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 3px 8px;
+    padding: 9px 10px;
+    border: 1px solid rgba(220, 117, 64, 0.52);
+    border-left: 2px solid var(--signal);
+    background: rgba(11, 11, 11, 0.86);
+    backdrop-filter: blur(12px);
+  }
+
+  .mobile-objective-card small {
+    grid-column: 1 / -1;
+    color: var(--signal);
+    font-family: var(--mono);
+    font-size: 6px;
+    letter-spacing: 0.18em;
+  }
+
+  .mobile-objective-card strong {
+    min-width: 0;
+    overflow: hidden;
+    font-family: var(--serif);
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-objective-card span {
+    grid-column: 1 / -1;
+    color: #a4aaa6;
+    font-size: 8px;
+    line-height: 1.35;
+  }
+
+  .mobile-objective-card button {
+    min-height: 42px;
+    padding: 0 9px;
+    border: 1px solid rgba(158, 191, 192, 0.42);
+    background: rgba(10, 24, 26, 0.9);
+    color: var(--ice);
+    font-family: var(--mono);
+    font-size: 7px;
+    letter-spacing: 0.1em;
+    touch-action: manipulation;
+  }
+
+  .mobile-camera-toggle {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 150px);
+    right: 18px;
+    z-index: 24;
+    min-height: 42px;
+    padding: 0 8px;
+    border: 1px solid rgba(158, 191, 192, 0.42);
+    background: rgba(5, 11, 14, 0.94);
+    color: var(--ice);
+    font-family: var(--mono);
+    font-size: 6px;
+    letter-spacing: 0.08em;
+    touch-action: manipulation;
+  }
+
   .mobile-panel-switcher {
     position: absolute;
     right: 10px;
@@ -2873,6 +2945,56 @@ canvas:focus-visible {
     transform: none;
     pointer-events: auto;
     scrollbar-width: thin;
+  }
+
+  .agent-dock.mobile-panel--command .squad-commands,
+  .agent-dock.mobile-panel--command .agent-grid {
+    display: grid;
+  }
+
+  .commander-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .commander-explainer {
+    grid-column: 1 / -1;
+    padding: 3px 2px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 5px;
+    letter-spacing: 0.06em;
+    line-height: 1.4;
+    text-align: center;
+  }
+
+  .commander-actions button {
+    min-height: 48px;
+    padding: 0 4px;
+    border: 1px solid rgba(158, 191, 192, 0.32);
+    background: rgba(5, 11, 14, 0.86);
+    color: var(--ice);
+    font-family: var(--mono);
+    font-size: 6px;
+    letter-spacing: 0.06em;
+    touch-action: manipulation;
+  }
+
+  .commander-actions button:disabled {
+    color: #5f6663;
+    opacity: 0.65;
+  }
+
+  .agent-card__status {
+    position: absolute;
+    top: 4px;
+    right: 5px;
+    color: var(--signal);
+    font-family: var(--mono);
+    font-size: 5px;
+    letter-spacing: 0.08em;
   }
 
   .agent-dock.mobile-panel--active .mobile-squad-toggle {
@@ -2925,9 +3047,13 @@ canvas:focus-visible {
   .mode-upgrade .mobile-action-tray,
   .mode-upgrade .mobile-stick,
   .mode-upgrade .mobile-panel-switcher,
+  .mode-upgrade .mobile-objective-card,
+  .mode-upgrade .mobile-camera-toggle,
   .mode-evolution .mobile-action-tray,
   .mode-evolution .mobile-stick,
-  .mode-evolution .mobile-panel-switcher {
+  .mode-evolution .mobile-panel-switcher,
+  .mode-evolution .mobile-objective-card,
+  .mode-evolution .mobile-camera-toggle {
     display: none !important;
     pointer-events: none !important;
   }

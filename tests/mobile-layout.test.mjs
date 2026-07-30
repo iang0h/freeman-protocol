@@ -17,7 +17,7 @@ test("uses the full safe mobile viewport", () => {
 
 test("keeps mobile gameplay clear by collapsing secondary controls", () => {
   assert.match(game, /mobile-squad-toggle/);
-  assert.match(game, /aria-expanded=\{mobilePanel === "warband" && mobileSquadOpen\}/);
+  assert.match(game, /aria-expanded=\{mobilePanel === "command" && mobileSquadOpen\}/);
   assert.match(
     styles,
     /\.agent-dock:not\(\.is-mobile-open\) \.squad-commands/,
@@ -26,14 +26,38 @@ test("keeps mobile gameplay clear by collapsing secondary controls", () => {
 });
 
 test("uses one active mobile command tray at a time", () => {
-  assert.match(game, /type MobilePanel = "fight" \| "skills" \| "warband"/);
-  assert.match(game, /const \[mobilePanel, setMobilePanel\] = useState<MobilePanel>\("fight"\)/);
+  assert.match(game, /type MobilePanel = "command" \| "defend" \| "skills"/);
+  assert.match(game, /const \[mobilePanel, setMobilePanel\] = useState<MobilePanel>\("command"\)/);
   assert.match(game, /mobile-panel-switcher/);
   assert.match(game, /aria-pressed=\{mobilePanel === panel\}/);
-  assert.match(game, /\["fight", "FIGHT"\]/);
+  assert.match(game, /\["command", "COMMAND"\]/);
+  assert.match(game, /\["defend", "DEFEND"\]/);
   assert.match(game, /\["skills", "SKILLS"\]/);
-  assert.match(game, /\["warband", "WARBAND"\]/);
   assert.match(styles, /\.mobile-panel--inactive/);
+});
+
+test("makes commander mode the default mobile management surface", () => {
+  assert.match(game, /type MobilePanel = "command" \| "defend" \| "skills"/);
+  assert.match(game, /const \[mobilePanel, setMobilePanel\] = useState<MobilePanel>\("command"\)/);
+  assert.match(game, /mobile-objective-card/);
+  assert.match(game, /OBJECTIVE:/);
+  assert.match(game, /COMMAND/);
+  assert.match(game, /RECRUIT|RECRUIT AGENT/);
+  assert.match(game, /FIGHTING|GATHERING|REPAIRING|OFFLINE/);
+  assert.match(styles, /\.mobile-objective-card/);
+  assert.match(styles, /\.commander-actions/);
+  assert.match(game, /THE CORE IS YOUR WIN CONDITION/);
+  assert.match(game, /AGENTS FIGHT AUTOMATICALLY/);
+  assert.match(game, /AGENTS GATHER MATERIALS/);
+  assert.match(game, /REPAIR OFFLINE AGENTS/);
+  assert.match(game, /UPGRADE BETWEEN WAVES/);
+});
+
+test("offers macro and tactical camera presentation controls", () => {
+  assert.match(game, /mobile-camera-toggle/);
+  assert.match(game, /MACRO MAP/);
+  assert.match(game, /TACTICAL VIEW/);
+  assert.match(styles, /\.mobile-camera-toggle/);
 });
 
 test("keeps workshop overlays from being covered by mobile gameplay trays", () => {
@@ -69,7 +93,7 @@ test("keeps the recruitment dock interactive above workshop overlays", () => {
   );
   assert.match(
     game,
-    /className=\{`agent-dock mobile-action-tray mobile-panel--warband/,
+    /className=\{`agent-dock mobile-action-tray mobile-panel--command/,
   );
 });
 
@@ -97,7 +121,7 @@ test("keeps EMP, agent skills, and repair actions reachable on touch layouts", (
   assert.match(game, /aria-label="EMP pulse"/);
   assert.match(game, /className=\{`skill-actions mobile-action-tray mobile-panel--skills/);
   assert.match(game, /aria-label="Agent skill controls"/);
-  assert.match(game, /className=\{`repair-field-kit mobile-action-tray mobile-panel--fight/);
+  assert.match(game, /className=\{`repair-field-kit mobile-action-tray mobile-panel--defend/);
   assert.match(styles, /\.skill-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, 42px\)/);
   assert.match(styles, /\.repair-field-kit\s*\{[\s\S]*?bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 76px\)/);
 });
