@@ -2829,7 +2829,7 @@ canvas:focus-visible {
   .mobile-objective-card {
     position: absolute;
     top: calc(env(safe-area-inset-top) + 150px);
-    right: 10px;
+    right: 84px;
     left: 10px;
     z-index: 22;
     display: grid;
