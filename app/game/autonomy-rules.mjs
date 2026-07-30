@@ -21,6 +21,7 @@ export const SUB_AGENT_MATERIAL_COST = Object.freeze({
   components: 1,
   shards: 1,
 });
+export const PLAYER_RESERVE_BATCH_SIZE = 3;
 
 function getRole(agent) {
   return AGENT_ROLES[agent.role] ? agent.role : "defend";

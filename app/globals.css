@@ -308,6 +308,37 @@ canvas:focus-visible {
   backdrop-filter: blur(14px);
 }
 
+.wave-intermission-banner {
+  position: absolute;
+  top: 86px;
+  left: 50%;
+  z-index: 22;
+  display: flex;
+  min-width: 280px;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 18px;
+  border: 1px solid rgba(220, 117, 64, 0.5);
+  background: rgba(9, 14, 16, 0.9);
+  color: var(--ivory);
+  font-family: var(--mono);
+  text-align: center;
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+}
+
+.wave-intermission-banner small {
+  color: var(--signal);
+  font-size: 7px;
+  letter-spacing: 0.16em;
+}
+
+.wave-intermission-banner strong {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
 .boss-health-banner > span {
   display: flex;
   min-width: 0;
@@ -2234,6 +2265,16 @@ canvas:focus-visible {
     padding: 6px 8px;
   }
 
+  .wave-intermission-banner {
+    top: calc(env(safe-area-inset-top) + 103px);
+    min-width: 220px;
+    padding: 7px 12px;
+  }
+
+  .wave-intermission-banner strong {
+    font-size: 9px;
+  }
+
   .boss-health-banner small {
     font-size: 5px;
   }
@@ -2777,7 +2818,7 @@ canvas:focus-visible {
 
   .commander-actions {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 4px;
     margin-bottom: 4px;
   }

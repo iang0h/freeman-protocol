@@ -298,7 +298,7 @@ test("both engines retain workshop recruitment through wave seven before wave ei
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
       engine,
-      /private completeWave\(\) \{[\s\S]*?this\.mode = advanceWarbandWorkshopMode\(this\.mode, "wave-complete"\);[\s\S]*?callbacks\.onMode\("upgrade"\)/,
+      /private completeWave\(\) \{[\s\S]*?this\.intermissionClock = WAVE_INTERMISSION_MS;[\s\S]*?callbacks\.onMode\("playing"\)/,
     );
     assert.match(
       engine,
@@ -794,4 +794,18 @@ test("both renderers give agents autonomous network management", () => {
   assert.match(game, /repairCore\(this\.core, this\.loot\.components\)/);
   assert.match(game, /this\.buildDefense\(\)/);
   assert.equal((game.match(/getUpgradeChoices\(this\.wave, this\.upgradeStacks\)\[0\]/g) ?? []).length, 2);
+});
+
+test("both renderers expose a player reserve army and three-second wave break", () => {
+  assert.match(game, /WAVE_INTERMISSION_MS/);
+  assert.match(game, /tickWaveIntermission/);
+  assert.ok((game.match(/deployReserve\(\)/g) ?? []).length >= 4);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /deployReserve\(\)/);
+    assert.match(engine, /PLAYER_RESERVE_BATCH_SIZE/);
+    assert.match(engine, /spawnTemporarySubAgent/);
+  }
+  assert.match(game, /DEPLOY TEMP ARMY/);
+  assert.match(game, /DEPLOY RESERVE/);
+  assert.match(game, /wave-intermission-banner/);
 });

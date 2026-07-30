@@ -78,11 +78,13 @@ import {
 } from "./game/loot-rules.mjs";
 import {
   SUB_AGENT_MATERIAL_COST,
+  PLAYER_RESERVE_BATCH_SIZE,
   clearSubAgents,
   decideAgentIntent,
   spawnTemporarySubAgent,
   tickTemporarySubAgent,
 } from "./game/autonomy-rules.mjs";
+import { WAVE_INTERMISSION_MS, tickWaveIntermission } from "./game/wave-rules.mjs";
 import {
   AUTONOMOUS_ACTION_INTERVAL_MS,
   CORE_REPAIR_AMOUNT,
@@ -281,6 +283,7 @@ type HudState = {
   maxCore: number;
   data: number;
   wave: number;
+  intermissionMs: number;
   enemies: number;
   score: number;
   best: number;
@@ -343,6 +346,7 @@ interface GameController {
   recruit(id: AgentId): void;
   useAgentSkill(id: EvolutionAgentId): void;
   buildDefense(): void;
+  deployReserve(): void;
   beginManualDefensePlacement(): void;
   setSquadCommand(command: SquadCommand): void;
   useFieldKit(): void;
@@ -757,6 +761,7 @@ const INITIAL_HUD: HudState = {
   maxCore: 180,
   data: 55,
   wave: 1,
+  intermissionMs: 0,
   enemies: 0,
   score: 0,
   best: 0,
@@ -1123,6 +1128,7 @@ class FreemanEngine {
   private wave = 1;
   private waveActive = false;
   private waveEndClock = 0;
+  private intermissionClock = 0;
   private score = 0;
   private best = 0;
   private data = 55;
@@ -1396,6 +1402,68 @@ class FreemanEngine {
         "Tap the arena inside the marked defense zone. Tap the base button again to cancel.",
     });
     this.emitHud(true);
+  }
+
+  deployReserve() {
+    if (this.mode !== "playing") return;
+    const parent = this.agents[0];
+    if (!parent) {
+      this.callbacks.onToast({
+        eyebrow: "RESERVE UNAVAILABLE",
+        title: "RECRUIT AN AGENT FIRST",
+        detail: "Your first AI agent leads temporary reserve units into battle.",
+      });
+      return;
+    }
+    let deployed = 0;
+    for (let index = 0; index < PLAYER_RESERVE_BATCH_SIZE; index += 1) {
+      const materials = { components: this.loot.components, shards: this.loot.shards };
+      const spawned = spawnTemporarySubAgent(
+        { id: parent.id, role: AUTONOMY_ROLES[parent.id] },
+        {
+          enemyDensity: Math.max(6, this.enemies.length),
+          playerHealthRatio: this.player.hp / this.player.maxHp,
+          coreHealthRatio: this.core.hp / this.core.maxHp,
+          wavePressure: 1,
+          subAgents: this.temporarySubAgents,
+          maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
+          materials,
+          upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
+        },
+      );
+      if (!spawned) break;
+      this.loot.components = materials.components;
+      this.loot.shards = materials.shards;
+      const marker = this.temporarySubAgentPool.acquire(() =>
+        createTemporarySubAgentMarker(parent.color),
+      );
+      resetTemporarySubAgentMarker(marker, parent.color, 1);
+      this.scene.add(marker);
+      this.temporarySubAgents.push({
+        ...spawned,
+        canSpawn: false as const,
+        marker,
+        maxLifetimeMs: spawned.remainingMs,
+        cooldownLeftMs: 350,
+        healthRatio: 1,
+        lifetimeRatio: 1,
+      });
+      deployed += 1;
+    }
+    if (deployed > 0) {
+      this.callbacks.onToast({
+        eyebrow: "RESERVE ARMY DEPLOYED",
+        title: `${deployed} TEMPORARY UNITS ONLINE`,
+        detail: "Your reserve force will swarm nearby threats for a limited time.",
+      });
+      this.emitHud(true);
+    } else {
+      this.callbacks.onToast({
+        eyebrow: "RESERVE UNAVAILABLE",
+        title: "GATHER MORE COMPONENTS AND SHARDS",
+        detail: "Agents can collect materials for the next reserve deployment.",
+      });
+    }
   }
 
   setSquadCommand(command: SquadCommand) {
@@ -1914,7 +1982,8 @@ class FreemanEngine {
   }
 
   applyUpgrade(id: UpgradeId) {
-    if (this.mode !== "upgrade") return;
+    const autonomousWorkshop = this.intermissionClock > 0;
+    if (this.mode !== "upgrade" && !autonomousWorkshop) return;
     try {
       const next = applyUpgradeStack({ stacks: this.upgradeStacks }, id);
       this.upgradeStacks = next.stacks;
@@ -1951,6 +2020,10 @@ class FreemanEngine {
       title: selected?.name ?? "TEAM UPGRADED",
       detail: selected?.outcome ?? "Your team is stronger.",
     });
+    if (autonomousWorkshop) {
+      this.emitHud(true);
+      return;
+    }
     this.resetInput();
     this.mode = "evolution";
     this.callbacks.onMode("evolution");
@@ -2042,6 +2115,7 @@ class FreemanEngine {
 
   private startNextWave() {
     this.resetInput();
+    this.intermissionClock = 0;
     this.clearTemporarySubAgents();
     this.wave += 1;
     this.mode = advanceWarbandWorkshopMode(this.mode, "start-next-wave");
@@ -3798,6 +3872,10 @@ class FreemanEngine {
 
   private updateGame(delta: number) {
     this.empState = tickEmp(this.empState, delta * 1_000) as EmpState;
+    if (this.intermissionClock > 0) {
+      this.intermissionClock = tickWaveIntermission(this.intermissionClock, delta * 1_000);
+      if (this.intermissionClock === 0) this.startNextWave();
+    }
     this.runAutonomousNetwork(delta);
     this.updatePlayer(delta);
     this.updateRig(this.player.rig, delta, this.playerMoving ? "run" : "idle");
@@ -5152,19 +5230,17 @@ class FreemanEngine {
       this.emitHud(true);
       return;
     }
-    this.mode = advanceWarbandWorkshopMode(this.mode, "wave-complete");
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
-    this.callbacks.onMode("upgrade");
+    this.intermissionClock = WAVE_INTERMISSION_MS;
+    this.callbacks.onMode("playing");
     const autonomousUpgrade = getUpgradeChoices(this.wave, this.upgradeStacks)[0];
     if (autonomousUpgrade) {
       this.applyUpgrade(autonomousUpgrade.id);
-      this.continueWithoutEvolution();
-      return;
     }
     this.callbacks.onToast({
       eyebrow: `WAVE ${this.wave} CLEARED`,
-      title: "CHOOSE ONE UPGRADE",
-      detail: "The next wave is stronger. Pick the upgrade that helps most.",
+      title: "NETWORK RECONFIGURING",
+      detail: "Build defenses and deploy reserves. The next wave begins in 3 seconds.",
     });
     this.audio.play("wave");
     this.emitHud(true);
@@ -6120,6 +6196,7 @@ class FreemanEngine {
       maxCore: Math.round(this.core.maxHp),
       data: Math.round(this.data),
       wave: this.wave,
+      intermissionMs: this.intermissionClock,
       enemies: remainingThreats({
         active: this.enemies.length,
         queued: this.spawnQueue.length,
@@ -6383,6 +6460,7 @@ class FreemanCanvasEngine implements GameController {
   private wave = 1;
   private waveActive = false;
   private waveEndClock = 0;
+  private intermissionClock = 0;
   private score = 0;
   private best = 0;
   private data = 55;
@@ -7130,7 +7208,8 @@ class FreemanCanvasEngine implements GameController {
   }
 
   applyUpgrade(id: UpgradeId) {
-    if (this.mode !== "upgrade") return;
+    const autonomousWorkshop = this.intermissionClock > 0;
+    if (this.mode !== "upgrade" && !autonomousWorkshop) return;
     try {
       const next = applyUpgradeStack({ stacks: this.upgradeStacks }, id);
       this.upgradeStacks = next.stacks;
@@ -7165,6 +7244,10 @@ class FreemanCanvasEngine implements GameController {
       title: selected?.name ?? "TEAM UPGRADED",
       detail: selected?.outcome ?? "Your team is stronger.",
     });
+    if (autonomousWorkshop) {
+      this.emitHud(true);
+      return;
+    }
     this.resetInput();
     this.mode = "evolution";
     this.callbacks.onMode("evolution");
@@ -7210,6 +7293,7 @@ class FreemanCanvasEngine implements GameController {
 
   private startNextWave() {
     this.resetInput();
+    this.intermissionClock = 0;
     this.clearTemporarySubAgents();
     this.wave += 1;
     this.mode = advanceWarbandWorkshopMode(this.mode, "start-next-wave");
@@ -7504,6 +7588,10 @@ class FreemanCanvasEngine implements GameController {
 
   private updateGame(delta: number) {
     this.empState = tickEmp(this.empState, delta * 1_000) as EmpState;
+    if (this.intermissionClock > 0) {
+      this.intermissionClock = tickWaveIntermission(this.intermissionClock, delta * 1_000);
+      if (this.intermissionClock === 0) this.startNextWave();
+    }
     this.runAutonomousNetwork(delta);
     this.updatePlayer(delta);
     this.updateAgents(delta);
@@ -8950,19 +9038,17 @@ class FreemanCanvasEngine implements GameController {
       this.emitHud(true);
       return;
     }
-    this.mode = advanceWarbandWorkshopMode(this.mode, "wave-complete");
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
-    this.callbacks.onMode("upgrade");
+    this.intermissionClock = WAVE_INTERMISSION_MS;
+    this.callbacks.onMode("playing");
     const autonomousUpgrade = getUpgradeChoices(this.wave, this.upgradeStacks)[0];
     if (autonomousUpgrade) {
       this.applyUpgrade(autonomousUpgrade.id);
-      this.continueWithoutEvolution();
-      return;
     }
     this.callbacks.onToast({
       eyebrow: `WAVE ${this.wave} CLEARED`,
-      title: "CHOOSE ONE UPGRADE",
-      detail: "The next wave is stronger. Pick the upgrade that helps most.",
+      title: "NETWORK RECONFIGURING",
+      detail: "Build defenses and deploy reserves. The next wave begins in 3 seconds.",
     });
     this.audio.play("wave");
     this.emitHud(true);
@@ -9266,6 +9352,57 @@ class FreemanCanvasEngine implements GameController {
       return;
     }
     this.placeDefenseAt({ x: this.aim.x, z: this.aim.z });
+  }
+
+  deployReserve() {
+    if (this.mode !== "playing") return;
+    const parent = this.agents[0];
+    if (!parent) {
+      this.callbacks.onToast({
+        eyebrow: "RESERVE UNAVAILABLE",
+        title: "RECRUIT AN AGENT FIRST",
+        detail: "Your first AI agent leads temporary reserve units into battle.",
+      });
+      return;
+    }
+    let deployed = 0;
+    for (let index = 0; index < PLAYER_RESERVE_BATCH_SIZE; index += 1) {
+      const materials = { components: this.loot.components, shards: this.loot.shards };
+      const spawned = spawnTemporarySubAgent(
+        { id: parent.id, role: AUTONOMY_ROLES[parent.id] },
+        {
+          enemyDensity: Math.max(6, this.enemies.length),
+          playerHealthRatio: this.player.hp / this.player.maxHp,
+          coreHealthRatio: this.core.hp / this.core.maxHp,
+          wavePressure: 1,
+          subAgents: this.temporarySubAgents,
+          maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
+          materials,
+          upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
+        },
+      );
+      if (!spawned) break;
+      this.loot.components = materials.components;
+      this.loot.shards = materials.shards;
+      this.temporarySubAgents.push({
+        ...spawned,
+        canSpawn: false as const,
+        x: parent.x,
+        z: parent.z,
+        color: parent.color,
+        maxLifetimeMs: spawned.remainingMs,
+        cooldownLeftMs: 350,
+        healthRatio: 1,
+        lifetimeRatio: 1,
+      });
+      deployed += 1;
+    }
+    this.callbacks.onToast({
+      eyebrow: deployed > 0 ? "RESERVE ARMY DEPLOYED" : "RESERVE UNAVAILABLE",
+      title: deployed > 0 ? `${deployed} TEMPORARY UNITS ONLINE` : "GATHER MORE COMPONENTS AND SHARDS",
+      detail: deployed > 0 ? "Your reserve force will swarm nearby threats for a limited time." : "Agents can collect materials for the next reserve deployment.",
+    });
+    if (deployed > 0) this.emitHud(true);
   }
 
   private placeDefenseAt(position: { x: number; z: number }) {
@@ -10585,6 +10722,7 @@ class FreemanCanvasEngine implements GameController {
       maxCore: Math.round(this.core.maxHp),
       data: Math.round(this.data),
       wave: this.wave,
+      intermissionMs: this.intermissionClock,
       enemies: remainingThreats({
         active: this.enemies.length,
         queued: this.spawnQueue.length,
@@ -10873,6 +11011,13 @@ export default function FreemanProtocol() {
 
       {mode !== "intro" && (
         <>
+          {hud.intermissionMs > 0 && (
+            <div className="wave-intermission-banner" role="status">
+              <small>WAVE {hud.wave} CLEARED</small>
+              <strong>NETWORK RECONFIGURING · NEXT WAVE IN {Math.ceil(hud.intermissionMs / 1_000)}S</strong>
+            </div>
+          )}
+
           {hud.boss && (
             <div className="boss-health-banner" role="status">
               <span>
@@ -11046,6 +11191,18 @@ export default function FreemanProtocol() {
               {hud.placingDefense ? "CANCEL MANUAL PLACEMENT" : "PLACE MANUALLY"}
               <kbd>SHIFT+B</kbd>
             </button>
+            <button
+              type="button"
+              className="base-builder base-builder--reserve"
+              onClick={() => engineRef.current?.deployReserve()}
+              disabled={mode !== "playing" || hud.loot.components < 3 || hud.loot.shards < 3}
+            >
+              <span>
+                <small>PLAYER RESERVE</small>
+                <strong>DEPLOY TEMP ARMY</strong>
+              </span>
+              <b>{hud.loot.components}C · {hud.loot.shards}S</b>
+            </button>
           </aside>
 
           <aside className="mobile-status-strip" aria-label="Mission status">
@@ -11173,6 +11330,9 @@ export default function FreemanProtocol() {
               </button>
               <button type="button" onClick={() => engineRef.current?.useFieldKit()} disabled={mode !== "playing" || hud.loot.repairs < 1}>
                 REPAIR NETWORK
+              </button>
+              <button type="button" onClick={() => engineRef.current?.deployReserve()} disabled={mode !== "playing" || hud.loot.components < 3 || hud.loot.shards < 3}>
+                DEPLOY RESERVE
               </button>
             </div>
             <div className="agent-dock__heading">

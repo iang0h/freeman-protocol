@@ -129,6 +129,12 @@ test("keeps both sentry deployment actions available on mobile", () => {
   assert.match(styles, /\.base-builder__manual/);
 });
 
+test("keeps the temporary reserve army action touch-safe", () => {
+  assert.match(game, /DEPLOY RESERVE/);
+  assert.match(styles, /\.commander-actions button[\s\S]*touch-action:\s*manipulation/);
+  assert.match(game, /hud\.loot\.components < 3 \|\| hud\.loot\.shards < 3/);
+});
+
 test("keeps the repair field kit as a large touch-safe action", () => {
   assert.match(game, /repair-field-kit/);
   assert.match(game, /REPAIR \/ FIELD KIT/);
