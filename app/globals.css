@@ -2675,6 +2675,136 @@ canvas:focus-visible {
   }
 }
 
+/* Readability pass: prioritize scan speed over tiny telemetry labels. */
+@media (min-width: 821px) {
+  .vitals-panel {
+    width: 300px;
+    padding: 18px 18px 16px;
+    background:
+      linear-gradient(110deg, rgba(220, 117, 64, 0.1), transparent 45%),
+      rgba(7, 14, 17, 0.94);
+  }
+
+  .vitals-panel .panel-label {
+    color: #d4d9d4;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+  }
+
+  .vitals-panel .vital-row > span {
+    color: #c8d0ca;
+    font-size: 10px;
+  }
+
+  .vitals-panel .vital-row strong {
+    color: #fff8ee;
+    font-size: 18px;
+  }
+
+  .vitals-panel .vital-row strong small {
+    color: #aebbb3;
+    font-size: 11px;
+  }
+
+  .vitals-panel .resource-grid small {
+    color: #aebbb3;
+    font-size: 8px;
+  }
+
+  .vitals-panel .resource-grid strong {
+    color: #fff8ee;
+    font-size: 16px;
+  }
+
+  .vitals-panel .progression-telemetry small,
+  .vitals-panel .progression-telemetry span {
+    color: #aebbb3;
+    font-size: 7px;
+  }
+
+  .vitals-panel .progression-telemetry strong {
+    font-size: 10px;
+  }
+
+  .vitals-panel .base-builder strong {
+    font-size: 11px;
+  }
+
+  .vitals-panel .base-builder b {
+    color: #c8d0ca;
+    font-size: 8px;
+  }
+
+  .hud-actions button,
+  .hud-actions a {
+    font-size: 10px;
+  }
+
+  .agent-card {
+    min-height: 76px;
+  }
+
+  .agent-card__copy small {
+    color: #c0c9c2;
+    font-size: 9px;
+  }
+
+  .agent-card__copy strong {
+    font-size: 16px;
+  }
+
+  .agent-card__cost {
+    font-size: 9px;
+  }
+}
+
+@media (max-width: 820px) {
+  .mobile-status-strip {
+    min-height: 52px;
+    padding: 8px 10px;
+    background: rgba(5, 12, 15, 0.96);
+  }
+
+  .mobile-status-strip small {
+    color: #c0cbc3;
+    font-size: 8px;
+  }
+
+  .mobile-status-strip strong {
+    color: #fff8ee;
+    font-size: 16px;
+  }
+
+  .mobile-panel-switcher button {
+    color: #c8d0ca;
+    font-size: 10px;
+  }
+
+  .commander-actions button {
+    color: #d9efed;
+    font-size: 8px;
+    font-weight: 600;
+  }
+
+  .agent-dock.mobile-panel--active .squad-commands button,
+  .agent-dock.mobile-panel--active .agent-card {
+    min-height: 56px;
+  }
+
+  .agent-card__copy small {
+    color: #c0c9c2;
+    font-size: 7px;
+  }
+
+  .agent-card__copy strong {
+    font-size: 12px;
+  }
+
+  .agent-card__cost {
+    font-size: 7px;
+  }
+}
+
 /* Mobile commander mode: keep the arena visible and expose one tray at a time. */
 .mobile-status-strip,
 .mobile-panel-switcher,

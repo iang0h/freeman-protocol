@@ -6,6 +6,10 @@ const game = await readFile(
   new URL("../app/FreemanProtocol.tsx", import.meta.url),
   "utf8",
 );
+const styles = await readFile(
+  new URL("../app/globals.css", import.meta.url),
+  "utf8",
+);
 const catalog = await readFile(
   new URL("../app/asset-catalog/AssetCatalog.tsx", import.meta.url),
   "utf8",
@@ -808,4 +812,11 @@ test("both renderers expose a player reserve army and three-second wave break", 
   assert.match(game, /DEPLOY TEMP ARMY/);
   assert.match(game, /DEPLOY RESERVE/);
   assert.match(game, /wave-intermission-banner/);
+});
+
+test("desktop HUD uses a high-contrast readable hierarchy", () => {
+  assert.match(game, /vitals-panel/);
+  assert.match(styles, /@media \(min-width: 821px\)[\s\S]*\.vitals-panel \{[\s\S]*width:\s*300px/);
+  assert.match(styles, /@media \(min-width: 821px\)[\s\S]*\.vitals-panel \.vital-row strong[\s\S]*font-size:\s*18px/);
+  assert.match(styles, /@media \(min-width: 821px\)[\s\S]*\.agent-card__copy strong[\s\S]*font-size:\s*16px/);
 });

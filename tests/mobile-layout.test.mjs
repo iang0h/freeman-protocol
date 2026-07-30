@@ -135,6 +135,12 @@ test("keeps the temporary reserve army action touch-safe", () => {
   assert.match(game, /hud\.loot\.components < 3 \|\| hud\.loot\.shards < 3/);
 });
 
+test("raises mobile HUD text to readable touch sizes", () => {
+  assert.match(styles, /\.mobile-status-strip strong[\s\S]*font-size:\s*16px/);
+  assert.match(styles, /\.mobile-panel-switcher button[\s\S]*font-size:\s*10px/);
+  assert.match(styles, /\.commander-actions button[\s\S]*font-size:\s*8px/);
+});
+
 test("keeps the repair field kit as a large touch-safe action", () => {
   assert.match(game, /repair-field-kit/);
   assert.match(game, /REPAIR \/ FIELD KIT/);
