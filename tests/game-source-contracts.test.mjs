@@ -846,4 +846,7 @@ test("both renderers expose the shared watch-mode contract", async () => {
   }
   assert.match(game, /mode: "watch"/);
   assert.match(game, /isWatchMode\(this\.sessionMode\)/);
+  assert.match(game, /WATCH_INCOMING_DAMAGE_MULTIPLIER/);
+  assert.match(game, /WATCH_INTERMISSION_CORE_REPAIR/);
+  assert.match(game, /RECRUITED BY THE NETWORK/);
 });

@@ -131,6 +131,9 @@ import {
   setWatchPriority,
   setWatchSpeed,
   tickWatchState,
+  WATCH_INCOMING_DAMAGE_MULTIPLIER,
+  WATCH_INTERMISSION_CORE_REPAIR,
+  WATCH_STARTER_AGENT_COUNT,
 } from "./game/watch-mode-rules.mjs";
 
 type GameMode =
@@ -1395,10 +1398,10 @@ class FreemanEngine {
     this.mode = "playing";
     this.callbacks.onMode("playing");
     if (isWatchMode(this.sessionMode)) {
-      for (const agentId of ["kairos", "kira", "forge"] as AgentId[]) {
+      for (const agentId of ["kairos", "kira", "forge", "covenant"].slice(0, WATCH_STARTER_AGENT_COUNT) as AgentId[]) {
         this.addAgent(agentId, { charge: false, notify: false });
       }
-      this.watchState.lastEvent = "AI NETWORK DEPLOYED THREE STARTER AGENTS";
+      this.watchState.lastEvent = "AI NETWORK DEPLOYED FOUR STARTER AGENTS";
     }
     this.spawnWave(1);
     this.audio.play("wave");
@@ -3576,10 +3579,10 @@ class FreemanEngine {
     this.mode = "playing";
     this.callbacks.onMode("playing");
     if (isWatchMode(this.sessionMode)) {
-      for (const agentId of ["kairos", "kira", "forge"] as AgentId[]) {
+      for (const agentId of ["kairos", "kira", "forge", "covenant"].slice(0, WATCH_STARTER_AGENT_COUNT) as AgentId[]) {
         this.addAgent(agentId, { charge: false, notify: false });
       }
-      this.watchState.lastEvent = "AI NETWORK DEPLOYED THREE STARTER AGENTS";
+      this.watchState.lastEvent = "AI NETWORK DEPLOYED FOUR STARTER AGENTS";
     }
     this.spawnWave(1);
     this.emitHud(true);
@@ -4060,6 +4063,14 @@ class FreemanEngine {
     this.autonomousActionClock -= delta * 1_000;
     if (this.autonomousActionClock > 0 || this.agents.length === 0) return;
     this.autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
+    if (isWatchMode(this.sessionMode) && this.agents.length < WARBAND_SLOTS.length) {
+      const nextAgent = WARBAND_SLOTS[this.agents.length]?.id as AgentId | undefined;
+      if (nextAgent && this.addAgent(nextAgent, { charge: true, notify: false })) {
+        this.watchState.lastEvent = nextAgent.toUpperCase() + " RECRUITED BY THE NETWORK";
+        this.emitHud(true);
+        return;
+      }
+    }
     const damagedAgent = this.agents.some((agent) => agent.hp < agent.maxHp);
     const damagedTurret = this.defenses.some((defense) => defense.hp < defense.maxHp);
     const action = chooseAutonomousNetworkAction({
@@ -5343,6 +5354,10 @@ class FreemanEngine {
       };
       this.watchState = creditWatchWaveReward(this.watchState, reward);
       persistWatchRewards(reward);
+      this.core.hp = Math.min(
+        this.core.maxHp,
+        this.core.hp + WATCH_INTERMISSION_CORE_REPAIR,
+      );
     }
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.intermissionClock = WAVE_INTERMISSION_MS;
@@ -5362,6 +5377,9 @@ class FreemanEngine {
 
   private damageTarget(target: "player" | "core", damage: number) {
     if (isWatchMode(this.sessionMode) && target === "player") return;
+    if (isWatchMode(this.sessionMode)) {
+      damage *= WATCH_INCOMING_DAMAGE_MULTIPLIER;
+    }
     const floor = isTutorialProtected(this.tutorialStep) ? 1 : 0;
     if (target === "player") {
       if (this.player.invulnerable > 0) return;
@@ -7839,6 +7857,14 @@ class FreemanCanvasEngine implements GameController {
     this.autonomousActionClock -= delta * 1_000;
     if (this.autonomousActionClock > 0 || this.agents.length === 0) return;
     this.autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
+    if (isWatchMode(this.sessionMode) && this.agents.length < WARBAND_SLOTS.length) {
+      const nextAgent = WARBAND_SLOTS[this.agents.length]?.id as AgentId | undefined;
+      if (nextAgent && this.addAgent(nextAgent, { charge: true, notify: false })) {
+        this.watchState.lastEvent = nextAgent.toUpperCase() + " RECRUITED BY THE NETWORK";
+        this.emitHud(true);
+        return;
+      }
+    }
     const damagedAgent = this.agents.some((agent) => agent.hp < agent.maxHp);
     const damagedTurret = this.defenses.some((defense) => defense.hp < defense.maxHp);
     const action = chooseAutonomousNetworkAction({
@@ -9218,6 +9244,10 @@ class FreemanCanvasEngine implements GameController {
       };
       this.watchState = creditWatchWaveReward(this.watchState, reward);
       persistWatchRewards(reward);
+      this.core.hp = Math.min(
+        this.core.maxHp,
+        this.core.hp + WATCH_INTERMISSION_CORE_REPAIR,
+      );
     }
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.intermissionClock = WAVE_INTERMISSION_MS;
@@ -9237,6 +9267,9 @@ class FreemanCanvasEngine implements GameController {
 
   private damageTarget(target: "player" | "core", damage: number) {
     if (isWatchMode(this.sessionMode) && target === "player") return;
+    if (isWatchMode(this.sessionMode)) {
+      damage *= WATCH_INCOMING_DAMAGE_MULTIPLIER;
+    }
     const floor = isTutorialProtected(this.tutorialStep) ? 1 : 0;
     if (target === "player") {
       if (this.player.invulnerable > 0) return;

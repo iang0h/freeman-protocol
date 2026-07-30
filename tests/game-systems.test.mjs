@@ -108,6 +108,9 @@ import {
 import {
   WATCH_PRIORITIES,
   WATCH_REWARD_CAPS,
+  WATCH_STARTER_AGENT_COUNT,
+  WATCH_INCOMING_DAMAGE_MULTIPLIER,
+  WATCH_INTERMISSION_CORE_REPAIR,
   WATCH_SPEEDS,
   createWatchState,
   creditWatchWaveReward,
@@ -209,6 +212,12 @@ test("watch mode wave rewards are capped per session", () => {
   });
   assert.deepEqual(capped.sessionIncome, WATCH_REWARD_CAPS);
   assert.equal(capped.lastEvent, "WAVE REWARDS CREDITED");
+});
+
+test("watch mode balance gives the AI network a survivable starting advantage", () => {
+  assert.equal(WATCH_STARTER_AGENT_COUNT, 4);
+  assert.equal(WATCH_INCOMING_DAMAGE_MULTIPLIER, 0.8);
+  assert.equal(WATCH_INTERMISSION_CORE_REPAIR, 18);
 });
 
 test("field-kit inventory cannot manufacture a repair decision", async () => {
