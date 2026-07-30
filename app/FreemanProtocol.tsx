@@ -1286,7 +1286,7 @@ class FreemanEngine {
     if (!isWatchMode(this.sessionMode)) return;
     let saved: { compute?: number; components?: number; shards?: number } = {};
     try {
-      saved = JSON.parse(readStoredValue("freeman-watch-rewards", "{}") ?? "{}");
+      saved = JSON.parse(readStoredValue("freeman-watch-rewards") ?? "{}");
     } catch {}
     writeStoredValue(
       "freeman-watch-rewards",
@@ -1390,6 +1390,12 @@ class FreemanEngine {
     this.captureFirstWaveCheckpoint();
     this.mode = "playing";
     this.callbacks.onMode("playing");
+    if (isWatchMode(this.sessionMode)) {
+      for (const agentId of ["kairos", "kira", "forge"] as AgentId[]) {
+        this.addAgent(agentId, { charge: false, notify: false });
+      }
+      this.watchState.lastEvent = "AI NETWORK DEPLOYED THREE STARTER AGENTS";
+    }
     this.spawnWave(1);
     this.audio.play("wave");
     this.emitHud(true);
@@ -3565,6 +3571,12 @@ class FreemanEngine {
     this.wave = 1;
     this.mode = "playing";
     this.callbacks.onMode("playing");
+    if (isWatchMode(this.sessionMode)) {
+      for (const agentId of ["kairos", "kira", "forge"] as AgentId[]) {
+        this.addAgent(agentId, { charge: false, notify: false });
+      }
+      this.watchState.lastEvent = "AI NETWORK DEPLOYED THREE STARTER AGENTS";
+    }
     this.spawnWave(1);
     this.emitHud(true);
   }
@@ -5343,6 +5355,7 @@ class FreemanEngine {
   }
 
   private damageTarget(target: "player" | "core", damage: number) {
+    if (isWatchMode(this.sessionMode) && target === "player") return;
     const floor = isTutorialProtected(this.tutorialStep) ? 1 : 0;
     if (target === "player") {
       if (this.player.invulnerable > 0) return;
@@ -6669,7 +6682,7 @@ class FreemanCanvasEngine implements GameController {
     if (!isWatchMode(this.sessionMode)) return;
     let saved: { compute?: number; components?: number; shards?: number } = {};
     try {
-      saved = JSON.parse(readStoredValue("freeman-watch-rewards", "{}") ?? "{}");
+      saved = JSON.parse(readStoredValue("freeman-watch-rewards") ?? "{}");
     } catch {}
     writeStoredValue(
       "freeman-watch-rewards",
@@ -9226,6 +9239,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private damageTarget(target: "player" | "core", damage: number) {
+    if (isWatchMode(this.sessionMode) && target === "player") return;
     const floor = isTutorialProtected(this.tutorialStep) ? 1 : 0;
     if (target === "player") {
       if (this.player.invulnerable > 0) return;
