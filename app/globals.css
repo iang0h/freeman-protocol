@@ -2767,7 +2767,9 @@ canvas:focus-visible {
 .mobile-status-strip,
 .mobile-panel-switcher,
 .mobile-objective-card,
-.mobile-camera-toggle {
+.mobile-camera-toggle,
+.commander-actions,
+.commander-explainer {
   display: none;
 }
 

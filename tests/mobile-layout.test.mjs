@@ -74,6 +74,11 @@ test("keeps commander mode compact until the roster is explicitly opened", () =>
   );
 });
 
+test("keeps commander-only controls out of the desktop warband dock", () => {
+  assert.match(styles, /\.commander-actions,\s*\.commander-explainer\s*\{\s*display:\s*none/);
+  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*?\.commander-actions\s*\{\s*display:\s*grid/);
+});
+
 test("keeps workshop overlays from being covered by mobile gameplay trays", () => {
   assert.match(game, /className=\{`game-shell mode-\$\{mode\}`\}/);
   assert.match(game, /mobile-status-strip/);
