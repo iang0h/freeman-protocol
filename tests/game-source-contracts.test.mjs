@@ -820,6 +820,13 @@ test("desktop HUD uses a high-contrast readable hierarchy", () => {
   assert.match(styles, /@media \(min-width: 821px\)[\s\S]*\.vitals-panel \.vital-row strong[\s\S]*font-size:\s*18px/);
   assert.match(styles, /@media \(min-width: 821px\)[\s\S]*\.agent-card__copy strong[\s\S]*font-size:\s*16px/);
 });
+
+test("WebGL renderer includes a controlled toon shading pass", () => {
+  assert.match(game, /MeshToonMaterial/);
+  assert.match(game, /flatShading\s*=\s*true/);
+  assert.match(game, /toonGradient/);
+  assert.match(game, /applyToonMaterialPass/);
+});
 test("both renderers expose the shared watch-mode contract", async () => {
   const game = await readFile(
     new URL("../app/FreemanProtocol.tsx", import.meta.url),

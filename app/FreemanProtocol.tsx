@@ -862,6 +862,19 @@ const TUTORIAL_COPY: Record<
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
+const toonGradient = (() => {
+  const data = new Uint8Array([
+    42, 42, 42, 255,
+    132, 132, 132, 255,
+    255, 255, 255, 255,
+  ]);
+  const texture = new THREE.DataTexture(data, 3, 1, THREE.RGBAFormat);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.needsUpdate = true;
+  return texture;
+})();
+
 function persistWatchRewards(reward: { compute?: number; components?: number; shards?: number }) {
   let saved: { compute?: number; components?: number; shards?: number } = {};
   try {
@@ -1264,6 +1277,7 @@ class FreemanEngine {
     this.repairBay = this.buildRepairBay();
     this.player = this.buildOperator();
     void this.attachOperatorRig();
+    this.applyToonMaterialPass();
     this.bindEvents();
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -1271,6 +1285,38 @@ class FreemanEngine {
     this.resize();
     this.emitHud(true);
     this.animate();
+  }
+
+  private applyToonMaterialPass() {
+    this.toonifyObject(this.scene);
+  }
+
+  private toonifyObject(root: THREE.Object3D) {
+    root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      const converted = materials.map((material) => {
+        if (!(material instanceof THREE.MeshStandardMaterial)) return material;
+        const toonMaterial = new THREE.MeshToonMaterial({
+          color: material.color,
+          map: material.map,
+          transparent: material.transparent,
+          opacity: material.opacity,
+          alphaTest: material.alphaTest,
+          side: material.side,
+          depthWrite: material.depthWrite,
+          gradientMap: toonGradient,
+        });
+        (toonMaterial as THREE.MeshToonMaterial & { flatShading: boolean }).flatShading = true;
+        toonMaterial.needsUpdate = true;
+        return toonMaterial;
+      });
+      object.material = Array.isArray(object.material) ? converted : converted[0];
+      object.castShadow = true;
+      object.receiveShadow = true;
+    });
   }
 
   start(options: StartOptions = { tutorial: false, mode: "campaign" }) {
@@ -1851,6 +1897,7 @@ class FreemanEngine {
     health.group.position.y = 2.08;
     group.add(health.group);
     this.scene.add(group);
+    this.toonifyObject(group);
     const runtime: AgentRuntime = {
       ...definition,
       armorProfile: WARBAND_SLOTS.find((slot) => slot.id === id)?.armorProfile ?? { id: "standard", damageMultiplier: 1 },
@@ -3455,6 +3502,7 @@ class FreemanEngine {
       bossState,
       bossVisual,
     };
+    this.toonifyObject(enemy.group);
     this.enemies.push(enemy);
     this.addRing(
       position,
@@ -5882,6 +5930,7 @@ class FreemanEngine {
         -fittedCenter.z,
       );
       this.player.group.add(root);
+      this.toonifyObject(root);
       root.updateMatrixWorld(true);
 
       const finalBounds = new THREE.Box3().setFromObject(root);
