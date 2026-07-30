@@ -859,6 +859,21 @@ const TUTORIAL_COPY: Record<
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
+function persistWatchRewards(reward: { compute?: number; components?: number; shards?: number }) {
+  let saved: { compute?: number; components?: number; shards?: number } = {};
+  try {
+    saved = JSON.parse(readStoredValue("freeman-watch-rewards") ?? "{}");
+  } catch {}
+  writeStoredValue(
+    "freeman-watch-rewards",
+    JSON.stringify({
+      compute: Math.max(0, Number(saved.compute) || 0) + Math.max(0, Number(reward.compute) || 0),
+      components: Math.max(0, Number(saved.components) || 0) + Math.max(0, Number(reward.components) || 0),
+      shards: Math.max(0, Number(saved.shards) || 0) + Math.max(0, Number(reward.shards) || 0),
+    }),
+  );
+}
+
 function createBossTelegraphVisual() {
   const group = new THREE.Group();
   group.name = "pooled-boss-telegraph";
@@ -1284,18 +1299,7 @@ class FreemanEngine {
 
   endWatchRun() {
     if (!isWatchMode(this.sessionMode)) return;
-    let saved: { compute?: number; components?: number; shards?: number } = {};
-    try {
-      saved = JSON.parse(readStoredValue("freeman-watch-rewards") ?? "{}");
-    } catch {}
-    writeStoredValue(
-      "freeman-watch-rewards",
-      JSON.stringify({
-        compute: Math.max(0, Number(saved.compute) || 0) + this.watchState.sessionIncome.compute,
-        components: Math.max(0, Number(saved.components) || 0) + this.watchState.sessionIncome.components,
-        shards: Math.max(0, Number(saved.shards) || 0) + this.watchState.sessionIncome.shards,
-      }),
-    );
+    persistWatchRewards(this.watchState.sessionIncome);
     this.resetInput();
     this.sessionMode = "campaign";
     this.mode = "intro";
@@ -5332,11 +5336,13 @@ class FreemanEngine {
       return;
     }
     if (isWatchMode(this.sessionMode)) {
-      this.watchState = creditWatchWaveReward(this.watchState, {
+      const reward = {
         compute: this.wave === 4 || this.wave === 7 ? 42 : 24,
         components: this.loot.components,
         shards: this.loot.shards,
-      });
+      };
+      this.watchState = creditWatchWaveReward(this.watchState, reward);
+      persistWatchRewards(reward);
     }
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.intermissionClock = WAVE_INTERMISSION_MS;
@@ -6680,18 +6686,7 @@ class FreemanCanvasEngine implements GameController {
 
   endWatchRun() {
     if (!isWatchMode(this.sessionMode)) return;
-    let saved: { compute?: number; components?: number; shards?: number } = {};
-    try {
-      saved = JSON.parse(readStoredValue("freeman-watch-rewards") ?? "{}");
-    } catch {}
-    writeStoredValue(
-      "freeman-watch-rewards",
-      JSON.stringify({
-        compute: Math.max(0, Number(saved.compute) || 0) + this.watchState.sessionIncome.compute,
-        components: Math.max(0, Number(saved.components) || 0) + this.watchState.sessionIncome.components,
-        shards: Math.max(0, Number(saved.shards) || 0) + this.watchState.sessionIncome.shards,
-      }),
-    );
+    persistWatchRewards(this.watchState.sessionIncome);
     this.resetInput();
     this.sessionMode = "campaign";
     this.mode = "intro";
@@ -9216,11 +9211,13 @@ class FreemanCanvasEngine implements GameController {
       return;
     }
     if (isWatchMode(this.sessionMode)) {
-      this.watchState = creditWatchWaveReward(this.watchState, {
+      const reward = {
         compute: this.wave === 4 || this.wave === 7 ? 42 : 24,
         components: this.loot.components,
         shards: this.loot.shards,
-      });
+      };
+      this.watchState = creditWatchWaveReward(this.watchState, reward);
+      persistWatchRewards(reward);
     }
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.intermissionClock = WAVE_INTERMISSION_MS;
