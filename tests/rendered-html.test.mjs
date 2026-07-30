@@ -99,6 +99,18 @@ test("HUD source surfaces the progression and encounter telemetry from both engi
   assert.match(game, /prefers-reduced-motion: reduce/);
 });
 
+test("HUD source exposes campaign and watch mode controls", async () => {
+  const game = await readFile(
+    new URL("../app/FreemanProtocol.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(game, /START CAMPAIGN/);
+  assert.match(game, /START WATCH MODE/);
+  for (const label of ["WATCH MODE", "SURVIVAL", "INCOME", "survive", "farm", "expand", "END RUN"]) {
+    assert.match(game, new RegExp(label));
+  }
+});
+
 test("renders the living network catalog route", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("catalog", `${process.pid}-${Date.now()}`);
