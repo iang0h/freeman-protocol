@@ -10596,7 +10596,7 @@ export default function FreemanProtocol() {
   const [musicVolume, setMusicVolume] = useState(0.42);
   const [sfxVolume, setSfxVolume] = useState(0.72);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [mobileSquadOpen, setMobileSquadOpen] = useState(true);
+  const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("command");
   const [cameraPresentation, setCameraPresentation] = useState<CameraPresentation>("macro");
   const [tutorialComplete, setTutorialComplete] = useState(false);

@@ -60,6 +60,20 @@ test("offers macro and tactical camera presentation controls", () => {
   assert.match(styles, /\.mobile-camera-toggle/);
 });
 
+test("keeps commander mode compact until the roster is explicitly opened", () => {
+  assert.match(game, /const \[mobileSquadOpen, setMobileSquadOpen\] = useState\(false\)/);
+  assert.match(styles, /\.mobile-objective-card[\s\S]*max-height:\s*112px/);
+  assert.match(styles, /\.mobile-objective-card strong[\s\S]*font-size:\s*12px/);
+  assert.match(
+    styles,
+    /\.agent-dock\.mobile-panel--command\.is-mobile-open \.agent-grid/,
+  );
+  assert.match(
+    styles,
+    /\.agent-dock\.mobile-panel--command:not\(\.is-mobile-open\) \.agent-grid[\s\S]*display:\s*none/,
+  );
+});
+
 test("keeps workshop overlays from being covered by mobile gameplay trays", () => {
   assert.match(game, /className=\{`game-shell mode-\$\{mode\}`\}/);
   assert.match(game, /mobile-status-strip/);
