@@ -12,7 +12,7 @@ const structuredData = [
     url: siteUrl,
     description:
       "A playable cyber-defense action RPG where you recruit an autonomous AI warband, deploy sentries, and survive the NULL siege.",
-    image: `${siteUrl}/og-image.png`,
+    image: `${siteUrl}/og-image.jpg`,
     genre: ["Action RPG", "Tower defense", "Cyberpunk"],
     applicationCategory: "GameApplication",
     operatingSystem: "Web Browser",
@@ -97,9 +97,10 @@ export const metadata: Metadata = {
     type: "website",
     images: [
       {
-        url: "/og-image.png",
-        width: 1731,
-        height: 909,
+      url: "/og-image.jpg",
+      type: "image/jpeg",
+      width: 1200,
+      height: 630,
         alt: "Freeman Protocol defender facing a corrupted network warboss with an AI squad and sentry towers.",
       },
     ],
@@ -109,7 +110,7 @@ export const metadata: Metadata = {
     title: "Freeman Protocol | A Kairos Field Experiment",
     description:
       "Recruit an autonomous AI warband, deploy sentries, and survive the NULL siege.",
-    images: ["/og-image.png"],
+    images: ["/og-image.jpg"],
   },
   icons: {
     icon: "/favicon.svg",

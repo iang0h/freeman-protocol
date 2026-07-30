@@ -17,6 +17,8 @@ test("crawler endpoints expose the canonical public routes", () => {
 test("root metadata declares the canonical game identity", () => {
   assert.match(layout, /metadataBase/);
   assert.match(layout, /freeman\.skillrivals\.com/);
+  assert.match(layout, /og-image\.jpg/);
+  assert.match(layout, /image\/jpeg/);
   assert.match(layout, /alternates/);
   assert.match(layout, /canonical/);
   assert.match(layout, /VideoGame/);
