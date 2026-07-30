@@ -21,7 +21,17 @@ export function createWatchState() {
     survivalMs: 0,
     sessionIncome: { compute: 0, components: 0, shards: 0 },
     lastEvent: "NETWORK STANDING BY",
+    activityLog: ["NETWORK STANDING BY"],
     visible: true,
+  };
+}
+
+export function recordWatchEvent(state, event) {
+  const nextEvent = String(event || "NETWORK STANDING BY");
+  return {
+    ...state,
+    lastEvent: nextEvent,
+    activityLog: [nextEvent, ...(state.activityLog ?? [])].slice(0, 5),
   };
 }
 

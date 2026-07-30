@@ -1382,10 +1382,10 @@ canvas:focus-visible {
   background:
     linear-gradient(
       90deg,
-      rgba(6, 11, 14, 0.98) 0%,
-      rgba(6, 11, 14, 0.84) 39%,
-      rgba(6, 11, 14, 0.16) 72%,
-      rgba(6, 11, 14, 0.24) 100%
+      rgba(6, 11, 14, 0.99) 0%,
+      rgba(6, 11, 14, 0.91) 42%,
+      rgba(6, 11, 14, 0.26) 74%,
+      rgba(6, 11, 14, 0.32) 100%
     ),
     linear-gradient(to top, rgba(5, 9, 11, 0.68), transparent 38%);
 }
@@ -1526,6 +1526,15 @@ canvas:focus-visible {
   line-height: 1.65;
 }
 
+.intro-watch-note {
+  margin: 0.7rem 0 0;
+  color: #8fc6bf;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+}
+
 .enter-button {
   position: relative;
   display: grid;
@@ -1616,6 +1625,8 @@ canvas:focus-visible {
   padding: 0.65rem 0;
   border-top: 1px solid rgba(157, 181, 180, 0.2);
   border-bottom: 1px solid rgba(157, 181, 180, 0.2);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .watch-panel__metrics b {
@@ -1623,14 +1634,52 @@ canvas:focus-visible {
   font-size: 0.76rem;
 }
 
-.watch-panel__metrics span:last-child {
-  max-width: 11rem;
-}
-
-.watch-panel__metrics span:last-child b {
+.watch-panel__metrics b {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.watch-panel__activity {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.8rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(157, 181, 180, 0.2);
+}
+
+.watch-panel__activity ol {
+  display: grid;
+  gap: 0.28rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.watch-panel__activity li {
+  display: flex;
+  gap: 0.45rem;
+  overflow: hidden;
+  color: #829695;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-panel__activity li span {
+  flex: 0 0 1.5rem;
+  color: #6a8381;
+  font-size: 0.52rem;
+}
+
+.watch-panel__activity li.is-current {
+  color: #fff3e7;
+}
+
+.watch-panel__activity li.is-current span {
+  color: #f0783f;
 }
 
 .watch-panel__controls {
@@ -1676,16 +1725,6 @@ canvas:focus-visible {
     right: 0.8rem;
     left: 0.8rem;
     width: auto;
-  }
-
-  .watch-panel__metrics {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-  }
-
-  .watch-panel__metrics span:last-child {
-    grid-column: 1 / -1;
-    max-width: none;
   }
 
   .watch-panel__controls {

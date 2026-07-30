@@ -128,6 +128,7 @@ import {
   creditWatchWaveReward,
   isWatchMode,
   pauseForVisibility,
+  recordWatchEvent,
   setWatchPriority,
   setWatchSpeed,
   tickWatchState,
@@ -299,6 +300,7 @@ type HudState = {
   survivalMs: number;
   sessionIncome: { compute: number; components: number; shards: number };
   lastAutonomyEvent: string;
+  autonomyLog: string[];
   hp: number;
   maxHp: number;
   core: number;
@@ -788,6 +790,7 @@ const INITIAL_HUD: HudState = {
   survivalMs: 0,
   sessionIncome: { compute: 0, components: 0, shards: 0 },
   lastAutonomyEvent: "NETWORK STANDING BY",
+  autonomyLog: ["NETWORK STANDING BY"],
   hp: 100,
   maxHp: 100,
   core: 180,
@@ -1449,7 +1452,7 @@ class FreemanEngine {
       for (const agentId of ["kairos", "kira", "forge", "covenant"].slice(0, WATCH_STARTER_AGENT_COUNT) as AgentId[]) {
         this.addAgent(agentId, { charge: false, notify: false });
       }
-      this.watchState.lastEvent = "AI NETWORK DEPLOYED FOUR STARTER AGENTS";
+      this.recordWatchEvent("AI NETWORK DEPLOYED FOUR STARTER AGENTS");
     }
     this.spawnWave(1);
     if (isWatchMode(this.sessionMode)) {
@@ -3641,7 +3644,7 @@ class FreemanEngine {
       for (const agentId of ["kairos", "kira", "forge", "covenant"].slice(0, WATCH_STARTER_AGENT_COUNT) as AgentId[]) {
         this.addAgent(agentId, { charge: false, notify: false });
       }
-      this.watchState.lastEvent = "AI NETWORK DEPLOYED FOUR STARTER AGENTS";
+      this.recordWatchEvent("AI NETWORK DEPLOYED FOUR STARTER AGENTS");
     }
     this.spawnWave(1);
     if (isWatchMode(this.sessionMode)) {
@@ -4124,6 +4127,11 @@ class FreemanEngine {
     }
   }
 
+  private recordWatchEvent(event: string) {
+    if (!isWatchMode(this.sessionMode)) return;
+    this.watchState = recordWatchEvent(this.watchState, event);
+  }
+
   private runAutonomousNetwork(delta: number) {
     this.autonomousActionClock -= delta * 1_000;
     if (this.autonomousActionClock > 0 || this.agents.length === 0) return;
@@ -4131,7 +4139,7 @@ class FreemanEngine {
     if (isWatchMode(this.sessionMode) && this.agents.length < WARBAND_SLOTS.length) {
       const nextAgent = WARBAND_SLOTS[this.agents.length]?.id as AgentId | undefined;
       if (nextAgent && this.addAgent(nextAgent, { charge: true, notify: false })) {
-        this.watchState.lastEvent = nextAgent.toUpperCase() + " RECRUITED BY THE NETWORK";
+        this.recordWatchEvent(nextAgent.toUpperCase() + " RECRUITED BY THE NETWORK");
         this.emitHud(true);
         return;
       }
@@ -4156,7 +4164,7 @@ class FreemanEngine {
       if (!result.repaired) return;
       this.core.hp = result.core.hp;
       this.loot.components = result.components;
-      this.watchState.lastEvent = "AGENTS REPAIRED THE CORE";
+      this.recordWatchEvent("AGENTS REPAIRED THE CORE");
       this.callbacks.onToast({
         eyebrow: "AUTONOMOUS CORE REPAIR",
         title: `CORE RESTORED +${CORE_REPAIR_AMOUNT}`,
@@ -4164,12 +4172,12 @@ class FreemanEngine {
       });
       this.emitHud(true);
     } else if (action === "repair-agent" || action === "repair-sentry") {
-      this.watchState.lastEvent = action === "repair-agent"
+      this.recordWatchEvent(action === "repair-agent"
         ? "AGENT RETURNED TO REPAIR"
-        : "SENTRY REPAIRED";
+        : "SENTRY REPAIRED");
       this.useFieldKit();
     } else if (action === "build-sentry") {
-      this.watchState.lastEvent = "AGENTS BUILT A SENTRY";
+      this.recordWatchEvent("AGENTS BUILT A SENTRY");
       this.buildDefense();
     }
   }
@@ -5447,7 +5455,7 @@ class FreemanEngine {
     }
     if (isWatchMode(this.sessionMode)) {
       this.loot.components += WATCH_COMPONENT_SALVAGE_PER_WAVE;
-      this.watchState.lastEvent = `NETWORK SALVAGE +${WATCH_COMPONENT_SALVAGE_PER_WAVE} COMPONENTS`;
+      this.recordWatchEvent(`NETWORK SALVAGE +${WATCH_COMPONENT_SALVAGE_PER_WAVE} COMPONENTS`);
       const reward = {
         compute: this.wave === 4 || this.wave === 7 ? 42 : 24,
         components: this.loot.components,
@@ -5499,6 +5507,15 @@ class FreemanEngine {
       );
     } else {
       this.core.hp = Math.max(floor, this.core.hp - damage);
+      if (isWatchMode(this.sessionMode) && this.core.hp <= 0) {
+        this.core.hp = Math.max(32, Math.round(this.core.maxHp * 0.32));
+        this.recordWatchEvent("CORE AUTO-STABILIZED");
+        this.callbacks.onToast({
+          eyebrow: "EMERGENCY NETWORK RECOVERY",
+          title: "CORE STABILIZED",
+          detail: "The AI network rebuilt a damaged layer and resumed the watch.",
+        });
+      }
       this.addDamageNumber(
         this.core.group.position.clone().add(new THREE.Vector3(0, 2.55, 0)),
         `-${Math.round(damage)}`,
@@ -5514,7 +5531,7 @@ class FreemanEngine {
     this.shake = Math.max(this.shake, this.reducedMotion ? 0.03 : 0.2);
     this.audio.play("damage");
     this.emitHud(true);
-    if (this.player.hp <= 0 || this.core.hp <= 0) this.defeat();
+    if (!isWatchMode(this.sessionMode) && (this.player.hp <= 0 || this.core.hp <= 0)) this.defeat();
   }
 
   private damageAgent(agent: AgentRuntime, damage: number) {
@@ -6436,6 +6453,7 @@ class FreemanEngine {
       survivalMs: this.watchState.survivalMs,
       sessionIncome: { ...this.watchState.sessionIncome },
       lastAutonomyEvent: this.watchState.lastEvent,
+      autonomyLog: [...(this.watchState.activityLog ?? [this.watchState.lastEvent])],
       hp: Math.round(this.player.hp),
       maxHp: Math.round(this.player.maxHp),
       core: Math.round(this.core.hp),
@@ -7965,6 +7983,11 @@ class FreemanCanvasEngine implements GameController {
     }
   }
 
+  private recordWatchEvent(event: string) {
+    if (!isWatchMode(this.sessionMode)) return;
+    this.watchState = recordWatchEvent(this.watchState, event);
+  }
+
   private runAutonomousNetwork(delta: number) {
     this.autonomousActionClock -= delta * 1_000;
     if (this.autonomousActionClock > 0 || this.agents.length === 0) return;
@@ -7972,7 +7995,7 @@ class FreemanCanvasEngine implements GameController {
     if (isWatchMode(this.sessionMode) && this.agents.length < WARBAND_SLOTS.length) {
       const nextAgent = WARBAND_SLOTS[this.agents.length]?.id as AgentId | undefined;
       if (nextAgent && this.addAgent(nextAgent, { charge: true, notify: false })) {
-        this.watchState.lastEvent = nextAgent.toUpperCase() + " RECRUITED BY THE NETWORK";
+        this.recordWatchEvent(nextAgent.toUpperCase() + " RECRUITED BY THE NETWORK");
         this.emitHud(true);
         return;
       }
@@ -7997,7 +8020,7 @@ class FreemanCanvasEngine implements GameController {
       if (!result.repaired) return;
       this.core.hp = result.core.hp;
       this.loot.components = result.components;
-      this.watchState.lastEvent = "AGENTS REPAIRED THE CORE";
+      this.recordWatchEvent("AGENTS REPAIRED THE CORE");
       this.callbacks.onToast({
         eyebrow: "AUTONOMOUS CORE REPAIR",
         title: `CORE RESTORED +${CORE_REPAIR_AMOUNT}`,
@@ -8005,12 +8028,12 @@ class FreemanCanvasEngine implements GameController {
       });
       this.emitHud(true);
     } else if (action === "repair-agent" || action === "repair-sentry") {
-      this.watchState.lastEvent = action === "repair-agent"
+      this.recordWatchEvent(action === "repair-agent"
         ? "AGENT RETURNED TO REPAIR"
-        : "SENTRY REPAIRED";
+        : "SENTRY REPAIRED");
       this.useFieldKit();
     } else if (action === "build-sentry") {
-      this.watchState.lastEvent = "AGENTS BUILT A SENTRY";
+      this.recordWatchEvent("AGENTS BUILT A SENTRY");
       this.buildDefense();
     }
   }
@@ -9384,7 +9407,7 @@ class FreemanCanvasEngine implements GameController {
     }
     if (isWatchMode(this.sessionMode)) {
       this.loot.components += WATCH_COMPONENT_SALVAGE_PER_WAVE;
-      this.watchState.lastEvent = `NETWORK SALVAGE +${WATCH_COMPONENT_SALVAGE_PER_WAVE} COMPONENTS`;
+      this.recordWatchEvent(`NETWORK SALVAGE +${WATCH_COMPONENT_SALVAGE_PER_WAVE} COMPONENTS`);
       const reward = {
         compute: this.wave === 4 || this.wave === 7 ? 42 : 24,
         components: this.loot.components,
@@ -9426,12 +9449,21 @@ class FreemanCanvasEngine implements GameController {
       this.addBurst(this.player.x, this.player.z, 0xb7422e, 8);
     } else {
       this.core.hp = Math.max(floor, this.core.hp - damage);
+      if (isWatchMode(this.sessionMode) && this.core.hp <= 0) {
+        this.core.hp = Math.max(32, Math.round(this.core.maxHp * 0.32));
+        this.recordWatchEvent("CORE AUTO-STABILIZED");
+        this.callbacks.onToast({
+          eyebrow: "EMERGENCY NETWORK RECOVERY",
+          title: "CORE STABILIZED",
+          detail: "The AI network rebuilt a damaged layer and resumed the watch.",
+        });
+      }
       this.addBurst(this.core.x, this.core.z, 0xb7422e, 8);
     }
     this.shake = Math.max(this.shake, this.reducedMotion ? 0.03 : 0.2);
     this.audio.play("damage");
     this.emitHud(true);
-    if (this.player.hp <= 0 || this.core.hp <= 0) this.defeat();
+    if (!isWatchMode(this.sessionMode) && (this.player.hp <= 0 || this.core.hp <= 0)) this.defeat();
   }
 
   private damageAgent(agent: FlatAgent, damage: number) {
@@ -11090,6 +11122,7 @@ class FreemanCanvasEngine implements GameController {
       survivalMs: this.watchState.survivalMs,
       sessionIncome: { ...this.watchState.sessionIncome },
       lastAutonomyEvent: this.watchState.lastEvent,
+      autonomyLog: [...(this.watchState.activityLog ?? [this.watchState.lastEvent])],
       hp: Math.round(this.player.hp),
       maxHp: Math.round(this.player.maxHp),
       core: Math.round(this.core.hp),
@@ -11417,7 +11450,19 @@ export default function FreemanProtocol() {
                 <span><small>WAVE</small><b>{hud.wave}</b></span>
                 <span><small>INCOME</small><b>{hud.sessionIncome.compute} C</b></span>
                 <span><small>AGENTS</small><b>{hud.warbandCount}/{hud.maxWarband}</b></span>
-                <span><small>NETWORK</small><b>{hud.lastAutonomyEvent}</b></span>
+                <span><small>CORE</small><b>{hud.core}/{hud.maxCore}</b></span>
+                <span><small>COMPONENTS</small><b>{hud.loot.components}</b></span>
+                <span><small>SHARDS</small><b>{hud.loot.shards}</b></span>
+              </div>
+              <div className="watch-panel__activity" aria-label="Live AI activity">
+                <small>LIVE AI ACTIVITY</small>
+                <ol>
+                  {hud.autonomyLog.slice(0, 4).map((event, index) => (
+                    <li key={`${event}-${index}`} className={index === 0 ? "is-current" : ""}>
+                      <span>{index === 0 ? "NOW" : `-${index}`}</span>{event}
+                    </li>
+                  ))}
+                </ol>
               </div>
               <div className="watch-panel__controls">
                 <div>
@@ -12046,9 +12091,10 @@ export default function FreemanProtocol() {
               Build an AI team and fight back.
             </p>
             <p className="intro-mission">
-              Destroy viruses to earn Compute. Recruit an AI squad, build sentry
-              towers where they matter, give your agents clear orders, draft
-              upgrades, survive seven breaches, then defeat Rootkit Prime.
+              Destroy threats to earn Compute. Recruit agents, build sentries,
+              collect Components, and keep the Core alive through eight waves.
+              In Watch Mode, your AI network fights, gathers, upgrades, and
+              pilots your operator for you.
             </p>
             <button
               type="button"
@@ -12070,6 +12116,9 @@ export default function FreemanProtocol() {
               <span>START WATCH MODE</span>
               <i>◉</i>
             </button>
+            <p className="intro-watch-note">
+              WATCH MODE · AI PILOT + AUTONOMOUS WAR NETWORK · RUNS WHILE OPEN
+            </p>
             {tutorialComplete && (
               <button
                 type="button"
