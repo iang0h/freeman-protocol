@@ -37,7 +37,7 @@ export function chooseAutonomousNetworkAction(state = {}) {
     state.defenses < state.maxDefenses &&
     state.compute >= state.defenseCost
   ) {
-    if (priority === "expand" || !state.damagedAgent) return "build-sentry";
+    if (priority === "expand" || !state.damagedAgent || state.repairKits <= 0) return "build-sentry";
   }
   if (state.mode === "playing" && state.damagedAgent && state.repairKits > 0) {
     return "repair-agent";

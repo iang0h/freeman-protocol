@@ -133,6 +133,8 @@ import {
   tickWatchState,
   WATCH_INCOMING_DAMAGE_MULTIPLIER,
   WATCH_INTERMISSION_CORE_REPAIR,
+  WATCH_STARTER_SENTRY_COUNT,
+  WATCH_COMPONENT_SALVAGE_PER_WAVE,
   WATCH_STARTER_AGENT_COUNT,
 } from "./game/watch-mode-rules.mjs";
 
@@ -1450,11 +1452,16 @@ class FreemanEngine {
       this.watchState.lastEvent = "AI NETWORK DEPLOYED FOUR STARTER AGENTS";
     }
     this.spawnWave(1);
+    if (isWatchMode(this.sessionMode)) {
+      for (let index = 0; index < WATCH_STARTER_SENTRY_COUNT; index += 1) {
+        this.buildDefense({ free: true });
+      }
+    }
     this.audio.play("wave");
     this.emitHud(true);
   }
 
-  buildDefense() {
+  buildDefense(options: { free?: boolean } = {}) {
     if (this.mode !== "playing") return;
     if (this.placementActive) this.cancelDefensePlacement(false);
     const selected = selectAutoSentryPosition(
@@ -1480,7 +1487,11 @@ class FreemanEngine {
       });
       return;
     }
-    this.placeDefenseAt(new THREE.Vector3(selected.x, 0.08, selected.z));
+    this.placeDefenseAt(
+      new THREE.Vector3(selected.x, 0.08, selected.z),
+      !options.free,
+      !options.free,
+    );
   }
 
   beginManualDefensePlacement() {
@@ -3633,6 +3644,11 @@ class FreemanEngine {
       this.watchState.lastEvent = "AI NETWORK DEPLOYED FOUR STARTER AGENTS";
     }
     this.spawnWave(1);
+    if (isWatchMode(this.sessionMode)) {
+      for (let index = 0; index < WATCH_STARTER_SENTRY_COUNT; index += 1) {
+        this.buildDefense({ free: true });
+      }
+    }
     this.emitHud(true);
   }
 
@@ -5395,6 +5411,8 @@ class FreemanEngine {
       return;
     }
     if (isWatchMode(this.sessionMode)) {
+      this.loot.components += WATCH_COMPONENT_SALVAGE_PER_WAVE;
+      this.watchState.lastEvent = `NETWORK SALVAGE +${WATCH_COMPONENT_SALVAGE_PER_WAVE} COMPONENTS`;
       const reward = {
         compute: this.wave === 4 || this.wave === 7 ? 42 : 24,
         components: this.loot.components,
@@ -6085,11 +6103,15 @@ class FreemanEngine {
     this.placeDefenseAt(position);
   }
 
-  private placeDefenseAt(position: THREE.Vector3) {
+  private placeDefenseAt(
+    position: THREE.Vector3,
+    charge = true,
+    notify = true,
+  ) {
     return {
       ok: this.addDefense(
         { x: position.x, z: position.z },
-        { charge: true, notify: true },
+        { charge, notify },
       ),
     };
   }
@@ -6852,11 +6874,16 @@ class FreemanCanvasEngine implements GameController {
     this.mode = "playing";
     this.callbacks.onMode("playing");
     this.spawnWave(1);
+    if (isWatchMode(this.sessionMode)) {
+      for (let index = 0; index < WATCH_STARTER_SENTRY_COUNT; index += 1) {
+        this.buildDefense({ free: true });
+      }
+    }
     this.audio.play("wave");
     this.emitHud(true);
   }
 
-  buildDefense() {
+  buildDefense(options: { free?: boolean } = {}) {
     if (this.mode !== "playing") return;
     if (this.placementActive) this.placementActive = false;
     const selected = selectAutoSentryPosition(
@@ -6879,7 +6906,7 @@ class FreemanCanvasEngine implements GameController {
       });
       return;
     }
-    this.placeDefenseAt(selected);
+    this.placeDefenseAt(selected, !options.free, !options.free);
   }
 
   beginManualDefensePlacement() {
@@ -9241,6 +9268,11 @@ class FreemanCanvasEngine implements GameController {
     this.mode = "playing";
     this.callbacks.onMode("playing");
     this.spawnWave(1);
+    if (isWatchMode(this.sessionMode)) {
+      for (let index = 0; index < WATCH_STARTER_SENTRY_COUNT; index += 1) {
+        this.buildDefense({ free: true });
+      }
+    }
     this.emitHud(true);
   }
 
@@ -9286,6 +9318,8 @@ class FreemanCanvasEngine implements GameController {
       return;
     }
     if (isWatchMode(this.sessionMode)) {
+      this.loot.components += WATCH_COMPONENT_SALVAGE_PER_WAVE;
+      this.watchState.lastEvent = `NETWORK SALVAGE +${WATCH_COMPONENT_SALVAGE_PER_WAVE} COMPONENTS`;
       const reward = {
         compute: this.wave === 4 || this.wave === 7 ? 42 : 24,
         components: this.loot.components,
@@ -9669,9 +9703,13 @@ class FreemanCanvasEngine implements GameController {
     if (deployed > 0) this.emitHud(true);
   }
 
-  private placeDefenseAt(position: { x: number; z: number }) {
+  private placeDefenseAt(
+    position: { x: number; z: number },
+    charge = true,
+    notify = true,
+  ) {
     return {
-      ok: this.addDefense(position, { charge: true, notify: true }),
+      ok: this.addDefense(position, { charge, notify }),
     };
   }
 

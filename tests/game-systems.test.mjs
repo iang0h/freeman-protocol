@@ -109,6 +109,8 @@ import {
   WATCH_PRIORITIES,
   WATCH_REWARD_CAPS,
   WATCH_STARTER_AGENT_COUNT,
+  WATCH_STARTER_SENTRY_COUNT,
+  WATCH_COMPONENT_SALVAGE_PER_WAVE,
   WATCH_INCOMING_DAMAGE_MULTIPLIER,
   WATCH_INTERMISSION_CORE_REPAIR,
   WATCH_SPEEDS,
@@ -216,8 +218,28 @@ test("watch mode wave rewards are capped per session", () => {
 
 test("watch mode balance gives the AI network a survivable starting advantage", () => {
   assert.equal(WATCH_STARTER_AGENT_COUNT, 4);
+  assert.equal(WATCH_STARTER_SENTRY_COUNT, 1);
+  assert.equal(WATCH_COMPONENT_SALVAGE_PER_WAVE, 3);
   assert.equal(WATCH_INCOMING_DAMAGE_MULTIPLIER, 0.8);
   assert.equal(WATCH_INTERMISSION_CORE_REPAIR, 18);
+});
+
+test("watch survival builds a defense even while an agent is being triaged", () => {
+  assert.equal(
+    chooseAutonomousNetworkAction({
+      mode: "playing",
+      watchPriority: "survive",
+      coreDamaged: false,
+      damagedAgent: true,
+      repairKits: 0,
+      damagedTurret: false,
+      defenses: 0,
+      maxDefenses: 3,
+      compute: 100,
+      defenseCost: 80,
+    }),
+    "build-sentry",
+  );
 });
 
 test("field-kit inventory cannot manufacture a repair decision", async () => {

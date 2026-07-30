@@ -1,6 +1,8 @@
 export const WATCH_PRIORITIES = ["survive", "farm", "expand"];
 export const WATCH_SPEEDS = [1, 2, 4];
 export const WATCH_STARTER_AGENT_COUNT = 4;
+export const WATCH_STARTER_SENTRY_COUNT = 1;
+export const WATCH_COMPONENT_SALVAGE_PER_WAVE = 3;
 export const WATCH_INCOMING_DAMAGE_MULTIPLIER = 0.8;
 export const WATCH_INTERMISSION_CORE_REPAIR = 18;
 export const WATCH_REWARD_CAPS = {
