@@ -763,7 +763,7 @@ test("the player-facing HUD preserves EMP, Core, roster, touch, and pooled-clean
   assert.match(game, /CORE HEALTH · PROTECT-ONLY/);
   assert.match(game, /WARBAND <b>\{hud\.warbandCount\}\/\{hud\.maxWarband\}<\/b>/);
   assert.match(game, /className=\{`skill-actions mobile-action-tray mobile-panel--skills/);
-  assert.match(game, /className=\{`repair-field-kit mobile-action-tray mobile-panel--fight/);
+  assert.match(game, /className=\{`repair-field-kit mobile-action-tray mobile-panel--defend/);
 
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /private clearLootPickups\(\)/);
