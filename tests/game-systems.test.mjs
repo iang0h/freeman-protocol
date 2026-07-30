@@ -105,6 +105,18 @@ import {
   getPendingBossTarget,
   tickBoss,
 } from "../app/game/boss-rules.mjs";
+import {
+  WATCH_PRIORITIES,
+  WATCH_REWARD_CAPS,
+  WATCH_SPEEDS,
+  createWatchState,
+  creditWatchWaveReward,
+  isWatchMode,
+  pauseForVisibility,
+  setWatchPriority,
+  setWatchSpeed,
+  tickWatchState,
+} from "../app/game/watch-mode-rules.mjs";
 
 async function loadRepairRules() {
   return import("../app/game/repair-rules.mjs");
@@ -159,6 +171,44 @@ test("repair lifecycle persists at the bay until the configured return ratio", a
     getRepairDecision(returnTick, { repairBay: functioningBay }),
     "return",
   );
+});
+
+test("watch mode state clamps speed, pauses on hidden tabs, and tracks visible survival time", () => {
+  const initial = createWatchState();
+  assert.equal(initial.speed, 1);
+  assert.equal(initial.priority, "survive");
+  assert.deepEqual(WATCH_SPEEDS, [1, 2, 4]);
+  assert.deepEqual(WATCH_PRIORITIES, ["survive", "farm", "expand"]);
+
+  const configured = setWatchPriority(setWatchSpeed(initial, 3.7), "farm");
+  assert.equal(configured.speed, 4);
+  assert.equal(configured.priority, "farm");
+  assert.equal(tickWatchState(configured, 100).survivalMs, 400);
+
+  const active = tickWatchState(configured, 100);
+  assert.equal(active.survivalMs, 400);
+  const hidden = pauseForVisibility(active, true);
+  assert.equal(hidden.paused, true);
+  assert.equal(tickWatchState(hidden, 1_000).survivalMs, 400);
+  assert.match(hidden.lastEvent, /RUN PAUSED/);
+  assert.equal(pauseForVisibility(hidden, false).paused, true);
+  assert.equal(isWatchMode("watch"), true);
+  assert.equal(isWatchMode("campaign"), false);
+});
+
+test("watch mode wave rewards are capped per session", () => {
+  const state = creditWatchWaveReward(createWatchState(), {
+    compute: WATCH_REWARD_CAPS.compute + 500,
+    components: 9,
+    shards: 4,
+  });
+  const capped = creditWatchWaveReward(state, {
+    compute: WATCH_REWARD_CAPS.compute,
+    components: WATCH_REWARD_CAPS.components,
+    shards: WATCH_REWARD_CAPS.shards,
+  });
+  assert.deepEqual(capped.sessionIncome, WATCH_REWARD_CAPS);
+  assert.equal(capped.lastEvent, "WAVE REWARDS CREDITED");
 });
 
 test("field-kit inventory cannot manufacture a repair decision", async () => {
