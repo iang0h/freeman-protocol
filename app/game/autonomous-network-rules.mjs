@@ -20,10 +20,13 @@ export function repairCore(core, components) {
 }
 
 export function chooseAutonomousNetworkAction(state = {}) {
+  const priority = ["survive", "farm", "expand"].includes(state.watchPriority)
+    ? state.watchPriority
+    : "survive";
   if (state.mode === "playing" && state.coreDamaged && state.components >= CORE_REPAIR_COMPONENT_COST) {
     return "repair-core";
   }
-  if (state.mode === "playing" && state.damagedAgent && state.repairKits > 0) {
+  if (state.mode === "playing" && priority !== "expand" && state.damagedAgent && state.repairKits > 0) {
     return "repair-agent";
   }
   if (state.mode === "playing" && state.damagedTurret && state.components > 0) {
@@ -34,7 +37,10 @@ export function chooseAutonomousNetworkAction(state = {}) {
     state.defenses < state.maxDefenses &&
     state.compute >= state.defenseCost
   ) {
-    return "build-sentry";
+    if (priority === "expand" || !state.damagedAgent) return "build-sentry";
+  }
+  if (state.mode === "playing" && state.damagedAgent && state.repairKits > 0) {
+    return "repair-agent";
   }
   if (state.mode === "upgrade" && state.upgradeAvailable) return "upgrade";
   return null;

@@ -123,9 +123,19 @@ import {
   updateTemporarySubAgentHealthCue,
 } from "./game/three-resources";
 import { AudioManager } from "./game/AudioManager";
+import {
+  createWatchState,
+  creditWatchWaveReward,
+  isWatchMode,
+  pauseForVisibility,
+  setWatchPriority,
+  setWatchSpeed,
+  tickWatchState,
+} from "./game/watch-mode-rules.mjs";
 
 type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
+type SessionMode = "campaign" | "watch";
 
 type AgentId =
   | "kairos" | "kira" | "forge" | "covenant"
@@ -175,7 +185,7 @@ type TutorialEvent =
   | "breach-cleared";
 type AutonomyRole = "assault" | "support" | "defend";
 type AutonomyIntent = AutonomyRole | "improvise" | "follow";
-type StartOptions = { tutorial: boolean };
+type StartOptions = { tutorial: boolean; mode?: SessionMode };
 type LootType = "repair" | "component" | "upgrade-shard";
 type LootRecord = {
   id: string;
@@ -277,6 +287,13 @@ const AUTONOMY_ROLES: Record<AgentId, AutonomyRole> = {
 };
 
 type HudState = {
+  sessionMode: SessionMode;
+  watchPaused: boolean;
+  watchSpeed: number;
+  watchPriority: "survive" | "farm" | "expand";
+  survivalMs: number;
+  sessionIncome: { compute: number; components: number; shards: number };
+  lastAutonomyEvent: string;
   hp: number;
   maxHp: number;
   core: number;
@@ -337,6 +354,10 @@ type GameCallbacks = {
 
 interface GameController {
   start(options?: StartOptions): void;
+  setWatchSpeed(speed: number): void;
+  setWatchPriority(priority: "survive" | "farm" | "expand"): void;
+  endWatchRun(): void;
+  setVisibilityPaused(hidden: boolean): void;
   skipTutorial(): void;
   retryWave(): void;
   setMuted(muted: boolean): void;
@@ -755,6 +776,13 @@ const UPGRADE_CATEGORY_LABELS: Record<string, string> = {
 };
 
 const INITIAL_HUD: HudState = {
+  sessionMode: "campaign",
+  watchPaused: false,
+  watchSpeed: 1,
+  watchPriority: "survive",
+  survivalMs: 0,
+  sessionIncome: { compute: 0, components: 0, shards: 0 },
+  lastAutonomyEvent: "NETWORK STANDING BY",
   hp: 100,
   maxHp: 100,
   core: 180,
@@ -1125,6 +1153,8 @@ class FreemanEngine {
   private resizeObserver: ResizeObserver;
   private animationFrame = 0;
   private mode: GameMode = "intro";
+  private sessionMode: SessionMode = "campaign";
+  private watchState = createWatchState();
   private wave = 1;
   private waveActive = false;
   private waveEndClock = 0;
@@ -1225,9 +1255,11 @@ class FreemanEngine {
     this.animate();
   }
 
-  start(options: StartOptions = { tutorial: false }) {
+  start(options: StartOptions = { tutorial: false, mode: "campaign" }) {
     this.resetInput();
     this.audio.unlock();
+    this.sessionMode = options.mode ?? "campaign";
+    this.watchState = createWatchState();
     this.resetMissionState();
     if (options.tutorial) {
       this.tutorialStep = "move";
@@ -1238,6 +1270,45 @@ class FreemanEngine {
       return;
     }
     this.resolveTutorial("skipped");
+  }
+
+  setWatchSpeed(speed: number) {
+    this.watchState = setWatchSpeed(this.watchState, speed);
+    this.emitHud(true);
+  }
+
+  setWatchPriority(priority: "survive" | "farm" | "expand") {
+    this.watchState = setWatchPriority(this.watchState, priority);
+    this.emitHud(true);
+  }
+
+  endWatchRun() {
+    if (!isWatchMode(this.sessionMode)) return;
+    let saved: { compute?: number; components?: number; shards?: number } = {};
+    try {
+      saved = JSON.parse(readStoredValue("freeman-watch-rewards", "{}") ?? "{}");
+    } catch {}
+    writeStoredValue(
+      "freeman-watch-rewards",
+      JSON.stringify({
+        compute: Math.max(0, Number(saved.compute) || 0) + this.watchState.sessionIncome.compute,
+        components: Math.max(0, Number(saved.components) || 0) + this.watchState.sessionIncome.components,
+        shards: Math.max(0, Number(saved.shards) || 0) + this.watchState.sessionIncome.shards,
+      }),
+    );
+    this.resetInput();
+    this.sessionMode = "campaign";
+    this.mode = "intro";
+    this.callbacks.onMode("intro");
+    this.emitHud(true);
+  }
+
+  setVisibilityPaused(hidden: boolean) {
+    if (!isWatchMode(this.sessionMode)) return;
+    this.watchState = pauseForVisibility(this.watchState, hidden);
+    if (!hidden) this.watchState = { ...this.watchState, paused: false };
+    if (hidden) this.resetInput();
+    this.emitHud(true);
   }
 
   skipTutorial() {
@@ -1548,6 +1619,7 @@ class FreemanEngine {
     if (this.mode === "playing") {
       this.resetInput();
       this.mode = "paused";
+      if (isWatchMode(this.sessionMode)) this.watchState = { ...this.watchState, paused: true };
       this.audio.setPaused(true);
       this.callbacks.onMode("paused");
       return;
@@ -1555,6 +1627,7 @@ class FreemanEngine {
     if (this.mode === "paused") {
       this.resetInput();
       this.mode = "playing";
+      if (isWatchMode(this.sessionMode)) this.watchState = { ...this.watchState, paused: false };
       this.audio.setPaused(false);
       this.callbacks.onMode("playing");
     }
@@ -3678,6 +3751,7 @@ class FreemanEngine {
   }
 
   private onVisibilityChange() {
+    this.setVisibilityPaused(document.hidden);
     if (document.hidden) this.resetInput();
   }
 
@@ -3805,8 +3879,17 @@ class FreemanEngine {
     const delta = this.hitStop > 0 ? rawDelta * 0.06 : rawDelta;
     this.hitStop = Math.max(0, this.hitStop - rawDelta);
     this.elapsed += rawDelta;
+    if (isWatchMode(this.sessionMode)) {
+      this.watchState = tickWatchState(
+        this.watchState,
+        rawDelta * 1_000,
+        { visible: !document.hidden },
+      );
+    }
     this.updateAmbient(rawDelta);
-    if (this.mode === "playing") this.updateGame(delta);
+    if (this.mode === "playing" && (!isWatchMode(this.sessionMode) || !this.watchState.paused)) {
+      this.updateGame(isWatchMode(this.sessionMode) ? delta * this.watchState.speed : delta);
+    }
     this.updateEffects(rawDelta);
     this.updateCamera(rawDelta);
     this.renderer.render(this.scene, this.camera);
@@ -3974,12 +4057,14 @@ class FreemanEngine {
       maxDefenses: 3,
       compute: this.data,
       defenseCost: 80 + this.defenses.length * 35,
+      watchPriority: this.watchState.priority,
     });
     if (action === "repair-core") {
       const result = repairCore(this.core, this.loot.components);
       if (!result.repaired) return;
       this.core.hp = result.core.hp;
       this.loot.components = result.components;
+      this.watchState.lastEvent = "AGENTS REPAIRED THE CORE";
       this.callbacks.onToast({
         eyebrow: "AUTONOMOUS CORE REPAIR",
         title: `CORE RESTORED +${CORE_REPAIR_AMOUNT}`,
@@ -3987,8 +4072,12 @@ class FreemanEngine {
       });
       this.emitHud(true);
     } else if (action === "repair-agent" || action === "repair-sentry") {
+      this.watchState.lastEvent = action === "repair-agent"
+        ? "AGENT RETURNED TO REPAIR"
+        : "SENTRY REPAIRED";
       this.useFieldKit();
     } else if (action === "build-sentry") {
+      this.watchState.lastEvent = "AGENTS BUILT A SENTRY";
       this.buildDefense();
     }
   }
@@ -5210,7 +5299,7 @@ class FreemanEngine {
       this.pickups,
     ) as LootCounters;
     this.clearLootPickups();
-    if (this.wave >= TOTAL_WAVES) {
+    if (this.wave >= TOTAL_WAVES && !isWatchMode(this.sessionMode)) {
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
@@ -5229,6 +5318,13 @@ class FreemanEngine {
       });
       this.emitHud(true);
       return;
+    }
+    if (isWatchMode(this.sessionMode)) {
+      this.watchState = creditWatchWaveReward(this.watchState, {
+        compute: this.wave === 4 || this.wave === 7 ? 42 : 24,
+        components: this.loot.components,
+        shards: this.loot.shards,
+      });
     }
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.intermissionClock = WAVE_INTERMISSION_MS;
@@ -6190,6 +6286,13 @@ class FreemanEngine {
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
     this.callbacks.onHud({
+      sessionMode: this.sessionMode,
+      watchPaused: this.watchState.paused,
+      watchSpeed: this.watchState.speed,
+      watchPriority: this.watchState.priority as "survive" | "farm" | "expand",
+      survivalMs: this.watchState.survivalMs,
+      sessionIncome: { ...this.watchState.sessionIncome },
+      lastAutonomyEvent: this.watchState.lastEvent,
       hp: Math.round(this.player.hp),
       maxHp: Math.round(this.player.maxHp),
       core: Math.round(this.core.hp),
@@ -6457,6 +6560,8 @@ class FreemanCanvasEngine implements GameController {
   private animationFrame = 0;
   private lastFrame = performance.now();
   private mode: GameMode = "intro";
+  private sessionMode: SessionMode = "campaign";
+  private watchState = createWatchState();
   private wave = 1;
   private waveActive = false;
   private waveEndClock = 0;
@@ -6533,9 +6638,11 @@ class FreemanCanvasEngine implements GameController {
     this.animate(performance.now());
   }
 
-  start(options: StartOptions = { tutorial: false }) {
+  start(options: StartOptions = { tutorial: false, mode: "campaign" }) {
     this.resetInput();
     this.audio.unlock();
+    this.sessionMode = options.mode ?? "campaign";
+    this.watchState = createWatchState();
     this.resetMissionState();
     if (options.tutorial) {
       this.tutorialStep = "move";
@@ -6546,6 +6653,45 @@ class FreemanCanvasEngine implements GameController {
       return;
     }
     this.resolveTutorial("skipped");
+  }
+
+  setWatchSpeed(speed: number) {
+    this.watchState = setWatchSpeed(this.watchState, speed);
+    this.emitHud(true);
+  }
+
+  setWatchPriority(priority: "survive" | "farm" | "expand") {
+    this.watchState = setWatchPriority(this.watchState, priority);
+    this.emitHud(true);
+  }
+
+  endWatchRun() {
+    if (!isWatchMode(this.sessionMode)) return;
+    let saved: { compute?: number; components?: number; shards?: number } = {};
+    try {
+      saved = JSON.parse(readStoredValue("freeman-watch-rewards", "{}") ?? "{}");
+    } catch {}
+    writeStoredValue(
+      "freeman-watch-rewards",
+      JSON.stringify({
+        compute: Math.max(0, Number(saved.compute) || 0) + this.watchState.sessionIncome.compute,
+        components: Math.max(0, Number(saved.components) || 0) + this.watchState.sessionIncome.components,
+        shards: Math.max(0, Number(saved.shards) || 0) + this.watchState.sessionIncome.shards,
+      }),
+    );
+    this.resetInput();
+    this.sessionMode = "campaign";
+    this.mode = "intro";
+    this.callbacks.onMode("intro");
+    this.emitHud(true);
+  }
+
+  setVisibilityPaused(hidden: boolean) {
+    if (!isWatchMode(this.sessionMode)) return;
+    this.watchState = pauseForVisibility(this.watchState, hidden);
+    if (!hidden) this.watchState = { ...this.watchState, paused: false };
+    if (hidden) this.resetInput();
+    this.emitHud(true);
   }
 
   skipTutorial() {
@@ -6774,11 +6920,13 @@ class FreemanCanvasEngine implements GameController {
     if (this.mode === "playing") {
       this.resetInput();
       this.mode = "paused";
+      if (isWatchMode(this.sessionMode)) this.watchState = { ...this.watchState, paused: true };
       this.audio.setPaused(true);
       this.callbacks.onMode("paused");
     } else if (this.mode === "paused") {
       this.resetInput();
       this.mode = "playing";
+      if (isWatchMode(this.sessionMode)) this.watchState = { ...this.watchState, paused: false };
       this.audio.setPaused(false);
       this.callbacks.onMode("playing");
     }
@@ -7464,6 +7612,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private onVisibilityChange() {
+    this.setVisibilityPaused(document.hidden);
     if (document.hidden) this.resetInput();
   }
 
@@ -7580,7 +7729,16 @@ class FreemanCanvasEngine implements GameController {
     const delta = Math.min((time - this.lastFrame) / 1000, 0.05);
     this.lastFrame = time;
     this.elapsed += delta;
-    if (this.mode === "playing") this.updateGame(delta);
+    if (isWatchMode(this.sessionMode)) {
+      this.watchState = tickWatchState(
+        this.watchState,
+        delta * 1_000,
+        { visible: !document.hidden },
+      );
+    }
+    if (this.mode === "playing" && (!isWatchMode(this.sessionMode) || !this.watchState.paused)) {
+      this.updateGame(isWatchMode(this.sessionMode) ? delta * this.watchState.speed : delta);
+    }
     this.updateEffects(delta);
     this.updateCamera(delta);
     this.draw();
@@ -7686,12 +7844,14 @@ class FreemanCanvasEngine implements GameController {
       maxDefenses: 3,
       compute: this.data,
       defenseCost: 80 + this.defenses.length * 35,
+      watchPriority: this.watchState.priority,
     });
     if (action === "repair-core") {
       const result = repairCore(this.core, this.loot.components);
       if (!result.repaired) return;
       this.core.hp = result.core.hp;
       this.loot.components = result.components;
+      this.watchState.lastEvent = "AGENTS REPAIRED THE CORE";
       this.callbacks.onToast({
         eyebrow: "AUTONOMOUS CORE REPAIR",
         title: `CORE RESTORED +${CORE_REPAIR_AMOUNT}`,
@@ -7699,8 +7859,12 @@ class FreemanCanvasEngine implements GameController {
       });
       this.emitHud(true);
     } else if (action === "repair-agent" || action === "repair-sentry") {
+      this.watchState.lastEvent = action === "repair-agent"
+        ? "AGENT RETURNED TO REPAIR"
+        : "SENTRY REPAIRED";
       this.useFieldKit();
     } else if (action === "build-sentry") {
+      this.watchState.lastEvent = "AGENTS BUILT A SENTRY";
       this.buildDefense();
     }
   }
@@ -9022,7 +9186,7 @@ class FreemanCanvasEngine implements GameController {
       this.pickups,
     ) as LootCounters;
     this.clearLootPickups();
-    if (this.wave >= TOTAL_WAVES) {
+    if (this.wave >= TOTAL_WAVES && !isWatchMode(this.sessionMode)) {
       this.mode = "victory";
       this.score += Math.round(this.core.hp * 5 + this.player.hp * 3);
       this.best = Math.max(this.best, this.score);
@@ -9037,6 +9201,13 @@ class FreemanCanvasEngine implements GameController {
       });
       this.emitHud(true);
       return;
+    }
+    if (isWatchMode(this.sessionMode)) {
+      this.watchState = creditWatchWaveReward(this.watchState, {
+        compute: this.wave === 4 || this.wave === 7 ? 42 : 24,
+        components: this.loot.components,
+        shards: this.loot.shards,
+      });
     }
     this.data += this.wave === 4 || this.wave === 7 ? 42 : 24;
     this.intermissionClock = WAVE_INTERMISSION_MS;
@@ -10716,6 +10887,13 @@ class FreemanCanvasEngine implements GameController {
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
     this.callbacks.onHud({
+      sessionMode: this.sessionMode,
+      watchPaused: this.watchState.paused,
+      watchSpeed: this.watchState.speed,
+      watchPriority: this.watchState.priority as "survive" | "farm" | "expand",
+      survivalMs: this.watchState.survivalMs,
+      sessionIncome: { ...this.watchState.sessionIncome },
+      lastAutonomyEvent: this.watchState.lastEvent,
       hp: Math.round(this.player.hp),
       maxHp: Math.round(this.player.maxHp),
       core: Math.round(this.core.hp),
@@ -11006,6 +11184,15 @@ export default function FreemanProtocol() {
           >
             {mode === "paused" ? "RESUME" : "PAUSE"}
           </button>
+          {hud.sessionMode === "watch" && (
+            <button
+              type="button"
+              className="watch-end-button"
+              onClick={() => engineRef.current?.endWatchRun()}
+            >
+              END RUN
+            </button>
+          )}
         </div>
       </header>
 
@@ -11016,6 +11203,60 @@ export default function FreemanProtocol() {
               <small>WAVE {hud.wave} CLEARED</small>
               <strong>NETWORK RECONFIGURING · NEXT WAVE IN {Math.ceil(hud.intermissionMs / 1_000)}S</strong>
             </div>
+          )}
+
+          {hud.sessionMode === "watch" && (
+            <aside className="watch-panel" aria-label="Autonomous watch mode">
+              <div className="watch-panel__header">
+                <span>
+                  <small>WATCH MODE</small>
+                  <strong>{hud.watchPaused ? "PAUSED" : "AUTONOMOUS RUNNING"}</strong>
+                </span>
+                <span>
+                  <small>SURVIVAL</small>
+                  <strong>{Math.floor(hud.survivalMs / 1_000)}s</strong>
+                </span>
+              </div>
+              <div className="watch-panel__metrics">
+                <span><small>WAVE</small><b>{hud.wave}</b></span>
+                <span><small>INCOME</small><b>{hud.sessionIncome.compute} C</b></span>
+                <span><small>AGENTS</small><b>{hud.warbandCount}/{hud.maxWarband}</b></span>
+                <span><small>NETWORK</small><b>{hud.lastAutonomyEvent}</b></span>
+              </div>
+              <div className="watch-panel__controls">
+                <div>
+                  <small>SPEED</small>
+                  {[1, 2, 4].map((speed) => (
+                    <button
+                      key={speed}
+                      type="button"
+                      className={hud.watchSpeed === speed ? "is-active" : ""}
+                      onClick={() => engineRef.current?.setWatchSpeed(speed)}
+                    >
+                      {speed}X
+                    </button>
+                  ))}
+                </div>
+                <div>
+                  <small>PRIORITY</small>
+                  {(["survive", "farm", "expand"] as const).map((priority) => (
+                    <button
+                      key={priority}
+                      type="button"
+                      className={hud.watchPriority === priority ? "is-active" : ""}
+                      onClick={() => engineRef.current?.setWatchPriority(priority)}
+                    >
+                      {priority.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {hud.watchPaused && (
+                <p className="watch-panel__paused" role="status">
+                  RUN PAUSED — RETURN TO RESUME
+                </p>
+              )}
+            </aside>
           )}
 
           {hud.boss && (
@@ -11617,11 +11858,21 @@ export default function FreemanProtocol() {
               type="button"
               className="enter-button"
               onClick={() =>
-                engineRef.current?.start({ tutorial: !tutorialComplete })
+                engineRef.current?.start({ tutorial: !tutorialComplete, mode: "campaign" })
               }
             >
-              <span>START MISSION</span>
+              <span>START CAMPAIGN</span>
               <i>→</i>
+            </button>
+            <button
+              type="button"
+              className="enter-button enter-button--watch"
+              onClick={() =>
+                engineRef.current?.start({ tutorial: false, mode: "watch" })
+              }
+            >
+              <span>START WATCH MODE</span>
+              <i>◉</i>
             </button>
             {tutorialComplete && (
               <button

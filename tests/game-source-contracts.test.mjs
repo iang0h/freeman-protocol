@@ -125,7 +125,7 @@ test("both renderers clear uncollected loot before every wave transition", () =>
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
       engine,
-      /private completeWave\(\) \{[\s\S]*?this\.clearLootPickups\(\);[\s\S]*?if \(this\.wave >= TOTAL_WAVES\)/,
+      /private completeWave\(\) \{[\s\S]*?this\.clearLootPickups\(\);[\s\S]*?if \(this\.wave >= TOTAL_WAVES(?: && !isWatchMode\(this\.sessionMode\))?/,
     );
   }
 });
@@ -819,4 +819,31 @@ test("desktop HUD uses a high-contrast readable hierarchy", () => {
   assert.match(styles, /@media \(min-width: 821px\)[\s\S]*\.vitals-panel \{[\s\S]*width:\s*300px/);
   assert.match(styles, /@media \(min-width: 821px\)[\s\S]*\.vitals-panel \.vital-row strong[\s\S]*font-size:\s*18px/);
   assert.match(styles, /@media \(min-width: 821px\)[\s\S]*\.agent-card__copy strong[\s\S]*font-size:\s*16px/);
+});
+test("both renderers expose the shared watch-mode contract", async () => {
+  const game = await readFile(
+    new URL("../app/FreemanProtocol.tsx", import.meta.url),
+    "utf8",
+  );
+  for (const field of [
+    "sessionMode",
+    "watchPaused",
+    "watchSpeed",
+    "watchPriority",
+    "survivalMs",
+    "sessionIncome",
+    "lastAutonomyEvent",
+  ]) {
+    assert.ok((game.match(new RegExp(field + ":", "g")) ?? []).length >= 3);
+  }
+  for (const method of [
+    "setWatchSpeed",
+    "setWatchPriority",
+    "endWatchRun",
+    "setVisibilityPaused",
+  ]) {
+    assert.ok((game.match(new RegExp(method + "\\(", "g")) ?? []).length >= 3);
+  }
+  assert.match(game, /mode: "watch"/);
+  assert.match(game, /isWatchMode\(this\.sessionMode\)/);
 });

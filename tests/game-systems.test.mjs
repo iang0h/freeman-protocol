@@ -1528,6 +1528,29 @@ test("autonomous network can build and upgrade when higher priorities are clear"
   );
 });
 
+test("watch priorities keep survival safe and let expand favor new defenses", () => {
+  const shared = {
+    mode: "playing",
+    coreDamaged: false,
+    components: 0,
+    damagedAgent: true,
+    repairKits: 1,
+    damagedTurret: false,
+    defenses: 0,
+    maxDefenses: 3,
+    compute: 80,
+    defenseCost: 80,
+  };
+  assert.equal(
+    chooseAutonomousNetworkAction({ ...shared, watchPriority: "survive" }),
+    "repair-agent",
+  );
+  assert.equal(
+    chooseAutonomousNetworkAction({ ...shared, watchPriority: "expand" }),
+    "build-sentry",
+  );
+});
+
 test("temporary sub-agents expire and are cleared between waves", () => {
   const subAgents = [
     {
