@@ -857,3 +857,9 @@ test("both renderers expose the shared watch-mode contract", async () => {
   assert.match(game, /WATCH_INTERMISSION_CORE_REPAIR/);
   assert.match(game, /RECRUITED BY THE NETWORK/);
 });
+
+test("watch mode pilots the player in both renderers", () => {
+  assert.equal((game.match(/private updateWatchOperator\(delta: number\)/g) ?? []).length, 2);
+  assert.equal((game.match(/this\.updateWatchOperator\(delta\)/g) ?? []).length, 2);
+  assert.equal((game.match(/this\.attack\(\)/g) ?? []).length >= 2, true);
+});

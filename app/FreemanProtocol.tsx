@@ -4044,6 +4044,7 @@ class FreemanEngine {
     }
     this.runAutonomousNetwork(delta);
     this.updatePlayer(delta);
+    this.updateWatchOperator(delta);
     this.updateRig(this.player.rig, delta, this.playerMoving ? "run" : "idle");
     this.enemyGrid.rebuild(this.enemies);
     this.updateAgents(delta);
@@ -4207,6 +4208,40 @@ class FreemanEngine {
       this.clampToArena(this.player.group.position, ARENA_RADIUS);
       this.faceDirection(this.player.group, this.lastMove);
       this.recordTutorialMovement(previousPosition);
+    }
+  }
+
+  private updateWatchOperator(delta: number) {
+    if (!isWatchMode(this.sessionMode) || this.mode !== "playing") return;
+    const threat = this.getNearestEnemy(this.core.group.position, 12) ??
+      this.getNearestEnemy(this.player.group.position, 10);
+    const pickup = !threat
+      ? [...this.pickups]
+          .filter((candidate) => candidate.type !== "repair" || this.player.hp < this.player.maxHp)
+          .sort((left, right) =>
+            this.player.group.position.distanceTo(new THREE.Vector3(left.x, 0, left.y)) -
+            this.player.group.position.distanceTo(new THREE.Vector3(right.x, 0, right.y)),
+          )[0]
+      : null;
+    const target = threat
+      ? threat.group.position
+      : pickup
+        ? new THREE.Vector3(pickup.x, 0, pickup.y)
+        : this.core.group.position.clone().add(
+            new THREE.Vector3(Math.cos(this.elapsed * 0.55) * 3.2, 0, Math.sin(this.elapsed * 0.55) * 3.2),
+          );
+    const direction = target.clone().sub(this.player.group.position).setY(0);
+    const distance = direction.length();
+    if (distance > (threat ? 4.4 : 0.55)) {
+      direction.normalize();
+      this.player.group.position.add(direction.multiplyScalar(delta * 3.2));
+      this.clampToArena(this.player.group.position, ARENA_RADIUS - 0.5);
+      this.faceDirection(this.player.group, direction);
+      this.playerMoving = true;
+    } else if (threat) {
+      this.faceDirection(this.player.group, threat.group.position.clone().sub(this.player.group.position).setY(0));
+      if (distance <= 2.5) this.melee();
+      this.attack();
     }
   }
 
@@ -7854,6 +7889,7 @@ class FreemanCanvasEngine implements GameController {
     }
     this.runAutonomousNetwork(delta);
     this.updatePlayer(delta);
+    this.updateWatchOperator(delta);
     this.updateAgents(delta);
     this.updateDefenses(delta);
     this.updateEnemies(delta);
@@ -8010,6 +8046,35 @@ class FreemanCanvasEngine implements GameController {
     this.player.z += dz * delta * 4.8;
     this.clampToArena(this.player, ARENA_RADIUS);
     this.recordTutorialMovement(previousPosition);
+  }
+
+  private updateWatchOperator(delta: number) {
+    if (!isWatchMode(this.sessionMode) || this.mode !== "playing") return;
+    const threat = this.getNearestEnemy(this.core.x, this.core.z, 12) ??
+      this.getNearestEnemy(this.player.x, this.player.z, 10);
+    const pickup = !threat
+      ? [...this.pickups]
+          .filter((candidate) => candidate.type !== "repair" || this.player.hp < this.player.maxHp)
+          .sort((left, right) =>
+            this.distance(this.player.x, this.player.z, left.x, left.y) -
+            this.distance(this.player.x, this.player.z, right.x, right.y),
+          )[0]
+      : null;
+    const targetX = threat?.x ?? pickup?.x ?? this.core.x + Math.cos(this.elapsed * 0.55) * 3.2;
+    const targetZ = threat?.z ?? pickup?.y ?? this.core.z + Math.sin(this.elapsed * 0.55) * 3.2;
+    let dx = targetX - this.player.x;
+    let dz = targetZ - this.player.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance > (threat ? 4.4 : 0.55)) {
+      dx /= distance || 1;
+      dz /= distance || 1;
+      this.player.x += dx * delta * 3.2;
+      this.player.z += dz * delta * 3.2;
+      this.clampToArena(this.player, ARENA_RADIUS - 0.5);
+    } else if (threat) {
+      if (distance <= 2.5) this.melee();
+      this.attack();
+    }
   }
 
   private recordTutorialMovement(previousPosition: { x: number; z: number }) {
