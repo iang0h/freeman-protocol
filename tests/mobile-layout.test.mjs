@@ -17,12 +17,37 @@ test("uses the full safe mobile viewport", () => {
 
 test("keeps mobile gameplay clear by collapsing secondary controls", () => {
   assert.match(game, /mobile-squad-toggle/);
-  assert.match(game, /aria-expanded=\{mobileSquadOpen\}/);
+  assert.match(game, /aria-expanded=\{mobilePanel === "warband" && mobileSquadOpen\}/);
   assert.match(
     styles,
     /\.agent-dock:not\(\.is-mobile-open\) \.squad-commands/,
   );
   assert.match(styles, /\.camera-panel\s*\{\s*display:\s*none;/);
+});
+
+test("uses one active mobile command tray at a time", () => {
+  assert.match(game, /type MobilePanel = "fight" \| "skills" \| "warband"/);
+  assert.match(game, /const \[mobilePanel, setMobilePanel\] = useState<MobilePanel>\("fight"\)/);
+  assert.match(game, /mobile-panel-switcher/);
+  assert.match(game, /aria-pressed=\{mobilePanel === panel\}/);
+  assert.match(game, /\["fight", "FIGHT"\]/);
+  assert.match(game, /\["skills", "SKILLS"\]/);
+  assert.match(game, /\["warband", "WARBAND"\]/);
+  assert.match(styles, /\.mobile-panel--inactive/);
+});
+
+test("keeps workshop overlays from being covered by mobile gameplay trays", () => {
+  assert.match(game, /className=\{`game-shell mode-\$\{mode\}`\}/);
+  assert.match(game, /mobile-status-strip/);
+  assert.match(styles, /\.mode-upgrade[\s\S]*\.mobile-action-tray/);
+  assert.match(styles, /\.mode-evolution[\s\S]*\.mobile-action-tray/);
+});
+
+test("provides a compact, touch-safe mobile status and switcher", () => {
+  assert.match(styles, /\.mobile-status-strip/);
+  assert.match(styles, /\.mobile-panel-switcher/);
+  assert.match(styles, /\.mobile-panel-switcher button[\s\S]*min-height:\s*48px/);
+  assert.match(styles, /\.mobile-action-tray[\s\S]*padding-bottom:\s*calc\(env\(safe-area-inset-bottom\)/);
 });
 
 test("keeps the recruitment dock interactive above workshop overlays", () => {
@@ -44,7 +69,7 @@ test("keeps the recruitment dock interactive above workshop overlays", () => {
   );
   assert.match(
     game,
-    /className=\{`agent-dock \$\{workshopActive \? "is-workshop" : ""\}/,
+    /className=\{`agent-dock mobile-action-tray mobile-panel--warband/,
   );
 });
 
@@ -70,9 +95,9 @@ test("keeps the repair field kit as a large touch-safe action", () => {
 
 test("keeps EMP, agent skills, and repair actions reachable on touch layouts", () => {
   assert.match(game, /aria-label="EMP pulse"/);
-  assert.match(game, /className="skill-actions"/);
+  assert.match(game, /className=\{`skill-actions mobile-action-tray mobile-panel--skills/);
   assert.match(game, /aria-label="Agent skill controls"/);
-  assert.match(game, /className="repair-field-kit"/);
+  assert.match(game, /className=\{`repair-field-kit mobile-action-tray mobile-panel--fight/);
   assert.match(styles, /\.skill-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, 42px\)/);
   assert.match(styles, /\.repair-field-kit\s*\{[\s\S]*?bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 76px\)/);
 });

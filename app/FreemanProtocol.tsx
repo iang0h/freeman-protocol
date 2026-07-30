@@ -131,6 +131,7 @@ type AgentSkillId =
   | "repair-barrier";
 type AgentSkillAvailability = "ready" | "disabled" | "repair" | "retreat" | "offline";
 type SquadCommand = "auto" | "follow" | "defend" | "focus";
+type MobilePanel = "fight" | "skills" | "warband";
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type UpgradeId =
   "overclock" | "bastion" | "bandwidth" | "voltage" | "repair" | "command";
@@ -10579,6 +10580,7 @@ export default function FreemanProtocol() {
   const [sfxVolume, setSfxVolume] = useState(0.72);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("fight");
   const [tutorialComplete, setTutorialComplete] = useState(false);
 
   useEffect(() => {
@@ -10667,6 +10669,16 @@ export default function FreemanProtocol() {
       : null;
 
   useEffect(() => {
+    if (mode !== "playing") {
+      const timer = window.setTimeout(() => {
+        setMobilePanel("fight");
+        setMobileSquadOpen(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [mode]);
+
+  useEffect(() => {
     const open =
       hud.tutorialStep === "recruit"
         ? true
@@ -10674,12 +10686,15 @@ export default function FreemanProtocol() {
           ? false
           : null;
     if (open === null) return;
-    const timer = window.setTimeout(() => setMobileSquadOpen(open), 0);
+    const timer = window.setTimeout(() => {
+      setMobileSquadOpen(open);
+      if (open) setMobilePanel("warband");
+    }, 0);
     return () => window.clearTimeout(timer);
   }, [hud.tutorialStep]);
 
   return (
-    <main className="game-shell">
+    <main className={`game-shell mode-${mode}`}>
       <canvas
         ref={canvasRef}
         className="game-canvas"
@@ -10933,6 +10948,29 @@ export default function FreemanProtocol() {
             </button>
           </aside>
 
+          <aside className="mobile-status-strip" aria-label="Mission status">
+            <span>
+              <small>HP</small>
+              <strong>{hud.hp}</strong>
+            </span>
+            <span>
+              <small>CORE</small>
+              <strong>{hud.core}</strong>
+            </span>
+            <span>
+              <small>COMPUTE</small>
+              <strong>{hud.data}</strong>
+            </span>
+            <span>
+              <small>EMP</small>
+              <strong>
+                {hud.empCooldownLeftMs > 0
+                  ? `${Math.ceil(hud.empCooldownLeftMs / 1_000)}s`
+                  : `${Math.round(hud.empCharge * 100)}%`}
+              </strong>
+            </span>
+          </aside>
+
           <aside className="camera-panel" aria-label="Camera controls">
             <button
               type="button"
@@ -10971,15 +11009,38 @@ export default function FreemanProtocol() {
             </button>
           </aside>
 
+          <nav className="mobile-panel-switcher" aria-label="Mobile command trays">
+            {([
+              ["fight", "FIGHT"],
+              ["skills", "SKILLS"],
+              ["warband", "WARBAND"],
+            ] as Array<[MobilePanel, string]>).map(([panel, label]) => (
+              <button
+                type="button"
+                key={panel}
+                aria-pressed={mobilePanel === panel}
+                onClick={() => {
+                  setMobilePanel(panel);
+                  setMobileSquadOpen(panel === "warband");
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+
           <section
-            className={`agent-dock ${workshopActive ? "is-workshop" : ""} ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
+            className={`agent-dock mobile-action-tray mobile-panel--warband ${mobilePanel === "warband" ? "mobile-panel--active" : "mobile-panel--inactive"} ${workshopActive ? "is-workshop" : ""} ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
             aria-label="AI agent recruitment"
           >
             <button
               type="button"
               className="mobile-squad-toggle"
-              onClick={() => setMobileSquadOpen((open) => !open)}
-              aria-expanded={mobileSquadOpen}
+              onClick={() => {
+                setMobilePanel("warband");
+                setMobileSquadOpen((open) => !open);
+              }}
+              aria-expanded={mobilePanel === "warband" && mobileSquadOpen}
               aria-controls="mobile-squad-panel"
             >
               <span>
@@ -11093,7 +11154,10 @@ export default function FreemanProtocol() {
             </div>
           </section>
 
-          <div className="skill-actions" aria-label="Agent skill controls">
+          <div
+            className={`skill-actions mobile-action-tray mobile-panel--skills ${mobilePanel === "skills" ? "mobile-panel--active" : "mobile-panel--inactive"}`}
+            aria-label="Agent skill controls"
+          >
             {(Object.keys(hud.skills) as EvolutionAgentId[]).map((id) => {
               const skill = hud.skills[id];
               const ready = clamp01(
@@ -11140,7 +11204,9 @@ export default function FreemanProtocol() {
             })}
           </div>
 
-          <div className="combat-actions">
+          <div
+            className={`combat-actions mobile-action-tray mobile-panel--fight ${mobilePanel === "fight" ? "mobile-panel--active" : "mobile-panel--inactive"}`}
+          >
             <button
               type="button"
               className="ability ability--dash"
@@ -11195,7 +11261,7 @@ export default function FreemanProtocol() {
 
           <button
             type="button"
-            className="repair-field-kit"
+            className={`repair-field-kit mobile-action-tray mobile-panel--fight ${mobilePanel === "fight" ? "mobile-panel--active" : "mobile-panel--inactive"}`}
             onClick={() => engineRef.current?.useFieldKit()}
             disabled={mode !== "playing"}
             aria-label="Repair damaged agents with a field kit or sentries with Components"
