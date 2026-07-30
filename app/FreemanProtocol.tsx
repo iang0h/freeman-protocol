@@ -1191,6 +1191,7 @@ class FreemanEngine {
   private mode: GameMode = "intro";
   private sessionMode: SessionMode = "campaign";
   private watchState = createWatchState();
+  private watchRecoveryClock = 0;
   private wave = 1;
   private waveActive = false;
   private waveEndClock = 0;
@@ -1398,6 +1399,7 @@ class FreemanEngine {
     this.tutorialResolved = false;
     this.cancelDefensePlacement(false);
     this.hitStop = 0;
+    this.watchRecoveryClock = 0;
     this.reinforcementClock = 0;
     this.reinforcementsRemaining = 0;
     this.spawnQueue = [];
@@ -4041,6 +4043,7 @@ class FreemanEngine {
 
   private updateGame(delta: number) {
     this.empState = tickEmp(this.empState, delta * 1_000) as EmpState;
+    this.watchRecoveryClock = Math.max(0, this.watchRecoveryClock - delta);
     if (this.intermissionClock > 0) {
       this.intermissionClock = tickWaveIntermission(this.intermissionClock, delta * 1_000);
       if (this.intermissionClock === 0) this.startNextWave();
@@ -5484,6 +5487,26 @@ class FreemanEngine {
     this.emitHud(true);
   }
 
+  private triggerWatchRecovery() {
+    if (!isWatchMode(this.sessionMode) || this.watchRecoveryClock > 0) return false;
+    this.watchRecoveryClock = 12;
+    this.core.hp = Math.max(32, Math.round(this.core.maxHp * 0.32));
+    this.loot.components += 4;
+    this.loot.shards += 1;
+    for (const enemy of this.enemies) {
+      enemy.slow = Math.max(enemy.slow, 4);
+      enemy.hp = Math.min(enemy.hp, Math.max(1, enemy.maxHp * 0.55));
+    }
+    this.recordWatchEvent("WATCH RECOVERY PULSE");
+    this.callbacks.onToast({
+      eyebrow: "EMERGENCY NETWORK RECOVERY",
+      title: "WATCH RECOVERY PULSE",
+      detail: "The AI network slowed the breach, rebuilt the Core, and salvaged 4 Components.",
+    });
+    this.emitHud(true);
+    return true;
+  }
+
   private damageTarget(target: "player" | "core", damage: number) {
     if (isWatchMode(this.sessionMode) && target === "player") return;
     if (isWatchMode(this.sessionMode)) {
@@ -5508,13 +5531,7 @@ class FreemanEngine {
     } else {
       this.core.hp = Math.max(floor, this.core.hp - damage);
       if (isWatchMode(this.sessionMode) && this.core.hp <= 0) {
-        this.core.hp = Math.max(32, Math.round(this.core.maxHp * 0.32));
-        this.recordWatchEvent("CORE AUTO-STABILIZED");
-        this.callbacks.onToast({
-          eyebrow: "EMERGENCY NETWORK RECOVERY",
-          title: "CORE STABILIZED",
-          detail: "The AI network rebuilt a damaged layer and resumed the watch.",
-        });
+        if (!this.triggerWatchRecovery()) this.core.hp = 8;
       }
       this.addDamageNumber(
         this.core.group.position.clone().add(new THREE.Vector3(0, 2.55, 0)),
@@ -6723,6 +6740,7 @@ class FreemanCanvasEngine implements GameController {
   private mode: GameMode = "intro";
   private sessionMode: SessionMode = "campaign";
   private watchState = createWatchState();
+  private watchRecoveryClock = 0;
   private wave = 1;
   private waveActive = false;
   private waveEndClock = 0;
@@ -6879,6 +6897,7 @@ class FreemanCanvasEngine implements GameController {
     this.placementActive = false;
     this.waveActive = false;
     this.waveEndClock = 0;
+    this.watchRecoveryClock = 0;
     this.reinforcementClock = 0;
     this.reinforcementsRemaining = 0;
     this.spawnQueue = [];
@@ -7901,6 +7920,7 @@ class FreemanCanvasEngine implements GameController {
 
   private updateGame(delta: number) {
     this.empState = tickEmp(this.empState, delta * 1_000) as EmpState;
+    this.watchRecoveryClock = Math.max(0, this.watchRecoveryClock - delta);
     if (this.intermissionClock > 0) {
       this.intermissionClock = tickWaveIntermission(this.intermissionClock, delta * 1_000);
       if (this.intermissionClock === 0) this.startNextWave();
@@ -9436,6 +9456,26 @@ class FreemanCanvasEngine implements GameController {
     this.emitHud(true);
   }
 
+  private triggerWatchRecovery() {
+    if (!isWatchMode(this.sessionMode) || this.watchRecoveryClock > 0) return false;
+    this.watchRecoveryClock = 12;
+    this.core.hp = Math.max(32, Math.round(this.core.maxHp * 0.32));
+    this.loot.components += 4;
+    this.loot.shards += 1;
+    for (const enemy of this.enemies) {
+      enemy.slow = Math.max(enemy.slow, 4);
+      enemy.hp = Math.min(enemy.hp, Math.max(1, enemy.maxHp * 0.55));
+    }
+    this.recordWatchEvent("WATCH RECOVERY PULSE");
+    this.callbacks.onToast({
+      eyebrow: "EMERGENCY NETWORK RECOVERY",
+      title: "WATCH RECOVERY PULSE",
+      detail: "The AI network slowed the breach, rebuilt the Core, and salvaged 4 Components.",
+    });
+    this.emitHud(true);
+    return true;
+  }
+
   private damageTarget(target: "player" | "core", damage: number) {
     if (isWatchMode(this.sessionMode) && target === "player") return;
     if (isWatchMode(this.sessionMode)) {
@@ -9450,13 +9490,7 @@ class FreemanCanvasEngine implements GameController {
     } else {
       this.core.hp = Math.max(floor, this.core.hp - damage);
       if (isWatchMode(this.sessionMode) && this.core.hp <= 0) {
-        this.core.hp = Math.max(32, Math.round(this.core.maxHp * 0.32));
-        this.recordWatchEvent("CORE AUTO-STABILIZED");
-        this.callbacks.onToast({
-          eyebrow: "EMERGENCY NETWORK RECOVERY",
-          title: "CORE STABILIZED",
-          detail: "The AI network rebuilt a damaged layer and resumed the watch.",
-        });
+        if (!this.triggerWatchRecovery()) this.core.hp = 8;
       }
       this.addBurst(this.core.x, this.core.z, 0xb7422e, 8);
     }

@@ -863,3 +863,9 @@ test("watch mode pilots the player in both renderers", () => {
   assert.equal((game.match(/this\.updateWatchOperator\(delta\)/g) ?? []).length, 2);
   assert.equal((game.match(/this\.attack\(\)/g) ?? []).length >= 2, true);
 });
+
+test("watch recovery is rate-limited and creates a real escape window", () => {
+  assert.equal((game.match(/watchRecoveryClock/g) ?? []).length >= 8, true);
+  assert.equal((game.match(/WATCH RECOVERY PULSE/g) ?? []).length >= 2, true);
+  assert.equal((game.match(/enemy\.slow = Math\.max/g) ?? []).length >= 2, true);
+});
