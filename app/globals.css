@@ -290,48 +290,6 @@ canvas:focus-visible {
   backdrop-filter: blur(12px);
 }
 
-.objective-banner {
-  position: absolute;
-  top: 87px;
-  left: 50%;
-  z-index: 19;
-  display: flex;
-  min-width: 345px;
-  flex-direction: column;
-  align-items: center;
-  padding: 9px 24px 10px;
-  border-top: 1px solid rgba(220, 117, 64, 0.58);
-  border-bottom: 1px solid rgba(225, 235, 231, 0.12);
-  background:
-    linear-gradient(90deg, transparent, rgba(220, 117, 64, 0.07), transparent),
-    rgba(8, 14, 17, 0.8);
-  text-align: center;
-  transform: translateX(-50%);
-  backdrop-filter: blur(14px);
-}
-
-.objective-banner small {
-  color: var(--signal);
-  font-family: var(--mono);
-  font-size: 6px;
-  letter-spacing: 0.22em;
-}
-
-.objective-banner strong {
-  margin-top: 3px;
-  font-family: var(--serif);
-  font-size: 15px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-}
-
-.objective-banner span {
-  margin-top: 3px;
-  color: #a9afaa;
-  font-size: 8px;
-  line-height: 1.4;
-}
-
 .boss-health-banner {
   position: absolute;
   top: 151px;
@@ -1320,10 +1278,6 @@ canvas:focus-visible {
   opacity: 0.48;
 }
 
-.mobile-stick {
-  display: none;
-}
-
 .mission-toast {
   position: absolute;
   top: 145px;
@@ -2272,10 +2226,6 @@ canvas:focus-visible {
     line-height: 1.25;
   }
 
-  .objective-banner {
-    display: none;
-  }
-
   .boss-health-banner {
     top: calc(env(safe-area-inset-top) + 103px);
     width: calc(100vw - 20px);
@@ -2470,14 +2420,6 @@ canvas:focus-visible {
     height: 57px;
   }
 
-  .mobile-stick {
-    position: absolute;
-    bottom: calc(env(safe-area-inset-bottom) + 12px);
-    left: 14px;
-    z-index: 24;
-    display: block;
-  }
-
   .placement-guide {
     top: calc(env(safe-area-inset-top) + 104px);
     width: min(310px, calc(100vw - 36px));
@@ -2486,55 +2428,6 @@ canvas:focus-visible {
 
   .placement-guide span {
     display: none;
-  }
-
-  .virtual-stick {
-    position: relative;
-    width: 86px;
-    height: 86px;
-    border: 1px solid rgba(240, 234, 223, 0.14);
-    border-radius: 50%;
-    background:
-      radial-gradient(
-        circle,
-        transparent 28%,
-        rgba(240, 234, 223, 0.035) 29%,
-        transparent 31%
-      ),
-      rgba(5, 7, 7, 0.36);
-    touch-action: none;
-  }
-
-  .virtual-stick::before,
-  .virtual-stick::after {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    content: "";
-    background: rgba(240, 234, 223, 0.09);
-    transform: translate(-50%, -50%);
-  }
-
-  .virtual-stick::before {
-    width: 1px;
-    height: 76%;
-  }
-
-  .virtual-stick::after {
-    width: 76%;
-    height: 1px;
-  }
-
-  .virtual-stick__knob {
-    position: absolute;
-    top: calc(50% - 17px);
-    left: calc(50% - 17px);
-    width: 34px;
-    height: 34px;
-    border: 1px solid rgba(220, 117, 64, 0.68);
-    border-radius: 50%;
-    background: rgba(220, 117, 64, 0.16);
-    box-shadow: 0 0 20px rgba(220, 117, 64, 0.09);
   }
 
   .intro-screen {
@@ -2724,22 +2617,6 @@ canvas:focus-visible {
     width: min(360px, calc(100vw - 20px));
   }
 
-  .mobile-stick {
-    bottom: calc(env(safe-area-inset-bottom) + 8px);
-  }
-
-  .virtual-stick {
-    width: 72px;
-    height: 72px;
-  }
-
-  .virtual-stick__knob {
-    top: calc(50% - 14px);
-    left: calc(50% - 14px);
-    width: 28px;
-    height: 28px;
-  }
-
   .combat-actions {
     bottom: calc(env(safe-area-inset-bottom) + 8px);
   }
@@ -2757,16 +2634,9 @@ canvas:focus-visible {
   }
 }
 
-@media (pointer: fine) and (min-width: 821px) {
-  .mobile-stick {
-    display: none;
-  }
-}
-
 /* Mobile commander mode: keep the arena visible and expose one tray at a time. */
 .mobile-status-strip,
 .mobile-panel-switcher,
-.mobile-objective-card,
 .mobile-camera-toggle,
 .commander-actions,
 .commander-explainer {
@@ -2826,61 +2696,6 @@ canvas:focus-visible {
     font-weight: 500;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .mobile-objective-card {
-    position: absolute;
-    top: calc(env(safe-area-inset-top) + 150px);
-    right: 84px;
-    left: 10px;
-    z-index: 22;
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 3px 8px;
-    max-height: 112px;
-    padding: 9px 10px;
-    border: 1px solid rgba(220, 117, 64, 0.52);
-    border-left: 2px solid var(--signal);
-    background: rgba(11, 11, 11, 0.86);
-    backdrop-filter: blur(12px);
-  }
-
-  .mobile-objective-card small {
-    grid-column: 1 / -1;
-    color: var(--signal);
-    font-family: var(--mono);
-    font-size: 6px;
-    letter-spacing: 0.18em;
-  }
-
-  .mobile-objective-card strong {
-    min-width: 0;
-    overflow: hidden;
-    font-family: var(--serif);
-    font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 0.06em;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .mobile-objective-card span {
-    grid-column: 1 / -1;
-    color: #a4aaa6;
-    font-size: 7px;
-    line-height: 1.35;
-  }
-
-  .mobile-objective-card button {
-    min-height: 36px;
-    padding: 0 9px;
-    border: 1px solid rgba(158, 191, 192, 0.42);
-    background: rgba(10, 24, 26, 0.9);
-    color: var(--ice);
-    font-family: var(--mono);
-    font-size: 7px;
-    letter-spacing: 0.1em;
-    touch-action: manipulation;
   }
 
   .mobile-camera-toggle {
@@ -3047,20 +2862,11 @@ canvas:focus-visible {
     touch-action: manipulation;
   }
 
-  .mobile-stick {
-    bottom: calc(env(safe-area-inset-bottom) + 67px);
-    z-index: 30;
-  }
-
   .mode-upgrade .mobile-action-tray,
-  .mode-upgrade .mobile-stick,
   .mode-upgrade .mobile-panel-switcher,
-  .mode-upgrade .mobile-objective-card,
   .mode-upgrade .mobile-camera-toggle,
   .mode-evolution .mobile-action-tray,
-  .mode-evolution .mobile-stick,
   .mode-evolution .mobile-panel-switcher,
-  .mode-evolution .mobile-objective-card,
   .mode-evolution .mobile-camera-toggle {
     display: none !important;
     pointer-events: none !important;

@@ -39,12 +39,9 @@ test("uses one active mobile command tray at a time", () => {
 test("makes commander mode the default mobile management surface", () => {
   assert.match(game, /type MobilePanel = "command" \| "defend" \| "skills"/);
   assert.match(game, /const \[mobilePanel, setMobilePanel\] = useState<MobilePanel>\("command"\)/);
-  assert.match(game, /mobile-objective-card/);
-  assert.match(game, /OBJECTIVE:/);
   assert.match(game, /COMMAND/);
   assert.match(game, /RECRUIT|RECRUIT AGENT/);
   assert.match(game, /FIGHTING|GATHERING|REPAIRING|OFFLINE/);
-  assert.match(styles, /\.mobile-objective-card/);
   assert.match(styles, /\.commander-actions/);
   assert.match(game, /THE CORE IS YOUR WIN CONDITION/);
   assert.match(game, /AGENTS FIGHT AUTOMATICALLY/);
@@ -62,8 +59,6 @@ test("offers macro and tactical camera presentation controls", () => {
 
 test("keeps commander mode compact until the roster is explicitly opened", () => {
   assert.match(game, /const \[mobileSquadOpen, setMobileSquadOpen\] = useState\(false\)/);
-  assert.match(styles, /\.mobile-objective-card[\s\S]*max-height:\s*112px/);
-  assert.match(styles, /\.mobile-objective-card strong[\s\S]*font-size:\s*12px/);
   assert.match(
     styles,
     /\.agent-dock\.mobile-panel--command\.is-mobile-open \.agent-grid/,
@@ -72,6 +67,14 @@ test("keeps commander mode compact until the roster is explicitly opened", () =>
     styles,
     /\.agent-dock\.mobile-panel--command:not\(\.is-mobile-open\) \.agent-grid[\s\S]*display:\s*none/,
   );
+});
+
+test("removes redundant objective and joystick presentation", () => {
+  assert.doesNotMatch(game, /objective-banner/);
+  assert.doesNotMatch(game, /mobile-objective-card/);
+  assert.doesNotMatch(game, /function VirtualStick/);
+  assert.doesNotMatch(game, /className="virtual-stick/);
+  assert.doesNotMatch(styles, /\.virtual-stick/);
 });
 
 test("keeps commander-only controls out of the desktop warband dock", () => {

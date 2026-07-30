@@ -28,7 +28,7 @@ const webglGame = game.slice(
 );
 const canvasGame = game.slice(
   game.indexOf("class FreemanCanvasEngine"),
-  game.indexOf("function VirtualStick"),
+  game.indexOf("export default function FreemanProtocol"),
 );
 
 test("enemy rendering does not allocate a point light per enemy", () => {
@@ -226,15 +226,19 @@ test("both engines clear latched input across lifecycle boundaries", () => {
   assert.ok((game.match(/window\.addEventListener\("blur", this\.resetInput\)/g) ?? []).length >= 2);
   assert.ok((game.match(/document\.addEventListener\("visibilitychange", this\.onVisibilityChange\)/g) ?? []).length >= 2);
   assert.ok((game.match(/this\.resetInput\(\);/g) ?? []).length >= 8);
-  assert.match(game, /onLostPointerCapture=\{reset\}/);
   assert.match(game, /normalizeStickInput/);
 });
 
-test("both engines support touch tap-to-fire without routing through movement", () => {
+test("both engines support direct touch-drag movement and tap-to-fire", () => {
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /pointerType === "touch"/);
     assert.match(engine, /tapToFire\(/);
     assert.match(engine, /else this\.attack\(\)/);
+    assert.match(engine, /touchMovePointer/);
+    assert.match(engine, /touchStartX/);
+    assert.match(engine, /normalizeStickInput\(/);
+    assert.match(engine, /setPointerCapture\(event\.pointerId\)/);
+    assert.match(engine, /this\.setTouchMovement\(/);
   }
 });
 

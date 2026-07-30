@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -104,7 +102,6 @@ import {
   canRetryFirstWave,
   isTutorialProtected,
 } from "./game/tutorial-rules.mjs";
-import { getCommanderObjective } from "./game/objective-director.mjs";
 import { readStoredNumber, readStoredValue, writeStoredValue } from "./game/storage.mjs";
 import { SpatialGrid } from "./game/spatial-grid";
 import {
@@ -1149,6 +1146,9 @@ class FreemanEngine {
   private reducedMotion = false;
   private hasPointerAim = false;
   private touchAimActive = false;
+  private touchMovePointer: number | null = null;
+  private touchStartX = 0;
+  private touchStartY = 0;
   private squadCommand: SquadCommand = "auto";
   private placementActive = false;
   private placementGhost: THREE.Group | null = null;
@@ -3582,6 +3582,7 @@ class FreemanEngine {
   private resetInput() {
     this.keys.clear();
     this.touchMove.set(0, 0);
+    this.touchMovePointer = null;
     if (this.touchAimActive) this.hasPointerAim = false;
     this.touchAimActive = false;
     if (
@@ -3601,6 +3602,10 @@ class FreemanEngine {
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
     if (event.pointerType === "touch" && event.button === 0) {
+      this.touchMovePointer = event.pointerId;
+      this.touchStartX = event.clientX;
+      this.touchStartY = event.clientY;
+      this.canvas.setPointerCapture(event.pointerId);
       const rect = this.canvas.getBoundingClientRect();
       const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
       this.updateAimFromScreen(event.clientX, event.clientY);
@@ -3633,6 +3638,14 @@ class FreemanEngine {
   };
 
   private onPointerMove = (event: PointerEvent) => {
+    if (this.touchMovePointer === event.pointerId) {
+      const normalized = normalizeStickInput(
+        (event.clientX - this.touchStartX) / 72,
+        (event.clientY - this.touchStartY) / 72,
+      );
+      this.setTouchMovement(normalized.x, normalized.y);
+      return;
+    }
     if (this.dragPointer === event.pointerId) {
       const delta = event.clientX - this.dragX;
       this.dragX = event.clientX;
@@ -3643,6 +3656,16 @@ class FreemanEngine {
   };
 
   private onPointerUp = (event: PointerEvent) => {
+    if (this.touchMovePointer === event.pointerId) {
+      this.touchMovePointer = null;
+      this.setTouchMovement(0, 0);
+      if (this.touchAimActive) this.hasPointerAim = false;
+      this.touchAimActive = false;
+      if (this.canvas.hasPointerCapture(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+      return;
+    }
     if (this.dragPointer === event.pointerId) {
       this.dragPointer = null;
       if (this.canvas.hasPointerCapture(event.pointerId)) {
@@ -6344,6 +6367,9 @@ class FreemanCanvasEngine implements GameController {
   private shake = 0;
   private hasPointerAim = false;
   private touchAimActive = false;
+  private touchMovePointer: number | null = null;
+  private touchStartX = 0;
+  private touchStartY = 0;
   private squadCommand: SquadCommand = "follow";
   private placementActive = false;
   private tutorialStep: TutorialStep | null = null;
@@ -7288,6 +7314,7 @@ class FreemanCanvasEngine implements GameController {
     this.keys.clear();
     this.touchMove.x = 0;
     this.touchMove.y = 0;
+    this.touchMovePointer = null;
     if (this.touchAimActive) this.hasPointerAim = false;
     this.touchAimActive = false;
     if (
@@ -7306,6 +7333,10 @@ class FreemanCanvasEngine implements GameController {
   private onPointerDown = (event: PointerEvent) => {
     this.canvas.focus();
     if (event.pointerType === "touch" && event.button === 0) {
+      this.touchMovePointer = event.pointerId;
+      this.touchStartX = event.clientX;
+      this.touchStartY = event.clientY;
+      this.canvas.setPointerCapture(event.pointerId);
       const rect = this.canvas.getBoundingClientRect();
       const tap = tapToFire((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
       this.updateAimFromScreen(event.clientX, event.clientY);
@@ -7338,6 +7369,14 @@ class FreemanCanvasEngine implements GameController {
   };
 
   private onPointerMove = (event: PointerEvent) => {
+    if (this.touchMovePointer === event.pointerId) {
+      const normalized = normalizeStickInput(
+        (event.clientX - this.touchStartX) / 72,
+        (event.clientY - this.touchStartY) / 72,
+      );
+      this.setTouchMovement(normalized.x, normalized.y);
+      return;
+    }
     if (this.dragPointer === event.pointerId) {
       const delta = event.clientX - this.dragX;
       this.dragX = event.clientX;
@@ -7348,6 +7387,16 @@ class FreemanCanvasEngine implements GameController {
   };
 
   private onPointerUp = (event: PointerEvent) => {
+    if (this.touchMovePointer === event.pointerId) {
+      this.touchMovePointer = null;
+      this.setTouchMovement(0, 0);
+      if (this.touchAimActive) this.hasPointerAim = false;
+      this.touchAimActive = false;
+      if (this.canvas.hasPointerCapture(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+      return;
+    }
     if (this.dragPointer === event.pointerId) {
       this.dragPointer = null;
       if (this.canvas.hasPointerCapture(event.pointerId)) {
@@ -10507,83 +10556,6 @@ class FreemanCanvasEngine implements GameController {
   }
 }
 
-function VirtualStick({
-  onMove,
-  highlighted,
-}: {
-  onMove: (x: number, y: number) => void;
-  highlighted: boolean;
-}) {
-  const baseRef = useRef<HTMLDivElement>(null);
-  const pointerRef = useRef<number | null>(null);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-
-  const reset = useCallback(() => {
-    pointerRef.current = null;
-    setPosition({ x: 0, y: 0 });
-    onMove(0, 0);
-  }, [onMove]);
-
-  useEffect(() => {
-    window.addEventListener("blur", reset);
-    document.addEventListener("visibilitychange", reset);
-    return () => {
-      window.removeEventListener("blur", reset);
-      document.removeEventListener("visibilitychange", reset);
-      reset();
-    };
-  }, [reset]);
-
-  const update = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const base = baseRef.current;
-      if (!base) return;
-      const rect = base.getBoundingClientRect();
-      const radius = rect.width / 2;
-      let x = event.clientX - (rect.left + radius);
-      let y = event.clientY - (rect.top + radius);
-      const length = Math.hypot(x, y);
-      if (length > radius * 0.66) {
-        x = (x / length) * radius * 0.66;
-        y = (y / length) * radius * 0.66;
-      }
-      setPosition({ x, y });
-      const normalized = normalizeStickInput(
-        x / (radius * 0.66),
-        y / (radius * 0.66),
-      );
-      onMove(normalized.x, normalized.y);
-    },
-    [onMove],
-  );
-
-  return (
-    <div
-      ref={baseRef}
-      className={`virtual-stick ${highlighted ? "tutorial-highlight" : ""}`}
-      aria-label="Movement control"
-      onPointerDown={(event) => {
-        pointerRef.current = event.pointerId;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        update(event);
-      }}
-      onPointerMove={(event) => {
-        if (pointerRef.current === event.pointerId) update(event);
-      }}
-      onPointerUp={(event) => {
-        if (pointerRef.current === event.pointerId) reset();
-      }}
-      onPointerCancel={reset}
-      onLostPointerCapture={reset}
-    >
-      <span
-        className="virtual-stick__knob"
-        style={{ transform: `translate(${position.x}px, ${position.y}px)` }}
-      />
-    </div>
-  );
-}
-
 export default function FreemanProtocol() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameController | null>(null);
@@ -10640,10 +10612,6 @@ export default function FreemanProtocol() {
     };
   }, []);
 
-  const setTouchMovement = useCallback((x: number, y: number) => {
-    engineRef.current?.setTouchMovement(x, y);
-  }, []);
-
   const toggleMute = () => {
     const next = !muted;
     setMuted(next);
@@ -10669,11 +10637,6 @@ export default function FreemanProtocol() {
   const isOverlay = mode !== "playing";
   const canRecruitWarband = canRecruitPersistentWarband(mode);
   const workshopActive = mode === "upgrade" || mode === "evolution";
-  const offlineAgents = AGENTS.filter((agent) => {
-    if (!hud.agents[agent.id]) return false;
-    const skill = hud.skills[agent.id as EvolutionAgentId];
-    return skill?.status === "offline" || skill?.status === "repair" || skill?.status === "retreat";
-  }).length;
   const canBuildSentry =
     mode === "playing" &&
     hud.defenses < hud.maxDefenses &&
@@ -10681,16 +10644,6 @@ export default function FreemanProtocol() {
   const canRecruitAgent = Boolean(
     mode === "playing" && canRecruitWarband && hud.nextRecruitCost,
   );
-  const commanderObjective = getCommanderObjective({
-    core: hud.core,
-    maxCore: hud.maxCore,
-    offlineAgents,
-    repairBayOnline: true,
-    canRecruit: canRecruitAgent,
-    canBuild: canBuildSentry,
-    workshopActive,
-    placingDefense: hud.placingDefense,
-  });
   const getAgentStatus = (agentId: AgentId) => {
     if (!hud.agents[agentId]) return "AVAILABLE";
     const skill = hud.skills[agentId as EvolutionAgentId];
@@ -10698,26 +10651,6 @@ export default function FreemanProtocol() {
     if (skill?.status === "repair" || skill?.status === "retreat") return "REPAIRING";
     if (hud.command === "auto") return "GATHERING";
     return "FIGHTING";
-  };
-  const handleCommanderObjective = () => {
-    switch (commanderObjective.action) {
-      case "defend":
-        engineRef.current?.setSquadCommand("defend");
-        setMobilePanel("command");
-        break;
-      case "repair":
-        engineRef.current?.useFieldKit();
-        setMobilePanel("command");
-        break;
-      case "build":
-        engineRef.current?.buildDefense();
-        setMobilePanel("command");
-        break;
-      case "recruit":
-      case "upgrade":
-        setMobilePanel("command");
-        break;
-    }
   };
   const agentRankSummary = AGENTS.filter((agent) => hud.agents[agent.id])
     .map((agent) => {
@@ -10843,16 +10776,6 @@ export default function FreemanProtocol() {
 
       {mode !== "intro" && (
         <>
-          <div className="objective-banner" role="status">
-            <small>YOUR GOAL</small>
-            <strong>DEFEND THE CORE</strong>
-            <span>
-              {hud.enemies} enemies left · Encounter {hud.wave}/{TOTAL_WAVES}
-              {" · "}Threat {hud.threat}
-              {hud.wave === TOTAL_WAVES ? " · Rootkit Prime" : ""}
-            </span>
-          </div>
-
           {hud.boss && (
             <div className="boss-health-banner" role="status">
               <span>
@@ -11049,23 +10972,6 @@ export default function FreemanProtocol() {
                   : `${Math.round(hud.empCharge * 100)}%`}
               </strong>
             </span>
-          </aside>
-
-          <aside className="mobile-objective-card" aria-label="Current commander objective">
-            <small>OBJECTIVE:</small>
-            <strong>{commanderObjective.label}</strong>
-            <span>{commanderObjective.detail}</span>
-            <button type="button" onClick={handleCommanderObjective}>
-              {commanderObjective.action === "recruit"
-                ? "RECRUIT AGENT"
-                : commanderObjective.action === "build"
-                  ? "BUILD SENTRY"
-                  : commanderObjective.action === "repair"
-                    ? "REPAIR NETWORK"
-                    : commanderObjective.action === "upgrade"
-                      ? "OPEN UPGRADES"
-                      : "SET GUARD CORE"}
-            </button>
           </aside>
 
           <aside className="camera-panel" aria-label="Camera controls">
@@ -11395,12 +11301,6 @@ export default function FreemanProtocol() {
             <strong>REPAIR / FIELD KIT</strong>
           </button>
 
-          <div className="mobile-stick">
-            <VirtualStick
-              onMove={setTouchMovement}
-              highlighted={tutorial?.target === "move"}
-            />
-          </div>
         </>
       )}
 
