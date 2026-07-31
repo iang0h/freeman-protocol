@@ -68,6 +68,19 @@ test("desktop combat HUD keeps the arena clear behind explicit overlays", () => 
   assert.match(game, /warband-overlay/);
   assert.match(styles, /\.intel-overlay,\s*\.warband-overlay\s*\{[\s\S]*?display:\s*none/);
   assert.match(styles, /\.intel-overlay\.is-active,\s*\.warband-overlay\.is-active\s*\{[\s\S]*?display:\s*(?:grid|block|flex)/);
+  assert.match(styles, /\.actions-overlay\s*\{[\s\S]*?display:\s*none/);
+  assert.match(styles, /\.actions-overlay\.is-active\s*\{[\s\S]*?display:\s*(?:grid|block|flex)/);
+});
+
+test("campaign overlays keep the pause controller from resuming behind them", () => {
+  assert.match(game, /setCombatOverlayOpen\(open: boolean\): void/);
+  assert.ok((game.match(/private combatOverlayOpen = false/g) ?? []).length >= 2);
+  assert.ok(
+    (game.match(/if \(this\.mode === "paused" && this\.combatOverlayOpen && !isWatchMode\(this\.sessionMode\)\) return;/g) ?? []).length >= 2,
+  );
+  assert.match(game, /overlayPausedCampaignRef/);
+  assert.match(game, /engineRef\.current\?\.setCombatOverlayOpen\(true\)/);
+  assert.match(game, /engineRef\.current\?\.setCombatOverlayOpen\(false\)/);
 });
 
 test("enemy rendering does not allocate a point light per enemy", () => {

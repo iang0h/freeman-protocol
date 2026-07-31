@@ -372,6 +372,7 @@ interface GameController {
   setMuted(muted: boolean): void;
   setMusicVolume(value: number): void;
   setSfxVolume(value: number): void;
+  setCombatOverlayOpen(open: boolean): void;
   togglePause(): void;
   recruit(id: AgentId): void;
   useAgentSkill(id: EvolutionAgentId): void;
@@ -1192,6 +1193,7 @@ class FreemanEngine {
   private animationFrame = 0;
   private mode: GameMode = "intro";
   private sessionMode: SessionMode = "campaign";
+  private combatOverlayOpen = false;
   private watchState = createWatchState();
   private watchRecoveryClock = 0;
   private wave = 1;
@@ -1692,7 +1694,12 @@ class FreemanEngine {
     this.audio.setSfxVolume(value);
   }
 
+  setCombatOverlayOpen(open: boolean) {
+    this.combatOverlayOpen = open;
+  }
+
   togglePause() {
+    if (this.mode === "paused" && this.combatOverlayOpen && !isWatchMode(this.sessionMode)) return;
     if (this.mode === "playing") {
       this.resetInput();
       this.mode = "paused";
@@ -6741,6 +6748,7 @@ class FreemanCanvasEngine implements GameController {
   private lastFrame = performance.now();
   private mode: GameMode = "intro";
   private sessionMode: SessionMode = "campaign";
+  private combatOverlayOpen = false;
   private watchState = createWatchState();
   private watchRecoveryClock = 0;
   private wave = 1;
@@ -7092,7 +7100,12 @@ class FreemanCanvasEngine implements GameController {
     this.audio.setSfxVolume(value);
   }
 
+  setCombatOverlayOpen(open: boolean) {
+    this.combatOverlayOpen = open;
+  }
+
   togglePause() {
+    if (this.mode === "paused" && this.combatOverlayOpen && !isWatchMode(this.sessionMode)) return;
     if (this.mode === "playing") {
       this.resetInput();
       this.mode = "paused";
@@ -11247,6 +11260,7 @@ export default function FreemanProtocol({
   const engineRef = useRef<GameController | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const helpPausedGameRef = useRef(false);
+  const overlayPausedCampaignRef = useRef(false);
   const [mode, setMode] = useState<GameMode>("intro");
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -11322,12 +11336,20 @@ export default function FreemanProtocol({
 
   const toggleCombatOverlay = (panel: CombatOverlay) => {
     const closing = overlayState.active === panel;
-    if (
-      hud.sessionMode === "campaign" &&
-      ((overlayState.active === "closed" && mode === "playing") ||
-        (closing && mode === "paused"))
-    ) {
-      engineRef.current?.togglePause();
+    const opening = overlayState.active === "closed";
+
+    if (hud.sessionMode === "campaign") {
+      if (opening && mode === "playing") {
+        engineRef.current?.togglePause();
+        engineRef.current?.setCombatOverlayOpen(true);
+        overlayPausedCampaignRef.current = true;
+      } else if (closing) {
+        engineRef.current?.setCombatOverlayOpen(false);
+        if (overlayPausedCampaignRef.current && mode === "paused") {
+          engineRef.current?.togglePause();
+        }
+        overlayPausedCampaignRef.current = false;
+      }
     }
     onToggleOverlay(panel);
   };
@@ -11453,7 +11475,10 @@ export default function FreemanProtocol({
             type="button"
             onClick={() => engineRef.current?.togglePause()}
             disabled={
-              mode === "intro" || mode === "defeat" || mode === "victory"
+              mode === "intro" ||
+              mode === "defeat" ||
+              mode === "victory" ||
+              (hud.sessionMode === "campaign" && overlayState.active !== "closed")
             }
           >
             {mode === "paused" ? "RESUME" : "PAUSE"}
