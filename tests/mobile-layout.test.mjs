@@ -235,6 +235,17 @@ test("shows exactly one full-width mobile tray while the roster stays collapsed"
   );
 });
 
+test("keeps the default mobile arena clear of advisor and command detail panels", () => {
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.recruitment-advisor__reason,[\s\S]*?\.recruitment-advisor__watch,[\s\S]*?\.recruitment-advisor__resources\s*\{[\s\S]*?display:\s*none/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.agent-dock\.mobile-panel--command:not\(\.is-mobile-open\) \.commander-actions\s*\{[\s\S]*?display:\s*none/,
+  );
+});
+
 test("keeps portrait and landscape combat notices clear of the larger status strip", () => {
   assert.doesNotMatch(
     styles,

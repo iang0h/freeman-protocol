@@ -3526,6 +3526,10 @@ canvas:focus-visible {
     display: none;
   }
 
+  .agent-dock.mobile-panel--command:not(.is-mobile-open) .commander-actions {
+    display: none;
+  }
+
   .commander-actions {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3634,6 +3638,8 @@ canvas:focus-visible {
     top: calc(env(safe-area-inset-top) + 145px);
     right: 10px;
     left: 10px;
+    max-height: 60px;
+    overflow: hidden;
     z-index: 25;
     width: auto;
     transform: none;
@@ -3641,41 +3647,20 @@ canvas:focus-visible {
 
   .recruitment-advisor {
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
-    gap: 6px 9px;
-    padding: 8px 9px;
+    grid-template-rows: 48px;
+    gap: 0 9px;
+    min-height: 48px;
+    padding: 5px 7px;
   }
 
   .recruitment-advisor__copy strong {
     font-size: 10px;
   }
 
-  .recruitment-advisor__reason {
-    display: -webkit-box;
-    overflow: hidden;
-    font-size: 9px;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
-  .recruitment-advisor__watch {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
+  .recruitment-advisor__reason,
+  .recruitment-advisor__watch,
   .recruitment-advisor__resources {
-    grid-column: 1;
-    grid-row: 2;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 4px 8px;
-  }
-
-  .recruitment-advisor__resources > div {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
-    gap: 2px;
+    display: none;
   }
 
   .recruitment-advisor__resources dt {
@@ -3683,16 +3668,12 @@ canvas:focus-visible {
   }
 
   .recruitment-advisor__resources dd {
-    overflow-wrap: anywhere;
     font-size: 16px;
-    line-height: 1.1;
-    text-align: left;
-    white-space: normal;
   }
 
   .recruitment-advisor__action {
     grid-column: 2;
-    grid-row: 1 / 3;
+    grid-row: 1;
     max-width: 88px;
   }
 
