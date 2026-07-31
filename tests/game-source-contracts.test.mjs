@@ -10,6 +10,10 @@ const styles = await readFile(
   new URL("../app/globals.css", import.meta.url),
   "utf8",
 );
+const page = await readFile(
+  new URL("../app/page.tsx", import.meta.url),
+  "utf8",
+);
 const catalog = await readFile(
   new URL("../app/asset-catalog/AssetCatalog.tsx", import.meta.url),
   "utf8",
@@ -46,6 +50,24 @@ test("combat presentation rules stay renderer-independent", () => {
   assert.match(combatPresentationRules, /export function getArenaZone/);
   assert.match(combatPresentationRules, /export function classifyCombatFeedback/);
   assert.doesNotMatch(combatPresentationRules, /from\s+["'][^"']*(?:three|FreemanProtocol)/i);
+});
+
+test("desktop combat HUD keeps the arena clear behind explicit overlays", () => {
+  assert.match(page, /useState\(createOverlayState\)/);
+  assert.match(page, /toggleOverlay\(overlayState, panel\)/);
+  assert.match(game, /combat-hud__status/);
+  assert.match(game, />HP</);
+  assert.match(game, />CORE</);
+  assert.match(game, />WAVE</);
+  assert.match(game, /combat-hud__toggles/);
+  assert.match(game, /\["intel", "warband", "actions"\]/);
+  assert.match(game, /overlayState\.active === "intel"/);
+  assert.match(game, /overlayState\.active === "warband"/);
+  assert.match(game, /overlayState\.active === "actions"/);
+  assert.match(game, /intel-overlay/);
+  assert.match(game, /warband-overlay/);
+  assert.match(styles, /\.intel-overlay,\s*\.warband-overlay\s*\{[\s\S]*?display:\s*none/);
+  assert.match(styles, /\.intel-overlay\.is-active,\s*\.warband-overlay\.is-active\s*\{[\s\S]*?display:\s*(?:grid|block|flex)/);
 });
 
 test("enemy rendering does not allocate a point light per enemy", () => {

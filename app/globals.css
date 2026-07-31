@@ -273,6 +273,169 @@ canvas:focus-visible {
   opacity: 0.36;
 }
 
+.combat-hud__status,
+.combat-hud__toggles {
+  pointer-events: auto;
+}
+
+.combat-hud__status {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.combat-hud__status > span {
+  display: flex;
+  min-width: 74px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  background: rgba(7, 10, 10, 0.8);
+  font-family: var(--mono);
+  backdrop-filter: blur(12px);
+}
+
+.combat-hud__status small {
+  color: var(--muted);
+  font-size: 7px;
+  letter-spacing: 0.13em;
+}
+
+.combat-hud__status strong {
+  color: var(--ivory);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+.combat-hud__status > span:nth-child(2) strong {
+  color: var(--ice);
+}
+
+.combat-hud__status > span:nth-child(3) strong {
+  color: var(--signal);
+}
+
+.combat-hud__toggles {
+  display: flex;
+  gap: 4px;
+}
+
+.combat-hud__toggles button {
+  min-height: 31px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  background: rgba(7, 10, 10, 0.8);
+  color: #a5a69f;
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+}
+
+.combat-hud__toggles button:hover:not(:disabled),
+.combat-hud__toggles button.is-active {
+  border-color: var(--signal);
+  color: var(--ivory);
+}
+
+.combat-hud__toggles button:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+
+.combat-overlay-backdrop {
+  display: none;
+}
+
+@media (min-width: 821px) {
+  .combat-hud {
+    position: fixed;
+    top: 18px;
+    right: 24px;
+    left: 24px;
+    z-index: 40;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .combat-hud .hud-actions {
+    min-width: 0;
+  }
+
+  .combat-overlay-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: block;
+    border: 0;
+    background: rgba(2, 5, 6, 0.76);
+    cursor: default;
+    backdrop-filter: blur(4px);
+  }
+
+  .intel-overlay,
+  .warband-overlay {
+    display: none;
+  }
+
+  .intel-overlay.is-active,
+  .warband-overlay.is-active {
+    display: block;
+    z-index: 31;
+    pointer-events: auto;
+  }
+
+  .intel-overlay.is-active {
+    position: fixed;
+    top: 84px;
+    bottom: 28px;
+    left: 28px;
+    width: min(360px, calc(100vw - 56px));
+    max-height: calc(100vh - 112px);
+    overflow-y: auto;
+  }
+
+  .warband-overlay.is-active {
+    position: fixed;
+    top: 92px;
+    right: auto;
+    bottom: 32px;
+    left: 50%;
+    width: min(850px, calc(100vw - 96px));
+    max-height: calc(100vh - 124px);
+    overflow-y: auto;
+    transform: translateX(-50%);
+  }
+
+  .actions-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 31;
+    display: none;
+    pointer-events: none;
+  }
+
+  .actions-overlay.is-active {
+    display: block;
+    pointer-events: auto;
+  }
+
+  .actions-overlay .skill-actions,
+  .actions-overlay .combat-actions,
+  .actions-overlay .repair-field-kit {
+    z-index: 1;
+  }
+
+  .watch-panel {
+    z-index: 32;
+  }
+}
+
 .vitals-panel {
   position: absolute;
   top: 102px;

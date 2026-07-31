@@ -142,6 +142,8 @@ import {
 type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
 type SessionMode = "campaign" | "watch";
+type CombatOverlay = "intel" | "warband" | "actions";
+type OverlayState = { active: "closed" | CombatOverlay };
 
 type AgentId =
   | "kairos" | "kira" | "forge" | "covenant"
@@ -11232,7 +11234,15 @@ class FreemanCanvasEngine implements GameController {
   }
 }
 
-export default function FreemanProtocol() {
+type FreemanProtocolProps = {
+  overlayState: OverlayState;
+  onToggleOverlay: (panel: CombatOverlay) => void;
+};
+
+export default function FreemanProtocol({
+  overlayState,
+  onToggleOverlay,
+}: FreemanProtocolProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameController | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -11308,6 +11318,18 @@ export default function FreemanProtocol() {
       engineRef.current?.togglePause();
       helpPausedGameRef.current = false;
     }
+  };
+
+  const toggleCombatOverlay = (panel: CombatOverlay) => {
+    const closing = overlayState.active === panel;
+    if (
+      hud.sessionMode === "campaign" &&
+      ((overlayState.active === "closed" && mode === "playing") ||
+        (closing && mode === "paused"))
+    ) {
+      engineRef.current?.togglePause();
+    }
+    onToggleOverlay(panel);
   };
 
   const isOverlay = mode !== "playing";
@@ -11394,40 +11416,29 @@ export default function FreemanProtocol() {
       <div className="atmosphere" aria-hidden="true" />
       <div className="frame-corners" aria-hidden="true" />
 
-      <header className="hud-top">
-        <div className="hud-brand">
-          <span className="hud-brand__sigil">F</span>
-          <span>
-            <strong>FREEMAN / PROTOCOL</strong>
-            <small>CYBER DEFENSE · MISSION 001</small>
-          </span>
+      <header className="hud-top combat-hud">
+        <div className="combat-hud__status" aria-label={`Encounter ${hud.wave} of ${TOTAL_WAVES}`}>
+          <span><small>HP</small><strong>{hud.hp}/{hud.maxHp}</strong></span>
+          <span><small>CORE</small><strong>{hud.core}/{hud.maxCore}</strong></span>
+          <span><small>WAVE</small><strong>{hud.wave}/{TOTAL_WAVES}</strong></span>
         </div>
 
-        <div
-          className="wave-state"
-          aria-label={`Encounter ${hud.wave} of ${TOTAL_WAVES}`}
-        >
-          <span>WAVE</span>
-          <b className="mobile-only">
-            {String(hud.wave).padStart(2, "0")}/
-            {String(TOTAL_WAVES).padStart(2, "0")}
-          </b>
-          {Array.from({ length: TOTAL_WAVES }, (_, index) => index + 1).map(
-            (wave) => (
-              <i
-                key={wave}
-                className={
-                  wave < hud.wave
-                    ? "is-cleared"
-                    : wave === hud.wave
-                      ? "is-active"
-                      : ""
-                }
-              >
-                {String(wave).padStart(2, "0")}
-              </i>
-            ),
-          )}
+        <div className="combat-hud__toggles">
+          {(["intel", "warband", "actions"] as const).map((panel) => (
+            <button
+              type="button"
+              key={panel}
+              className={overlayState.active === panel ? "is-active" : ""}
+              onClick={() => toggleCombatOverlay(panel)}
+              disabled={
+                mode !== "playing" &&
+                !(mode === "paused" && overlayState.active === panel)
+              }
+              aria-pressed={overlayState.active === panel}
+            >
+              {panel.toUpperCase()}
+            </button>
+          ))}
         </div>
 
         <div className="hud-actions">
@@ -11461,6 +11472,14 @@ export default function FreemanProtocol() {
 
       {mode !== "intro" && (
         <>
+          {overlayState.active !== "closed" && (
+            <button
+              type="button"
+              className="combat-overlay-backdrop"
+              aria-label="Close combat overlay"
+              onClick={() => toggleCombatOverlay(overlayState.active as CombatOverlay)}
+            />
+          )}
           {hud.intermissionMs > 0 && (
             <div className="wave-intermission-banner" role="status">
               <small>WAVE {hud.wave} CLEARED</small>
@@ -11585,7 +11604,9 @@ export default function FreemanProtocol() {
             </aside>
           )}
 
-          <aside className="vitals-panel">
+          <aside
+            className={`vitals-panel intel-overlay ${overlayState.active === "intel" ? "is-active" : ""}`}
+          >
             <p className="panel-label">IAN GOH · NETWORK DEFENDER</p>
             <div className="vital-row">
               <span>YOUR HEALTH</span>
@@ -11816,7 +11837,7 @@ export default function FreemanProtocol() {
           </button>
 
           <section
-            className={`agent-dock mobile-action-tray mobile-panel--command ${mobilePanel === "command" ? "mobile-panel--active" : "mobile-panel--inactive"} ${workshopActive ? "is-workshop" : ""} ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
+            className={`agent-dock warband-overlay mobile-action-tray mobile-panel--command ${overlayState.active === "warband" ? "is-active" : ""} ${mobilePanel === "command" ? "mobile-panel--active" : "mobile-panel--inactive"} ${workshopActive ? "is-workshop" : ""} ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
             aria-label="AI agent recruitment"
           >
             <button
@@ -11958,6 +11979,10 @@ export default function FreemanProtocol() {
             </div>
           </section>
 
+          <section
+            className={`actions-overlay ${overlayState.active === "actions" ? "is-active" : ""}`}
+            aria-label="Combat actions"
+          >
           <div
             className={`skill-actions mobile-action-tray mobile-panel--skills ${mobilePanel === "skills" ? "mobile-panel--active" : "mobile-panel--inactive"}`}
             aria-label="Agent skill controls"
@@ -12073,6 +12098,7 @@ export default function FreemanProtocol() {
             <small>R {hud.loot.repairs} · C {hud.loot.components}</small>
             <strong>REPAIR / FIELD KIT</strong>
           </button>
+          </section>
 
         </>
       )}
@@ -12376,7 +12402,7 @@ export default function FreemanProtocol() {
         </section>
       )}
 
-      {mode === "paused" && (
+      {mode === "paused" && overlayState.active === "closed" && (
         <section className="overlay-screen pause-screen">
           <span className="eyebrow">GAME PAUSED</span>
           <h2>Take a breath.</h2>
