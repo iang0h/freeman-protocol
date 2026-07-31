@@ -318,6 +318,15 @@ canvas:focus-visible {
   color: var(--signal);
 }
 
+.combat-hud__status > span.combat-hud__zone {
+  min-width: 96px;
+}
+
+.combat-hud__zone strong {
+  color: var(--ice);
+  font-size: 8px;
+}
+
 .combat-hud__toggles {
   display: flex;
   gap: 4px;

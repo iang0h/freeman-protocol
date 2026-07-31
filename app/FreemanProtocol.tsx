@@ -14,7 +14,10 @@ import {
   resolveArmoredDamage,
   remainingThreats,
 } from "./game/combat-rules.mjs";
-import { classifyCombatFeedback } from "./game/combat-presentation-rules.mjs";
+import {
+  classifyCombatFeedback,
+  getArenaZone,
+} from "./game/combat-presentation-rules.mjs";
 import {
   EMP_BASE_DAMAGE,
   canFireEmp,
@@ -287,6 +290,14 @@ const TOUCH_SAFE_PICKUP_RADIUS = 0.75;
 const MAX_COMBAT_EFFECTS = 96;
 const MAX_COMBAT_COMBO = 99;
 const COMBAT_COMBO_WINDOW_SECONDS = 1.4;
+const ARENA_ZONE_MARKERS = [
+  { x: 0, z: 0, radius: 2.2, color: 0xf08a4b, kind: "core" },
+  { x: 0, z: -4.75, radius: 1.35, color: 0xe17a57, kind: "breach" },
+  { x: 0, z: 4.75, radius: 1.35, color: 0x6fa9bb, kind: "breach" },
+  { x: 3.1, z: 1.15, radius: 1.5, color: 0x8cc5d0, kind: "landmark" },
+  { x: -3.1, z: 1.15, radius: 1.5, color: 0x74c8bd, kind: "landmark" },
+  { x: 0, z: -6.45, radius: 1.75, color: 0xd45b58, kind: "portal" },
+] as const;
 
 const combatFeedbackColor = (emphasis: CombatFeedbackEmphasis) =>
   emphasis === "urgent"
@@ -334,6 +345,7 @@ type HudState = {
   defenseCost: number;
   placingDefense: boolean;
   threat: string;
+  currentZone: string;
   command: SquadCommand;
   agents: Record<AgentId, boolean>;
   warbandCount: number;
@@ -825,6 +837,7 @@ const INITIAL_HUD: HudState = {
   defenseCost: 80,
   placingDefense: false,
   threat: "LOW",
+  currentZone: "EAST",
   command: "follow",
   agents: {
     kairos: false,
@@ -1264,6 +1277,7 @@ class FreemanEngine {
   private tutorialMarker: THREE.Group | null = null;
   private encounterModifiers = getWaveModifiers(1);
   private terrain = getTerrainModifier(1);
+  private currentZone = "EAST";
   private terrainOverlay: THREE.Group | null = null;
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
@@ -2578,6 +2592,79 @@ class FreemanEngine {
     );
     particles.name = "ambient-particles";
     this.scene.add(particles);
+
+    this.buildArenaZoneMarkers();
+  }
+
+  private buildArenaZoneMarkers() {
+    for (const marker of ARENA_ZONE_MARKERS) {
+      const zone = getArenaZone({ x: marker.x, z: marker.z });
+      const width = marker.kind === "core" ? 0.1 : 0.055;
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(marker.radius - width, marker.radius + width, 48),
+        new THREE.MeshBasicMaterial({
+          color: marker.color,
+          transparent: true,
+          opacity:
+            marker.kind === "core" ? 0.7 : marker.kind === "portal" ? 0.36 : 0.5,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      ring.name = `arena-zone-marker-${zone.id}`;
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(marker.x, 0.035, marker.z);
+      this.scene.add(ring);
+
+      if (marker.kind === "breach") {
+        const lane = new THREE.Mesh(
+          new THREE.PlaneGeometry(2.6, 0.1),
+          new THREE.MeshBasicMaterial({
+            color: marker.color,
+            transparent: true,
+            opacity: 0.48,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        lane.rotation.x = -Math.PI / 2;
+        lane.position.set(marker.x, 0.04, marker.z);
+        this.scene.add(lane);
+      }
+
+      const label = this.createArenaZoneLabel(zone.label, marker.color);
+      label.position.set(marker.x, 0.08, marker.z + marker.radius + 0.22);
+      this.scene.add(label);
+    }
+  }
+
+  private createArenaZoneLabel(label: string, color: number) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 64;
+    const context = canvas.getContext("2d");
+    if (!context) return new THREE.Sprite();
+    context.font = "600 26px ui-monospace, monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.lineWidth = 7;
+    context.strokeStyle = "rgba(4, 8, 10, 0.86)";
+    context.strokeText(label, canvas.width / 2, canvas.height / 2);
+    context.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
+    context.fillText(label, canvas.width / 2, canvas.height / 2);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        opacity: 0.68,
+        depthWrite: false,
+      }),
+    );
+    sprite.name = `arena-zone-label-${label.toLowerCase().replaceAll(" ", "-")}`;
+    sprite.scale.set(Math.max(1.65, label.length * 0.15), 0.26, 1);
+    return sprite;
   }
 
   private buildCore() {
@@ -3800,8 +3887,9 @@ class FreemanEngine {
       });
     }
     if (wave === TOTAL_WAVES) {
+      const portalZone = getArenaZone({ x: 0, z: -6.45 });
       this.callbacks.onToast({
-        eyebrow: "FINAL BREACH",
+        eyebrow: `${portalZone.label} ACTIVE`,
         title: "ROOTKIT PRIME HAS ENTERED",
         detail: "Break its armor, evade telegraphed strikes, and protect the Core.",
       });
@@ -6684,6 +6772,11 @@ class FreemanEngine {
       skills[id].available = skills[id].status === "ready";
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
+    const zone = getArenaZone({
+      x: this.player.group.position.x,
+      z: this.player.group.position.z,
+    });
+    this.currentZone = zone.shortLabel;
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
@@ -6725,6 +6818,7 @@ class FreemanEngine {
               : this.wave >= 2
                 ? "RISING"
                 : "LOW",
+      currentZone: this.currentZone,
       command: this.squadCommand,
       agents: {
         kairos: recruited("kairos"),
@@ -7026,6 +7120,7 @@ class FreemanCanvasEngine implements GameController {
   private tutorialMarker: { x: number; z: number } | null = null;
   private encounterModifiers = getWaveModifiers(1);
   private terrain = getTerrainModifier(1);
+  private currentZone = "EAST";
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     const context = canvas.getContext("2d");
@@ -9340,8 +9435,9 @@ class FreemanCanvasEngine implements GameController {
       });
     }
     if (wave === TOTAL_WAVES) {
+      const portalZone = getArenaZone({ x: 0, z: -6.45 });
       this.callbacks.onToast({
-        eyebrow: "FINAL BREACH",
+        eyebrow: `${portalZone.label} ACTIVE`,
         title: "ROOTKIT PRIME HAS ENTERED",
         detail: "Break its armor, evade telegraphed strikes, and protect the Core.",
       });
@@ -10437,6 +10533,7 @@ class FreemanCanvasEngine implements GameController {
     this.drawGrid();
     this.drawTerrainOverlay();
     this.drawPlatform();
+    this.drawArenaZoneMarkers();
     if (this.tutorialMarker) this.drawTutorialMarker();
     if (this.placementActive) this.drawPlacementPreview();
     else this.drawTargetingPresentation();
@@ -10562,6 +10659,62 @@ class FreemanCanvasEngine implements GameController {
       context.moveTo(verticalStart.x, verticalStart.y);
       context.lineTo(verticalEnd.x, verticalEnd.y);
       context.stroke();
+    }
+    context.restore();
+  }
+
+  private drawArenaZoneMarkers() {
+    const context = this.context;
+    context.save();
+    for (const marker of ARENA_ZONE_MARKERS) {
+      const zone = getArenaZone({ x: marker.x, z: marker.z });
+      const points = Array.from({ length: 40 }, (_, index) => {
+        const angle = (index / 40) * Math.PI * 2;
+        return this.project(
+          marker.x + Math.cos(angle) * marker.radius,
+          marker.z + Math.sin(angle) * marker.radius,
+          0.035,
+        );
+      });
+      context.globalAlpha =
+        marker.kind === "core" ? 0.74 : marker.kind === "portal" ? 0.38 : 0.52;
+      context.strokeStyle = toCssColor(marker.color);
+      context.fillStyle = toCssColor(marker.color);
+      context.lineWidth = marker.kind === "core" ? 2.25 : 1.25;
+      context.setLineDash(marker.kind === "portal" ? [4, 5] : []);
+      context.beginPath();
+      points.forEach((point, index) => {
+        if (index === 0) context.moveTo(point.x, point.y);
+        else context.lineTo(point.x, point.y);
+      });
+      context.closePath();
+      if (marker.kind === "core") {
+        context.globalAlpha = 0.12;
+        context.fill();
+        context.globalAlpha = 0.74;
+      }
+      context.stroke();
+
+      if (marker.kind === "breach") {
+        const start = this.project(marker.x - 1.3, marker.z, 0.04);
+        const end = this.project(marker.x + 1.3, marker.z, 0.04);
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        context.lineTo(end.x, end.y);
+        context.stroke();
+      }
+
+      context.setLineDash([]);
+      context.globalAlpha = 0.72;
+      const label = this.project(marker.x, marker.z + marker.radius + 0.22, 0.08);
+      context.font = "600 9px ui-monospace, monospace";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.lineWidth = 3;
+      context.strokeStyle = "rgba(4, 8, 10, 0.86)";
+      context.strokeText(zone.label, label.x, label.y);
+      context.fillStyle = toCssColor(marker.color);
+      context.fillText(zone.label, label.x, label.y);
     }
     context.restore();
   }
@@ -11640,6 +11793,8 @@ class FreemanCanvasEngine implements GameController {
       skills[id].available = skills[id].status === "ready";
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
+    const zone = getArenaZone({ x: this.player.x, z: this.player.z });
+    this.currentZone = zone.shortLabel;
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
@@ -11681,6 +11836,7 @@ class FreemanCanvasEngine implements GameController {
               : this.wave >= 2
                 ? "RISING"
                 : "LOW",
+      currentZone: this.currentZone,
       command: this.squadCommand,
       agents: {
         kairos: recruited("kairos"),
@@ -11920,6 +12076,7 @@ export default function FreemanProtocol({
           <span><small>HP</small><strong>{hud.hp}/{hud.maxHp}</strong></span>
           <span><small>CORE</small><strong>{hud.core}/{hud.maxCore}</strong></span>
           <span><small>WAVE</small><strong>{hud.wave}/{TOTAL_WAVES}</strong></span>
+          <span className="combat-hud__zone"><small>ZONE</small><strong>{hud.currentZone}</strong></span>
         </div>
 
         <div className="combat-hud__toggles">

@@ -52,6 +52,35 @@ test("combat presentation rules stay renderer-independent", () => {
   assert.doesNotMatch(combatPresentationRules, /from\s+["'][^"']*(?:three|FreemanProtocol)/i);
 });
 
+test("both renderers mark the shared arena zones and throttle the live zone HUD", () => {
+  assert.match(game, /import\s+\{\s*classifyCombatFeedback,\s*getArenaZone,?\s*\}/);
+  assert.match(webglGame, /private buildArenaZoneMarkers\(\)/);
+  assert.match(canvasGame, /private drawArenaZoneMarkers\(\)/);
+
+  for (const label of [
+    "CORE CHAMBER",
+    "NORTH BREACH",
+    "SOUTH BREACH",
+    "COMPUTE NODE",
+    "REPAIR BAY",
+    "BOSS PORTAL",
+  ]) {
+    assert.match(combatPresentationRules, new RegExp(label));
+  }
+
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /const zone = getArenaZone\(\{\s*x: this\.player(?:\.group\.position)?\.x,\s*z: this\.player(?:\.group\.position)?\.z,?\s*\}\);\s*this\.currentZone = zone\.shortLabel;/,
+    );
+    assert.match(engine, /currentZone: this\.currentZone/);
+    assert.match(engine, /this\.hudClock = 0\.1;[\s\S]*?this\.emitHud\(\);/);
+  }
+
+  assert.match(game, /combat-hud__zone/);
+  assert.match(styles, /\.combat-hud__zone/);
+});
+
 test("desktop combat HUD keeps the arena clear behind explicit overlays", () => {
   assert.match(page, /useState\(createOverlayState\)/);
   assert.match(page, /toggleOverlay\(overlayState, panel\)/);

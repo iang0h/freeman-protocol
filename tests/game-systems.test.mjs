@@ -170,6 +170,19 @@ test("combat presentation returns immutable state and feedback contracts", () =>
 });
 
 test("combat presentation assigns deterministic compact-arena zone boundaries", () => {
+  const expectedZones = [
+    [{ x: 0, z: 0 }, "core", "CORE CHAMBER"],
+    [{ x: 0, z: -5 }, "north-breach", "NORTH BREACH"],
+    [{ x: 0, z: 5 }, "south-breach", "SOUTH BREACH"],
+    [{ x: 3.1, z: 1.15 }, "compute", "COMPUTE NODE"],
+    [{ x: -3.1, z: 1.15 }, "repair", "REPAIR BAY"],
+    [{ x: 0, z: -7 }, "boss-portal", "BOSS PORTAL"],
+  ];
+  for (const [position, id, label] of expectedZones) {
+    const zone = getArenaZone(position);
+    assert.equal(zone.id, id);
+    assert.equal(zone.label, label);
+  }
   assert.deepEqual(getArenaZone({ x: 0, z: 0 }), {
     id: "core",
     label: "CORE CHAMBER",
