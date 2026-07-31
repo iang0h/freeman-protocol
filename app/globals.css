@@ -3176,6 +3176,10 @@ canvas:focus-visible {
     display: none;
   }
 
+  .combat-hud__status {
+    display: none;
+  }
+
   .mobile-status-strip {
     position: absolute;
     top: calc(env(safe-area-inset-top) + 45px);
@@ -3278,7 +3282,15 @@ canvas:focus-visible {
   }
 
   .mobile-action-tray.mobile-panel--active {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    width: auto;
     pointer-events: auto;
+  }
+
+  .mobile-action-tray button {
+    min-height: 48px;
   }
 
   .agent-dock.mobile-panel--active {
@@ -3359,11 +3371,9 @@ canvas:focus-visible {
   }
 
   .skill-actions.mobile-panel--active {
-    right: 12px;
     bottom: calc(env(safe-area-inset-bottom) + 67px);
     grid-template-columns: repeat(2, minmax(76px, 1fr));
     gap: 6px;
-    width: min(184px, calc(100vw - 24px));
   }
 
   .skill-actions.mobile-panel--active button {
@@ -3372,19 +3382,19 @@ canvas:focus-visible {
   }
 
   .combat-actions.mobile-panel--active {
-    right: 12px;
     bottom: calc(env(safe-area-inset-bottom) + 67px);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(48px, 1fr));
     gap: 4px;
   }
 
   .combat-actions.mobile-panel--active .ability {
-    min-width: 48px;
+    width: auto;
     min-height: 48px;
     touch-action: manipulation;
   }
 
   .repair-field-kit.mobile-panel--active {
-    right: 12px;
     bottom: calc(env(safe-area-inset-bottom) + 128px);
     min-height: 48px;
     touch-action: manipulation;
@@ -3404,6 +3414,55 @@ canvas:focus-visible {
   .mode-evolution .protocol-screen {
     z-index: 40;
     padding-bottom: calc(env(safe-area-inset-bottom) + 18px);
+  }
+}
+
+@media (max-width: 820px) {
+  .mobile-status-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-height: 92px;
+  }
+
+  .mobile-status-strip__alert {
+    grid-column: span 2;
+  }
+
+  .mobile-status-strip small {
+    font-size: 12px;
+  }
+
+  .mobile-status-strip strong {
+    font-size: 16px;
+  }
+
+  .boss-health-banner,
+  .wave-intermission-banner,
+  .placement-guide,
+  .mission-toast {
+    top: calc(env(safe-area-inset-top) + 204px);
+  }
+
+  .intel-overlay .secondary-telemetry,
+  .warband-overlay .agent-metrics {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) and (orientation: landscape) {
+  .mobile-status-strip {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    min-height: 60px;
+  }
+
+  .mobile-status-strip__alert {
+    grid-column: auto;
+  }
+
+  .boss-health-banner,
+  .wave-intermission-banner,
+  .placement-guide,
+  .mission-toast {
+    top: calc(env(safe-area-inset-top) + 112px);
   }
 }
 

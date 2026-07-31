@@ -12289,7 +12289,7 @@ export default function FreemanProtocol({
                 style={{ width: `${clamp01(hud.core / hud.maxCore) * 100}%` }}
               />
             </div>
-            <div className="resource-grid">
+            <div className="resource-grid secondary-telemetry">
               <span>
                 <small>COMPUTE</small>
                 <strong>{String(hud.data).padStart(3, "0")}</strong>
@@ -12304,7 +12304,7 @@ export default function FreemanProtocol({
               </span>
             </div>
             <section
-              className="progression-telemetry"
+              className="progression-telemetry secondary-telemetry"
               aria-label="Progression and encounter telemetry"
             >
               <div>
@@ -12411,16 +12411,16 @@ export default function FreemanProtocol({
               <strong>{hud.core}</strong>
             </span>
             <span>
-              <small>COMPUTE</small>
-              <strong>{hud.data}</strong>
+              <small>WAVE</small>
+              <strong>{hud.wave}/{TOTAL_WAVES}</strong>
             </span>
             <span>
-              <small>EMP</small>
-              <strong>
-                {hud.empCooldownLeftMs > 0
-                  ? `${Math.ceil(hud.empCooldownLeftMs / 1_000)}s`
-                  : `${Math.round(hud.empCharge * 100)}%`}
-              </strong>
+              <small>ZONE</small>
+              <strong>{hud.currentZone}</strong>
+            </span>
+            <span className="mobile-status-strip__alert">
+              <small>ALERT</small>
+              <strong>{hud.threat === "LOW" ? "CLEAR" : `${hud.threat} THREAT`}</strong>
             </span>
           </aside>
 
@@ -12496,7 +12496,7 @@ export default function FreemanProtocol({
           </button>
 
           <section
-            className={`agent-dock warband-overlay mobile-action-tray mobile-panel--command ${overlayState.active === "warband" ? "is-active" : ""} ${mobilePanel === "command" ? "mobile-panel--active" : "mobile-panel--inactive"} ${workshopActive ? "is-workshop" : ""} ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
+            className={`agent-dock mobile-action-tray mobile-panel--command warband-overlay ${overlayState.active === "warband" ? "is-active" : ""} ${mobilePanel === "command" ? "mobile-panel--active" : "mobile-panel--inactive"} ${workshopActive ? "is-workshop" : ""} ${mobileSquadOpen ? "is-mobile-open" : ""} ${tutorial?.target === "agents" ? "tutorial-highlight" : ""}`}
             aria-label="AI agent recruitment"
           >
             <button
@@ -12607,14 +12607,14 @@ export default function FreemanProtocol({
                       {agent.code}
                     </span>
                     <span className="agent-card__copy">
-                      <small>{agent.role}</small>
+                      <small className="agent-metrics">{agent.role}</small>
                       <strong>{agent.name}</strong>
-                      <small>
+                      <small className="agent-metrics">
                         DMG {agent.damage} · {agent.cooldown.toFixed(1)}S · RNG{" "}
                         {agent.range}
                       </small>
                       {evolution && (
-                        <em>
+                        <em className="agent-metrics">
                           RANK II ·{" "}
                           {EVOLUTIONS[agent.id as EvolutionAgentId].find(
                             (item: { id: string }) =>

@@ -96,6 +96,90 @@ test("provides a compact, touch-safe mobile status and switcher", () => {
   assert.match(styles, /\.mobile-action-tray[\s\S]*padding-bottom:\s*calc\(env\(safe-area-inset-bottom\)/);
 });
 
+test("limits live mobile status to combat vitals, zone, and one alert", () => {
+  const status = game.match(
+    /<aside className="mobile-status-strip"[\s\S]*?<\/aside>/,
+  )?.[0] ?? "";
+
+  assert.match(status, /<small>HP<\/small>/);
+  assert.match(status, /<small>CORE<\/small>/);
+  assert.match(status, /<small>WAVE<\/small>/);
+  assert.match(status, /<small>ZONE<\/small>/);
+  assert.match(status, /<small>ALERT<\/small>/);
+  assert.match(status, /hud\.currentZone/);
+  assert.match(status, /hud\.threat/);
+  assert.doesNotMatch(status, /<small>COMPUTE<\/small>/);
+  assert.doesNotMatch(status, /<small>EMP<\/small>/);
+});
+
+test("keeps mobile type readable and removes secondary overlay telemetry", () => {
+  assert.doesNotMatch(
+    styles,
+    /@media \(max-width: 760px\)[\s\S]*?\.intel-overlay \.secondary-telemetry/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.mobile-status-strip small\s*\{[\s\S]*?font-size:\s*12px/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.mobile-status-strip strong\s*\{[\s\S]*?font-size:\s*16px/,
+  );
+  assert.match(
+    styles,
+    /\.intel-overlay \.secondary-telemetry,\s*\.warband-overlay \.agent-metrics\s*\{\s*display:\s*none;/,
+  );
+  assert.match(game, /className="resource-grid secondary-telemetry"/);
+  assert.match(game, /className="progression-telemetry secondary-telemetry"/);
+  assert.match(game, /className="agent-metrics"/);
+});
+
+test("applies the compact status rules through the 820px mobile boundary", () => {
+  assert.doesNotMatch(styles, /@media \(max-width: 760px\)/);
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)[\s\S]*?min-height:\s*92px/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\) and \(orientation: landscape\)[\s\S]*?grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/,
+  );
+});
+
+test("shows exactly one full-width mobile tray while the roster stays collapsed", () => {
+  assert.match(
+    styles,
+    /\.mobile-action-tray\.mobile-panel--inactive\s*\{[\s\S]*?display:\s*none !important/,
+  );
+  assert.match(
+    styles,
+    /\.mobile-action-tray\.mobile-panel--active\s*\{[\s\S]*?left:\s*10px[\s\S]*?right:\s*10px/,
+  );
+  assert.match(
+    styles,
+    /\.mobile-action-tray button\s*\{[\s\S]*?min-height:\s*48px/,
+  );
+  assert.match(
+    styles,
+    /\.agent-dock\.mobile-panel--command:not\(\.is-mobile-open\) \.agent-grid[\s\S]*?display:\s*none/,
+  );
+});
+
+test("keeps portrait and landscape combat notices clear of the larger status strip", () => {
+  assert.doesNotMatch(
+    styles,
+    /@media \(max-width: 760px\) and \(orientation: landscape\)/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.boss-health-banner,[\s\S]*?\.wave-intermission-banner,[\s\S]*?\.placement-guide,[\s\S]*?\.mission-toast\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 204px\)/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\) and \(orientation: landscape\)[\s\S]*?\.mobile-status-strip\s*\{[\s\S]*?grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)[\s\S]*?\.mobile-status-strip__alert\s*\{[\s\S]*?grid-column:\s*auto/,
+  );
+});
+
 test("keeps the recruitment dock interactive above workshop overlays", () => {
   const overlayZ = Number(
     styles.match(/\.overlay-screen\s*\{[\s\S]*?z-index:\s*(\d+)/)?.[1],
