@@ -143,6 +143,43 @@ test("both renderers keep targeting and combat feedback readable and bounded", (
   }
 });
 
+test("combat flinch stays presentation-only and feedback allocations are pooled", () => {
+  const canvasDamageEnemy = canvasGame.slice(
+    canvasGame.indexOf("private damageEnemy("),
+    canvasGame.indexOf("private removeProjectile("),
+  );
+  assert.doesNotMatch(canvasDamageEnemy, /enemy\.x\s*\+=/);
+  assert.doesNotMatch(canvasDamageEnemy, /enemy\.z\s*\+=/);
+  assert.match(canvasDamageEnemy, /enemy\.hitRecoilX\s*=/);
+  assert.match(canvasDamageEnemy, /enemy\.hitRecoilZ\s*=/);
+  assert.match(canvasGame, /const displayX = enemy\.x \+ enemy\.hitRecoilX/);
+  assert.match(canvasGame, /const displayZ = enemy\.z \+ enemy\.hitRecoilZ/);
+
+  assert.match(
+    webglGame,
+    /private readonly damageNumberPool = new BoundedPool<THREE\.Sprite>\(\d+\)/,
+  );
+  assert.match(webglGame, /this\.damageNumberPool\.acquire\(/);
+  assert.match(webglGame, /this\.damageNumberPool\.release\(/);
+  const webglDamageNumber = webglGame.slice(
+    webglGame.indexOf("private addDamageNumber("),
+    webglGame.indexOf("private async attachOperatorRig("),
+  );
+  assert.doesNotMatch(webglDamageNumber, /document\.createElement\("canvas"\)/);
+
+  assert.match(
+    canvasGame,
+    /private readonly burstEffectPool = new BoundedPool<FlatEffect>\(\d+\)/,
+  );
+  assert.match(canvasGame, /this\.burstEffectPool\.acquire\(/);
+  assert.match(canvasGame, /this\.burstEffectPool\.release\(/);
+  const canvasBurst = canvasGame.slice(
+    canvasGame.indexOf("private addBurst("),
+    canvasGame.indexOf("private addSlashArc("),
+  );
+  assert.doesNotMatch(canvasBurst, /const particles: FlatParticle\[\] = \[\]/);
+});
+
 test("both renderers pace spawns and include queued threats in the HUD", () => {
   assert.match(game, /getActiveEnemyLimit\("webgl"\)/);
   assert.match(game, /getActiveEnemyLimit\("canvas"\)/);
