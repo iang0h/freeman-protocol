@@ -1,103 +1,264 @@
-# Task 3 report: damage, repair bay, retreat, and turret survivability
+# Task 3 report: readable combat feedback
+
+## Status
+
+Complete and committed.
+
+- Commit: `4ca1155dbb58695d23d58fb4dfe72c86d1719805`
+- Commit message: `feat: add readable combat feedback`
+- Changed tracked files:
+  - `app/FreemanProtocol.tsx`
+  - `tests/game-source-contracts.test.mjs`
+  - `tests/game-systems.test.mjs`
 
 ## Scope delivered
 
-- Added `app/game/repair-rules.mjs` with pure, immutable repair interfaces:
-  `applyUnitDamage`, `getRepairDecision`, `tickRepairBay`, and `repairTurret`.
-- Added regression tests for repair thresholds, distinct functioning repair bays,
-  destroyed-bay withdrawal, clamped disabled timers, Core-health isolation, and
-  Component-funded turret repairs.
-- Added a separate in-world repair bay, autonomous agent retreat/return behavior,
-  agent and turret health bars, enemy selection of vulnerable agents/turrets, and
-  a disabled-turret firing guard in the WebGL engine.
-- Added the shared `REPAIR / FIELD KIT` action. It uses repair supplies for agents
-  and Components for sentries, and is rendered as a 48px touch-safe control.
-- Kept the Core outside every repair-rule mutation path; the repair bay is a
-  separate runtime object.
+- Added renderer-parity targeting presentation:
+  - WebGL uses one persistent ring reticle and one persistent line whose geometry
+    is updated in place.
+  - Canvas draws the equivalent ring reticle and short terminal aim line.
+- Routed enemy and Core combat events through
+  `classifyCombatFeedback({ kind, damage, critical, target })`.
+- Added readable standard-hit, critical, kill, Core-warning, and capped combo
+  labels with distinct emphasis colors.
+- Reused the existing effect/damage-number/burst boundaries and hard-capped each
+  renderer's active effect collection at 96 entries.
+- Replaced the melee full-ring cue with a directional slash arc in both
+  renderers.
+- Preserved WebGL hit flash/knockback and added equivalent Canvas flinch and
+  knockback presentation.
+- Added reduced-motion branches that keep reticles, labels, bursts, and sound
+  while removing reticle pulse and reducing slash lifetime, burst count,
+  knockback, and camera shake.
+- Did not alter damage resolution, health, rewards, wave logic, or existing
+  object pools.
 
 ## TDD evidence
 
-1. Added repair-rule tests before implementation and ran them. The focused game
-   suite reported three expected failures because `repair-rules.mjs` did not yet
-   exist (`ERR_MODULE_NOT_FOUND`).
-2. Implemented the smallest rule module to satisfy that contract, then integrated
-   it with the engines and touch UI.
+### Baseline
 
-## Verification
+Command:
 
-- `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/*.test.mjs`
-  - Passed: 104 tests, 0 failures.
-- `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node /Users/iangoh/Documents/Codex/2026-07-28/iang0h-freeman-protocol-https-github-com/work/freeman-protocol/node_modules/typescript/bin/tsc --noEmit --project tsconfig.json`
-  - Passed: exit 0.
-- `git diff --check`
-  - Passed: no whitespace errors.
-- `npm run build`
-  - Could not run in this supplied worktree: its `node_modules` directory is not
-    present and the bundled Node runtime does not include `npm`. The TypeScript
-    verification above used the repository's existing dependency tree directly.
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/game-source-contracts.test.mjs tests/game-systems.test.mjs
+```
 
-## Review follow-up fixes
+Output:
 
-- Made repair decisions stateful: agents that have begun withdrawing/repairing
-  remain in that lifecycle until `returnHealthRatio`, then resume combat.
-- Brought the Canvas fallback to repair parity: it now has a destructible,
-  separately rendered repair bay; retreat movement; bay healing; agent/turret
-  damage; agent/turret health bars; and hostile projectile collisions for all
-  vulnerable targets.
-- Made the Core protect-only. Upgrade, Covenant, temporary support-agent, and
-  repair-loot paths no longer restore Core health; player, agent, and turret
-  repair paths remain available.
-- Added behavioral lifecycle, destroyed-bay fallback, Core-isolation, and
-  projectile-target tests, plus renderer parity source contracts.
+```text
+tests 159
+pass 159
+fail 0
+duration_ms 94.958334
+```
 
-## Follow-up TDD and verification evidence
+### Red
 
-1. Wrote the new lifecycle/projectile/Core/Canvas tests, then ran:
+The combat-feedback source contract and shared-payload cases were added before
+production changes.
 
-   `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs`
+Command:
 
-   Initial output: 92 tests, 86 passed, 6 expected failures. The failures
-   identified the stateless repair transition, absent hostile-projectile helper,
-   repair-loot Core healing, support-sub-agent Core healing, and missing Canvas
-   parity implementation.
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/game-source-contracts.test.mjs tests/game-systems.test.mjs
+```
 
-2. After implementation, ran:
+Output:
 
-   `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/*.test.mjs`
+```text
+not ok 7 - both renderers keep targeting and combat feedback readable and bounded
+AssertionError: The input did not match the regular expression /classifyCombatFeedback/.
+tests 160
+pass 159
+fail 1
+duration_ms 101.870208
+```
 
-   Output: 107 tests passed, 0 failures.
+The failure was expected: `FreemanProtocol.tsx` had not yet imported or consumed
+the shared classifier.
 
-3. Ran:
+### Green / final verification
 
-   `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node /Users/iangoh/Documents/Codex/2026-07-28/iang0h-freeman-protocol-https-github-com/work/freeman-protocol/node_modules/typescript/bin/tsc --noEmit --project tsconfig.json`
+Command:
 
-   Output: exit 0.
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/game-source-contracts.test.mjs tests/game-systems.test.mjs
+```
 
-4. Ran `git diff --check`.
+Output:
 
-   Output: no whitespace errors.
+```text
+ok 7 - both renderers keep targeting and combat feedback readable and bounded
+tests 160
+pass 160
+fail 0
+cancelled 0
+skipped 0
+todo 0
+duration_ms 95.825333
+```
 
-## Review follow-up: WebGL repair-bay convergence
+Command:
 
-### Root cause and fix
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/tsc --noEmit
+```
 
-- The Canvas fallback gives agents with a `repair` or `retreat` decision a zero
-  movement radius around the repair bay. WebGL anchored those agents to the same
-  bay but retained its normal 1.45–1.83 orbit radius, which is outside the
-  1.35-unit repair gate and could leave agents permanently unable to heal.
-- WebGL now derives the same `withdrawing` state and uses a zero-radius bay
-  target, allowing agents to reach the existing repair threshold.
-- Added a source-contract regression test requiring both renderers to define
-  withdrawal, select a zero-radius target, and preserve the 1.35 repair gate.
+Output:
 
-### TDD and verification
+```text
+exit 0
+(no stdout/stderr)
+```
 
-1. Added the renderer-parity source test and ran the focused source suite.
-   It failed as expected because WebGL had no withdrawal movement branch.
-2. Applied the minimal WebGL zero-radius withdrawal fix and reran:
+Command:
 
-   `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs tests/mobile-layout.test.mjs`
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/eslint app/FreemanProtocol.tsx tests/game-source-contracts.test.mjs tests/game-systems.test.mjs
+```
 
-   Output: 102 tests passed, 0 failures.
-3. Ran TypeScript no-emit with the bundled Node runtime: exit 0.
-4. Ran `git diff --check`: no whitespace errors.
+Output:
+
+```text
+exit 0
+(no stdout/stderr)
+```
+
+Command:
+
+```text
+git diff --check
+```
+
+Output:
+
+```text
+exit 0
+(no stdout/stderr)
+```
+
+Post-commit state:
+
+```text
+## main...origin/main [ahead 10]
+```
+
+## Concerns
+
+- Critical presentation is deterministic and presentation-only: a hit is
+  critical when the target is marked or applied damage is at least the greater
+  of 18 and 24% of target maximum health. This does not change applied damage.
+- Verification is automated (source contracts, systems tests, type-check, and
+  scoped lint). No interactive visual-browser pass was part of this task.
+- The shell did not expose Node on its default `PATH`; all verification used the
+  bundled Codex Node runtime shown in the exact commands above.
+
+## Important-review follow-up: presentation isolation and allocation reuse
+
+### Status
+
+Complete and committed.
+
+- Follow-up commit: `c2b7853626642efc473140d2fc899035c5da152c`
+- Commit message: `fix: pool combat feedback without simulation recoil`
+
+### Review findings and fixes
+
+- Canvas recoil had been applied directly to authoritative `enemy.x/z`, changing
+  collision, targeting, loot-drop, and pathing state. Recoil is now stored in
+  `hitRecoilX/hitRecoilZ`, decays with the existing hit flash, and is applied
+  only to `displayX/displayZ` inside `drawEnemy`.
+- WebGL damage labels created a canvas, texture, sprite, and material for every
+  label. A bounded 32-entry `BoundedPool<THREE.Sprite>` now retains those
+  canvases/textures/materials, redraws the retained canvas, and releases sprites
+  on expiry, cap eviction, reset, and disposal.
+- Canvas bursts created a new effect record, particle array, and particle
+  objects on every burst. A bounded 48-entry `BoundedPool<FlatEffect>` now
+  reacquires burst records and their particle arrays/objects, with releases on
+  expiry, cap eviction, reset, and disposal.
+- The existing 96-active-effect cap remains in both renderers, so active and
+  retained feedback allocations are both bounded.
+
+### TDD red evidence
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/game-source-contracts.test.mjs tests/game-systems.test.mjs
+```
+
+Output:
+
+```text
+not ok 8 - combat flinch stays presentation-only and feedback allocations are pooled
+AssertionError: The input was expected to not match /enemy\.x\s*\+=/.
+tests 161
+pass 160
+fail 1
+duration_ms 70.609625
+```
+
+### Final verification
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/game-source-contracts.test.mjs tests/game-systems.test.mjs
+```
+
+Output:
+
+```text
+ok 8 - combat flinch stays presentation-only and feedback allocations are pooled
+tests 161
+pass 161
+fail 0
+cancelled 0
+skipped 0
+todo 0
+duration_ms 63.151417
+```
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/tsc --noEmit
+```
+
+Output:
+
+```text
+exit 0
+(no stdout/stderr)
+```
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/eslint app/FreemanProtocol.tsx tests/game-source-contracts.test.mjs tests/game-systems.test.mjs
+```
+
+Output:
+
+```text
+exit 0
+(no stdout/stderr)
+```
+
+Command:
+
+```text
+git diff --check
+```
+
+Output:
+
+```text
+exit 0
+(no stdout/stderr)
+```
+
+### Remaining concern
+
+- Verification remains automated; no interactive visual-browser pass was
+  requested for this follow-up.

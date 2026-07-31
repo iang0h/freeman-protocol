@@ -1,66 +1,55 @@
-# Task 4 report: material-funded temporary sub-agents
+# Task 4 report: meaningful arena zones
 
-## Scope delivered
+## Commit
 
-- Extended `spawnTemporarySubAgent` to enforce a four-child cap per parent,
-  inherit the parent role, reject recursive children, and atomically deduct one
-  Component plus one Shard only after all spawn checks pass.
-- Added `getSubAgentLifetime(agent, upgrades)`, with deterministic 10-, 15-,
-  and 20-second lifetime tiers. Existing tick return fields remain available;
-  `lifetimeRatio` supplements the existing health cue for renderer use.
-- Added rule coverage for per-parent caps, exact tier expiry, role inheritance,
-  recursive-spawn rejection, material gathering before construction, and failed
-  purchases that leave the material wallet untouched.
-- Updated both renderers to construct after a parent has gathered, consume the
-  shared loot wallet, preserve combat actions, render lifetime bars, emit pooled
-  spawn/despawn rings, and announce the exact material cost in a toast.
-- Removed the old global per-wave cap. The HUD now labels the active count with
-  the four-per-agent limit; temporary children remain separate from the roster.
+`bcab10d feat: mark meaningful arena zones`
 
-## TDD evidence
+## Delivered
 
-1. Replaced the old three-child/five-second expectations before changing
-   production code, then ran the focused game suite. It reported four expected
-   assertion failures: the old global ID/lifetime behavior, absent lifetime
-   helper, and no material deduction.
-2. Implemented the rule extension, reran the focused tests, then integrated the
-   renderer behavior and its source contracts.
+- Added presentation-only Core, north/south breach, Compute Node, Repair Bay, and Boss Portal floor markers to both WebGL and Canvas renderers. The Core remains strongest; breach lanes use distinct warm/cool tints; the Boss Portal is a restrained dashed edge marker for telegraphs.
+- Added static world labels sourced from `getArenaZone()` metadata.
+- Added `currentZone` to both renderer HUD payloads. It is resolved only during the existing 0.1-second HUD emission cadence, not every render frame, and displayed as a compact HUD label.
+- Updated the final-wave urgent alert to identify the Boss Portal.
+- Added deterministic six-zone system assertions and renderer/source contracts.
+- No simulation, damage, spawn, loot, or routing rules were modified.
 
-## Verification
+## Test evidence
 
-- `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs`
-  - Passed: 95 tests, 0 failures.
-- `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/*.test.mjs`
-  - Passed: 110 tests, 0 failures.
-- `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node ../../node_modules/typescript/bin/tsc --noEmit`
-  - Passed: exit 0.
-- `git diff --check`
-  - Passed: no whitespace errors.
+Red (before production changes):
 
-## Compatibility notes
+```text
+/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs
+tests 162; pass 161; fail 1
+Failure: both renderers mark the shared arena zones and throttle the live zone HUD
+Missing import contract for getArenaZone.
+```
 
-- Core health remains untouched by all temporary-child actions; support children
-  still repair the player only.
-- Lifetime upgrades are rule-driven through the supplied `upgrades` argument;
-  no new upgrade purchase UI was introduced because Task 4 defines the lifetime
-  interface but no additional purchasable upgrade definition.
+Green (after implementation):
 
-## Review follow-up: spawn feedback
+```text
+/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs
+tests 162; pass 162; fail 0
+```
 
-- Added immediate spawn feedback in both `maybeSpawnTemporarySubAgent` paths:
-  a deployment ring and an eight-particle burst at the parent location after a
-  child has been successfully created. The WebGL child marker continues to use
-  `temporarySubAgentPool`; its existing expiry ring and pooled release remain
-  unchanged.
-- Added a source-contract regression test that scopes each renderer's spawn
-  method and requires both ring and burst feedback, plus the WebGL marker pool
-  acquisition contract.
+TypeScript:
 
-### Follow-up verification
+```text
+/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node node_modules/typescript/bin/tsc --noEmit
+exit 0
+```
 
-- `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/*.test.mjs`
-  - Passed: 111 tests, 0 failures.
-- `/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node ../../node_modules/typescript/bin/tsc --noEmit`
-  - Passed: exit 0.
-- `git diff --check`
-  - Passed: no whitespace errors.
+Lint of the changed TypeScript/tests had no errors. ESLint reported one existing configuration warning that `app/globals.css` is ignored because no matching configuration is supplied.
+
+Full suite:
+
+```text
+/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test tests/*.test.mjs
+tests 196; pass 195; fail 1
+```
+
+The sole failure is the pre-existing `tests/mobile-layout.test.mjs` source contract `keeps the recruitment dock interactive above workshop overlays`. It expects an `agent-dock` class prefix that does not match the unchanged class string in `HEAD`; this task does not alter that area.
+
+## Concerns / limitations
+
+- Desktop macro-camera visual inspection could not be performed locally: `scripts/build-verified.sh` requires GNU `timeout`, which is unavailable; direct `vinext build` is blocked by macOS rejecting the installed Rolldown native binding's code signature (`ERR_DLOPEN_FAILED`).
+- The same native binding prevents starting the local renderer for browser inspection. The renderer contract tests and TypeScript check passed, but a visual wave-one check remains for an environment with a valid build runtime.
