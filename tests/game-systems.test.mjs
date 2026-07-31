@@ -90,6 +90,7 @@ import {
   recruitWarbandSlot,
   tickAgentGathering,
 } from "../app/game/warband-rules.mjs";
+import { getRecruitmentAdvice } from "../app/game/recruitment-advisor-rules.mjs";
 import {
   AGENT_SKILLS,
   canUseSkill,
@@ -491,6 +492,158 @@ test("hostile projectile collisions cover agents, turrets, and repair bays", asy
   assert.deepEqual(
     findHostileProjectileHit({ ...projectile, x: 1.9 }, targets.slice(2)),
     targets[2],
+  );
+});
+
+test("recruitment advisor prioritizes Core danger over every recruitment opportunity", () => {
+  const input = {
+    coreHp: 40,
+    coreMaxHp: 100,
+    operatorHp: 100,
+    operatorMaxHp: 100,
+    threatCount: 1,
+    activeAgents: 1,
+    maxAgents: 4,
+    compute: 200,
+    candidates: [{ id: "kira", role: "assault", cost: { compute: 75 } }],
+  };
+
+  const advice = getRecruitmentAdvice(input);
+
+  assert.deepEqual(advice, {
+    state: "defend",
+    eyebrow: "DEFEND CORE",
+    title: "CORE IN DANGER",
+    detail: "Core integrity is critical. Stabilize the breach before recruiting.",
+    role: null,
+    agentId: null,
+    action: "defend",
+    cost: null,
+    missing: null,
+  });
+  assert.equal(Object.isFrozen(advice), true);
+  assert.deepEqual(input, {
+    coreHp: 40,
+    coreMaxHp: 100,
+    operatorHp: 100,
+    operatorMaxHp: 100,
+    threatCount: 1,
+    activeAgents: 1,
+    maxAgents: 4,
+    compute: 200,
+    candidates: [{ id: "kira", role: "assault", cost: { compute: 75 } }],
+  });
+});
+
+test("recruitment advisor repairs a critical operator before recruiting", () => {
+  assert.deepEqual(
+    getRecruitmentAdvice({
+      coreHp: 100,
+      coreMaxHp: 100,
+      operatorHp: 20,
+      operatorMaxHp: 100,
+      threatCount: 0,
+      activeAgents: 1,
+      maxAgents: 4,
+      compute: 200,
+      candidates: [{ id: "kira", role: "assault", cost: { compute: 75 } }],
+    }),
+    {
+      state: "repair",
+      eyebrow: "REPAIR FIRST",
+      title: "OPERATOR CRITICAL",
+      detail: "Operator integrity is critical. Recover before expanding the warband.",
+      role: null,
+      agentId: null,
+      action: "repair",
+      cost: null,
+      missing: null,
+    },
+  );
+});
+
+test("recruitment advisor recommends an affordable role-matched candidate", () => {
+  const advice = getRecruitmentAdvice({
+    coreHp: 100,
+    coreMaxHp: 100,
+    operatorHp: 100,
+    operatorMaxHp: 100,
+    threatCount: 2,
+    activeAgents: 1,
+    maxAgents: 4,
+    compute: 100,
+    candidates: [
+      { id: "kairos", role: "defend", matchesThreat: false, cost: { compute: 45 } },
+      { id: "kira", role: "assault", matchesThreat: true, cost: { compute: 75 } },
+    ],
+  });
+
+  assert.deepEqual(advice, {
+    state: "recruit",
+    eyebrow: "RECRUIT ADVISED",
+    title: "RECRUIT KIRA",
+    detail: "KIRA fills the assault role for the current threat.",
+    role: "assault",
+    agentId: "kira",
+    action: "recruit",
+    cost: { compute: 75, components: 0, shards: 0 },
+    missing: { compute: 0, components: 0, shards: 0 },
+  });
+  assert.equal(Object.isFrozen(advice.cost), true);
+  assert.equal(Object.isFrozen(advice.missing), true);
+});
+
+test("recruitment advisor holds Compute when the role match is unaffordable", () => {
+  assert.deepEqual(
+    getRecruitmentAdvice({
+      coreHp: 100,
+      coreMaxHp: 100,
+      operatorHp: 100,
+      operatorMaxHp: 100,
+      threatCount: 2,
+      activeAgents: 1,
+      maxAgents: 4,
+      compute: 50,
+      candidates: [{ id: "kira", role: "assault", matchesThreat: true, cost: { compute: 75 } }],
+    }),
+    {
+      state: "save",
+      eyebrow: "HOLD COMPUTE",
+      title: "SAVE FOR KIRA",
+      detail: "Need 25 more Compute to recruit KIRA.",
+      role: "assault",
+      agentId: "kira",
+      action: "save",
+      cost: { compute: 75, components: 0, shards: 0 },
+      missing: { compute: 25, components: 0, shards: 0 },
+    },
+  );
+});
+
+test("recruitment advisor saves Compute when no recruitment need remains", () => {
+  assert.deepEqual(
+    getRecruitmentAdvice({
+      coreHp: 100,
+      coreMaxHp: 100,
+      operatorHp: 100,
+      operatorMaxHp: 100,
+      threatCount: 0,
+      activeAgents: 4,
+      maxAgents: 4,
+      compute: 200,
+      candidates: [],
+    }),
+    {
+      state: "save",
+      eyebrow: "HOLD COMPUTE",
+      title: "SAVE COMPUTE",
+      detail: "No urgent recruitment need. Hold Compute for the next upgrade.",
+      role: null,
+      agentId: null,
+      action: "save",
+      cost: null,
+      missing: null,
+    },
   );
 });
 

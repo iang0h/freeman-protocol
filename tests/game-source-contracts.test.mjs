@@ -34,6 +34,10 @@ const combatPresentationRules = await readFile(
   new URL("../app/game/combat-presentation-rules.mjs", import.meta.url),
   "utf8",
 ).catch(() => "");
+const recruitmentAdvisorRules = await readFile(
+  new URL("../app/game/recruitment-advisor-rules.mjs", import.meta.url),
+  "utf8",
+).catch(() => "");
 const webglGame = game.slice(
   game.indexOf("class FreemanEngine"),
   game.indexOf("type FlatEnemy"),
@@ -50,6 +54,19 @@ test("combat presentation rules stay renderer-independent", () => {
   assert.match(combatPresentationRules, /export function getArenaZone/);
   assert.match(combatPresentationRules, /export function classifyCombatFeedback/);
   assert.doesNotMatch(combatPresentationRules, /from\s+["'][^"']*(?:three|FreemanProtocol)/i);
+});
+
+test("recruitment advisor rules stay pure and renderer-independent", () => {
+  assert.match(recruitmentAdvisorRules, /export function getRecruitmentAdvice/);
+  assert.match(recruitmentAdvisorRules, /Object\.freeze/);
+  assert.match(recruitmentAdvisorRules, /state: "defend"/);
+  assert.match(recruitmentAdvisorRules, /state: "repair"/);
+  assert.match(recruitmentAdvisorRules, /state: "recruit"/);
+  assert.match(recruitmentAdvisorRules, /state: "save"/);
+  assert.doesNotMatch(
+    recruitmentAdvisorRules,
+    /from\s+["'][^"']*(?:three|FreemanProtocol)/i,
+  );
 });
 
 test("both renderers mark the shared arena zones and throttle the live zone HUD", () => {
