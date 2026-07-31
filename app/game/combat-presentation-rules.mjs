@@ -55,11 +55,12 @@ function damageLabel(damage) {
 }
 
 export function createOverlayState() {
-  return { active: "closed" };
+  return Object.freeze({ active: "closed" });
 }
 
 export function toggleOverlay(state, next) {
-  return { active: state.active === next ? "closed" : next };
+  const active = OVERLAYS.includes(next) ? next : "closed";
+  return Object.freeze({ active: state?.active === active ? "closed" : active });
 }
 
 export function getArenaZone(position) {
@@ -68,25 +69,25 @@ export function getArenaZone(position) {
     z: Number.isFinite(position?.z) ? position.z : 0,
   };
 
-  if (distanceTo(point, REPAIR_BAY) <= REPAIR_BAY.radius) return { ...ARENA_ZONES.repair };
-  if (distanceTo(point, COMPUTE_NODE) <= COMPUTE_NODE.radius) return { ...ARENA_ZONES.compute };
-  if (Math.hypot(point.x, point.z) <= CORE_RADIUS) return { ...ARENA_ZONES.core };
-  if (point.z <= BOSS_PORTAL_Z) return { ...ARENA_ZONES["boss-portal"] };
-  if (point.z <= NORTH_BREACH_Z) return { ...ARENA_ZONES["north-breach"] };
-  if (point.z >= SOUTH_BREACH_Z) return { ...ARENA_ZONES["south-breach"] };
-  return { ...ARENA_ZONES.core };
+  if (distanceTo(point, REPAIR_BAY) <= REPAIR_BAY.radius) return Object.freeze({ ...ARENA_ZONES.repair });
+  if (distanceTo(point, COMPUTE_NODE) <= COMPUTE_NODE.radius) return Object.freeze({ ...ARENA_ZONES.compute });
+  if (Math.hypot(point.x, point.z) <= CORE_RADIUS) return Object.freeze({ ...ARENA_ZONES.core });
+  if (point.z <= BOSS_PORTAL_Z) return Object.freeze({ ...ARENA_ZONES["boss-portal"] });
+  if (point.z <= NORTH_BREACH_Z) return Object.freeze({ ...ARENA_ZONES["north-breach"] });
+  if (point.z >= SOUTH_BREACH_Z) return Object.freeze({ ...ARENA_ZONES["south-breach"] });
+  return Object.freeze({ ...ARENA_ZONES.core });
 }
 
 export function classifyCombatFeedback(event = {}) {
   const label = damageLabel(event.damage);
   if (event.kind === "core-warning" || event.target === "core") {
-    return { kind: "core-warning", emphasis: "urgent", label: `CORE HIT ${label}` };
+    return Object.freeze({ kind: "core-warning", emphasis: "urgent", label: `CORE HIT ${label}` });
   }
   if (event.kind === "kill" || event.killed) {
-    return { kind: "kill", emphasis: "strong", label: `KILL ${label}` };
+    return Object.freeze({ kind: "kill", emphasis: "strong", label: `KILL ${label}` });
   }
   if (event.kind === "critical" || event.critical) {
-    return { kind: "critical", emphasis: "strong", label: `CRITICAL ${label}` };
+    return Object.freeze({ kind: "critical", emphasis: "strong", label: `CRITICAL ${label}` });
   }
-  return { kind: "hit", emphasis: "standard", label };
+  return Object.freeze({ kind: "hit", emphasis: "standard", label });
 }

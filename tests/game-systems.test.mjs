@@ -144,9 +144,32 @@ test("combat presentation keeps one management overlay active at a time", () => 
   assert.notEqual(intel, initial);
   assert.deepEqual(toggleOverlay(intel, "warband"), { active: "warband" });
   assert.deepEqual(toggleOverlay(intel, "intel"), { active: "closed" });
+  assert.deepEqual(toggleOverlay(intel, "invalid"), { active: "closed" });
 });
 
-test("combat presentation assigns deterministic compact-arena zones", () => {
+test("combat presentation returns immutable state and feedback contracts", () => {
+  const initial = createOverlayState();
+  const toggled = toggleOverlay(initial, "intel");
+  const zone = getArenaZone({ x: 0, z: 0 });
+  const feedback = classifyCombatFeedback({ damage: 12 });
+
+  for (const [result, property, value] of [
+    [initial, "active", "intel"],
+    [toggled, "active", "warband"],
+    [zone, "label", "MUTATED"],
+    [feedback, "label", "MUTATED"],
+  ]) {
+    assert.throws(() => {
+      result[property] = value;
+    }, TypeError);
+  }
+  assert.deepEqual(createOverlayState(), { active: "closed" });
+  assert.deepEqual(toggleOverlay(initial, "intel"), { active: "intel" });
+  assert.equal(getArenaZone({ x: 0, z: 0 }).label, "CORE CHAMBER");
+  assert.equal(classifyCombatFeedback({ damage: 12 }).label, "12");
+});
+
+test("combat presentation assigns deterministic compact-arena zone boundaries", () => {
   assert.deepEqual(getArenaZone({ x: 0, z: 0 }), {
     id: "core",
     label: "CORE CHAMBER",
@@ -158,6 +181,16 @@ test("combat presentation assigns deterministic compact-arena zones", () => {
   assert.equal(getArenaZone({ x: 0, z: -5 }).id, "north-breach");
   assert.equal(getArenaZone({ x: 0, z: 5 }).id, "south-breach");
   assert.equal(getArenaZone({ x: 0, z: -7 }).id, "boss-portal");
+  assert.equal(getArenaZone({ x: -1.85, z: 1.15 }).id, "repair");
+  assert.equal(getArenaZone({ x: -1.849, z: 1.15 }).id, "core");
+  assert.equal(getArenaZone({ x: 4.35, z: 1.15 }).id, "compute");
+  assert.equal(getArenaZone({ x: 4.351, z: 1.15 }).id, "core");
+  assert.equal(getArenaZone({ x: 1.75, z: 0 }).id, "core");
+  assert.equal(getArenaZone({ x: 1.751, z: 0 }).id, "core");
+  assert.equal(getArenaZone({ x: 0, z: -4 }).id, "north-breach");
+  assert.equal(getArenaZone({ x: 0, z: -3.999 }).id, "core");
+  assert.equal(getArenaZone({ x: 0, z: 4 }).id, "south-breach");
+  assert.equal(getArenaZone({ x: 0, z: 3.999 }).id, "core");
   assert.equal(
     getArenaZone({ x: 0, z: -6 }).id,
     "boss-portal",
