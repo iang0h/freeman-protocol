@@ -134,6 +134,25 @@ test("keeps mobile type readable and removes secondary overlay telemetry", () =>
   assert.match(game, /className="agent-metrics"/);
 });
 
+test("keeps the Intel overlay reachable on mobile", () => {
+  assert.match(
+    game,
+    /className=\{`vitals-panel intel-overlay \$\{overlayState\.active === "intel" \? "is-active" : ""\}`\}/,
+  );
+  assert.doesNotMatch(
+    styles,
+    /@media \(max-width: 820px\)\s*\{\s*\.vitals-panel\s*\{\s*display:\s*none;/,
+  );
+  assert.match(
+    styles,
+    /\.vitals-panel\.intel-overlay:not\(\.is-active\)\s*\{\s*display:\s*none;/,
+  );
+  assert.match(
+    styles,
+    /\.vitals-panel\.intel-overlay\.is-active\s*\{[\s\S]*?display:\s*grid/,
+  );
+});
+
 test("applies the compact status rules through the 820px mobile boundary", () => {
   assert.doesNotMatch(styles, /@media \(max-width: 760px\)/);
   assert.match(

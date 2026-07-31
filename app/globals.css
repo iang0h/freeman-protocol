@@ -3172,8 +3172,22 @@ canvas:focus-visible {
 }
 
 @media (max-width: 820px) {
-  .vitals-panel {
+  .vitals-panel.intel-overlay:not(.is-active) {
     display: none;
+  }
+
+  .vitals-panel.intel-overlay.is-active {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 145px);
+    right: 10px;
+    bottom: calc(env(safe-area-inset-bottom) + 66px);
+    left: 10px;
+    z-index: 31;
+    display: grid;
+    width: auto;
+    max-height: none;
+    overflow-y: auto;
+    pointer-events: auto;
   }
 
   .combat-hud__status {

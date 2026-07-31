@@ -40,3 +40,16 @@ A focused review found that the initial 760px-only rules missed the project’s 
 ## Commit
 
 `feat: simplify mobile combat HUD`
+
+## Follow-up review fix: mobile Intel availability
+
+- Replaced the broad mobile `.vitals-panel { display: none; }` rule with an inactive-overlay selector. Mobile Intel is hidden only while inactive and becomes a scrollable, pointer-enabled overlay when `.intel-overlay.is-active` is set.
+- Kept the compact live status and its hidden secondary telemetry intact; opening Intel still exposes the primary panel rather than leaving the user without a management surface.
+- Added a mobile source-layout contract for the active Intel selector and updated the rendered HTML source contract to expect `progression-telemetry secondary-telemetry`.
+
+### Follow-up verification
+
+- Bundled Node `node --test tests/mobile-layout.test.mjs`: `27 pass, 0 fail`.
+- Bundled Node `node --test tests/rendered-html.test.mjs`: `5 pass, 0 fail`.
+- Bundled Node `node --test tests/*.test.mjs`: `202 pass, 0 fail`.
+- `git diff --check`: passed after restoring generated TypeScript state.

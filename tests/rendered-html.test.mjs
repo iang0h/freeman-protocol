@@ -95,7 +95,7 @@ test("HUD source surfaces the progression and encounter telemetry from both engi
   for (const field of ["temporarySubAgents", "terrainLabel", "empResistance"]) {
     assert.ok((game.match(new RegExp(`${field}:`, "g")) ?? []).length >= 3);
   }
-  assert.match(game, /className="progression-telemetry"/);
+  assert.match(game, /className="progression-telemetry secondary-telemetry"/);
   assert.match(game, /prefers-reduced-motion: reduce/);
 });
 
