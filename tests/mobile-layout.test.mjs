@@ -192,11 +192,27 @@ test("applies the compact status rules through the 820px mobile boundary", () =>
   assert.doesNotMatch(styles, /@media \(max-width: 760px\)/);
   assert.match(
     styles,
-    /@media \(max-width: 820px\)[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)[\s\S]*?min-height:\s*92px/,
+    /@media \(max-width: 820px\)[\s\S]*?grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)[\s\S]*?min-height:\s*52px/,
   );
   assert.match(
     styles,
     /@media \(max-width: 820px\) and \(orientation: landscape\)[\s\S]*?grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/,
+  );
+});
+
+test("gives Watch Mode its own compact mobile spectator surface", () => {
+  assert.match(game, /hud\.sessionMode === "watch"/);
+  assert.match(
+    styles,
+    /\.game-shell:has\(\.watch-panel\) \.combat-hud__advisor,[\s\S]*?\.game-shell:has\(\.watch-panel\) \.mobile-action-tray,[\s\S]*?display:\s*none !important/,
+  );
+  assert.match(
+    styles,
+    /\.game-shell:has\(\.watch-panel\) \.watch-panel\s*\{[\s\S]*?bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 10px\)[\s\S]*?max-height:\s*min\(28dvh, 220px\)/,
+  );
+  assert.match(
+    styles,
+    /\.game-shell:has\(\.watch-panel\) \.watch-panel__metrics\s*\{[\s\S]*?grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)/,
   );
 });
 
