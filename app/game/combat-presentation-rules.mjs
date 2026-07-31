@@ -75,7 +75,9 @@ export function getArenaZone(position) {
   if (point.z <= BOSS_PORTAL_Z) return Object.freeze({ ...ARENA_ZONES["boss-portal"] });
   if (point.z <= NORTH_BREACH_Z) return Object.freeze({ ...ARENA_ZONES["north-breach"] });
   if (point.z >= SOUTH_BREACH_Z) return Object.freeze({ ...ARENA_ZONES["south-breach"] });
-  return Object.freeze({ ...ARENA_ZONES.core });
+  return Object.freeze({
+    ...(point.z < 0 ? ARENA_ZONES["north-breach"] : ARENA_ZONES["south-breach"]),
+  });
 }
 
 export function classifyCombatFeedback(event = {}) {
