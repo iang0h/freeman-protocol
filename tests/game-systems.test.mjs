@@ -182,15 +182,15 @@ test("combat presentation assigns deterministic compact-arena zone boundaries", 
   assert.equal(getArenaZone({ x: 0, z: 5 }).id, "south-breach");
   assert.equal(getArenaZone({ x: 0, z: -7 }).id, "boss-portal");
   assert.equal(getArenaZone({ x: -1.85, z: 1.15 }).id, "repair");
-  assert.equal(getArenaZone({ x: -1.849, z: 1.15 }).id, "south-breach");
+  assert.equal(getArenaZone({ x: -1.849, z: 1.15 }).id, "repair");
   assert.equal(getArenaZone({ x: 4.35, z: 1.15 }).id, "compute");
-  assert.equal(getArenaZone({ x: 4.351, z: 1.15 }).id, "south-breach");
+  assert.equal(getArenaZone({ x: 4.351, z: 1.15 }).id, "compute");
   assert.equal(getArenaZone({ x: 1.75, z: 0 }).id, "core");
-  assert.equal(getArenaZone({ x: 1.751, z: 0 }).id, "south-breach");
+  assert.equal(getArenaZone({ x: 1.751, z: 0 }).id, "compute");
   assert.equal(getArenaZone({ x: 0, z: -4 }).id, "north-breach");
-  assert.equal(getArenaZone({ x: 0, z: -3.999 }).id, "north-breach");
+  assert.equal(getArenaZone({ x: 0, z: -3.999 }).id, "compute");
   assert.equal(getArenaZone({ x: 0, z: 4 }).id, "south-breach");
-  assert.equal(getArenaZone({ x: 0, z: 3.999 }).id, "south-breach");
+  assert.equal(getArenaZone({ x: 0, z: 3.999 }).id, "compute");
   assert.equal(
     getArenaZone({ x: 0, z: -6 }).id,
     "boss-portal",

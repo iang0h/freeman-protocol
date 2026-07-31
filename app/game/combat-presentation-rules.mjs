@@ -76,7 +76,7 @@ export function getArenaZone(position) {
   if (point.z <= NORTH_BREACH_Z) return Object.freeze({ ...ARENA_ZONES["north-breach"] });
   if (point.z >= SOUTH_BREACH_Z) return Object.freeze({ ...ARENA_ZONES["south-breach"] });
   return Object.freeze({
-    ...(point.z < 0 ? ARENA_ZONES["north-breach"] : ARENA_ZONES["south-breach"]),
+    ...(point.x < 0 ? ARENA_ZONES.repair : ARENA_ZONES.compute),
   });
 }
 
