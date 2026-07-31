@@ -14,6 +14,7 @@ import {
   resolveArmoredDamage,
   remainingThreats,
 } from "./game/combat-rules.mjs";
+import { classifyCombatFeedback } from "./game/combat-presentation-rules.mjs";
 import {
   EMP_BASE_DAMAGE,
   canFireEmp,
@@ -159,6 +160,7 @@ type SquadCommand = "auto" | "follow" | "defend" | "focus";
 type MobilePanel = "command" | "defend" | "skills";
 type CameraPresentation = "macro" | "tactical";
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
+type CombatFeedbackEmphasis = "standard" | "strong" | "urgent";
 type UpgradeId =
   "overclock" | "bastion" | "bandwidth" | "voltage" | "repair" | "command";
 type EnemyType = "virus" | "phisher" | "trojan" | "rootkit";
@@ -282,6 +284,16 @@ const SPAWN_RADIUS = 15.2;
 const TUTORIAL_STORAGE_KEY = "freeman-tutorial-complete";
 const MAX_TEMPORARY_SUB_AGENTS_PER_PARENT = 4;
 const TOUCH_SAFE_PICKUP_RADIUS = 0.75;
+const MAX_COMBAT_EFFECTS = 96;
+const MAX_COMBAT_COMBO = 99;
+const COMBAT_COMBO_WINDOW_SECONDS = 1.4;
+
+const combatFeedbackColor = (emphasis: CombatFeedbackEmphasis) =>
+  emphasis === "urgent"
+    ? 0xff6f61
+    : emphasis === "strong"
+      ? 0xffd166
+      : 0xffbc8d;
 
 const AUTONOMY_ROLES: Record<AgentId, AutonomyRole> = {
   kairos: "defend",
@@ -518,7 +530,7 @@ type EffectRuntime = {
   object: THREE.Object3D;
   life: number;
   maxLife: number;
-  kind: "ring" | "beam" | "burst" | "portal" | "text";
+  kind: "ring" | "beam" | "burst" | "portal" | "text" | "slash";
 };
 
 type LootRuntime = LootRecord & { mesh: THREE.Group };
@@ -1154,6 +1166,8 @@ class FreemanEngine {
   private readonly pickups: LootRuntime[] = [];
   private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly aimPoint = new THREE.Vector3(0, 0, -4);
+  private readonly aimReticle: THREE.Mesh;
+  private readonly aimLine: THREE.Line;
   private readonly lastMove = new THREE.Vector3(0, 0, -1);
   private readonly touchMove = new THREE.Vector2();
   private readonly cameraTarget = new THREE.Vector3();
@@ -1239,6 +1253,8 @@ class FreemanEngine {
   private placementGhost: THREE.Group | null = null;
   private playerMoving = false;
   private hitStop = 0;
+  private combatCombo = 0;
+  private combatComboLife = 0;
   private tutorialStep: TutorialStep | null = null;
   private tutorialMoveDistance = 0;
   private tutorialKills = 0;
@@ -1286,6 +1302,9 @@ class FreemanEngine {
     this.core = this.buildCore();
     this.repairBay = this.buildRepairBay();
     this.player = this.buildOperator();
+    const targetingPresentation = this.buildTargetingPresentation();
+    this.aimReticle = targetingPresentation.reticle;
+    this.aimLine = targetingPresentation.line;
     void this.attachOperatorRig();
     this.applyToonMaterialPass();
     this.bindEvents();
@@ -1403,6 +1422,8 @@ class FreemanEngine {
     this.tutorialResolved = false;
     this.cancelDefensePlacement(false);
     this.hitStop = 0;
+    this.combatCombo = 0;
+    this.combatComboLife = 0;
     this.watchRecoveryClock = 0;
     this.reinforcementClock = 0;
     this.reinforcementsRemaining = 0;
@@ -2034,13 +2055,16 @@ class FreemanEngine {
     const slashCenter = origin
       .clone()
       .add(direction.clone().multiplyScalar(1.15));
-    this.addRing(slashCenter, 0xffb277, 0.3, 2.5, 0.3, "portal");
+    this.addSlashArc(origin, direction, 0xffb277);
     this.addBurst(
       slashCenter.clone().add(new THREE.Vector3(0, 0.45, 0)),
       hits > 0 ? 0xffd2ad : 0xd9793f,
       hits > 0 ? 13 : 7,
     );
-    this.shake = Math.max(this.shake, hits > 0 ? 0.2 : 0.08);
+    this.shake = Math.max(
+      this.shake,
+      this.reducedMotion ? 0.025 : hits > 0 ? 0.2 : 0.08,
+    );
     this.audio.play("attack");
   }
 
@@ -2333,6 +2357,72 @@ class FreemanEngine {
       for (const material of materials) material?.dispose();
     });
     this.renderer.dispose();
+  }
+
+  private buildTargetingPresentation() {
+    const reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.34, 0.43, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xffd2ad,
+        transparent: true,
+        opacity: 0.92,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        depthTest: false,
+      }),
+    );
+    reticle.name = "operator-aim-reticle";
+    reticle.rotation.x = -Math.PI / 2;
+    reticle.renderOrder = 8;
+    this.scene.add(reticle);
+
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(),
+        new THREE.Vector3(),
+      ]),
+      new THREE.LineBasicMaterial({
+        color: 0xffb277,
+        transparent: true,
+        opacity: 0.82,
+        depthTest: false,
+      }),
+    );
+    line.name = "operator-aim-line";
+    line.renderOrder = 8;
+    this.scene.add(line);
+    return { reticle, line };
+  }
+
+  private updateTargetingPresentation() {
+    const visible = this.mode === "playing" && !this.placementActive;
+    this.aimReticle.visible = visible;
+    this.aimLine.visible = visible;
+    if (!visible) return;
+
+    const target = this.resolveAim().setY(0.08);
+    this.aimReticle.position.copy(target);
+    this.aimReticle.scale.setScalar(
+      this.reducedMotion ? 1 : 1 + Math.sin(this.elapsed * 8) * 0.08,
+    );
+
+    const direction = target
+      .clone()
+      .sub(this.player.group.position)
+      .setY(0);
+    const distance = direction.length();
+    if (distance > 0.001) direction.divideScalar(distance);
+    const start = target
+      .clone()
+      .addScaledVector(direction, -Math.min(1.35, distance))
+      .setY(0.1);
+    const positions = this.aimLine.geometry.getAttribute(
+      "position",
+    ) as THREE.BufferAttribute;
+    positions.setXYZ(0, start.x, start.y, start.z);
+    positions.setXYZ(1, target.x, target.y + 0.02, target.z);
+    positions.needsUpdate = true;
+    this.aimLine.geometry.computeBoundingSphere();
   }
 
   private buildWorld() {
@@ -3989,6 +4079,7 @@ class FreemanEngine {
     }
     this.updateEffects(rawDelta);
     this.updateCamera(rawDelta);
+    this.updateTargetingPresentation();
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -5359,6 +5450,8 @@ class FreemanEngine {
   }
 
   private updateEffects(delta: number) {
+    this.combatComboLife = Math.max(0, this.combatComboLife - delta);
+    if (this.combatComboLife === 0) this.combatCombo = 0;
     for (let index = this.effects.length - 1; index >= 0; index -= 1) {
       const effect = this.effects[index];
       effect.life -= delta;
@@ -5374,7 +5467,7 @@ class FreemanEngine {
           effect.object.rotation.z += delta * 2.8;
         }
       }
-      if (effect.kind === "beam") {
+      if (effect.kind === "beam" || effect.kind === "slash") {
         const material = (effect.object as THREE.Line)
           .material as THREE.LineBasicMaterial;
         material.opacity = Math.max(0, 1 - progress);
@@ -5542,10 +5635,16 @@ class FreemanEngine {
       if (isWatchMode(this.sessionMode) && this.core.hp <= 0) {
         if (!this.triggerWatchRecovery()) this.core.hp = 8;
       }
+      const feedback = classifyCombatFeedback({
+        kind: "core-warning",
+        damage,
+        critical: false,
+        target: "core",
+      });
       this.addDamageNumber(
         this.core.group.position.clone().add(new THREE.Vector3(0, 2.55, 0)),
-        `-${Math.round(damage)}`,
-        0xff8a68,
+        feedback.label,
+        feedback.emphasis,
       );
       this.addBurst(
         this.core.group.position.clone().add(new THREE.Vector3(0, 1, 0)),
@@ -5658,13 +5757,25 @@ class FreemanEngine {
     enemy.hp -= appliedDamage;
     if (enemy.bossState) enemy.bossState.hp = enemy.hp;
     enemy.hitFlash = 0.11;
+    const critical =
+      enemy.markedLeft > 0 ||
+      appliedDamage >= Math.max(18, enemy.maxHp * 0.24);
+    const kind = enemy.hp <= 0 ? "kill" : critical ? "critical" : "hit";
+    const feedback = classifyCombatFeedback({
+      kind,
+      damage: appliedDamage,
+      critical,
+      target: "enemy",
+    });
+    const feedbackPosition = enemy.group.position
+      .clone()
+      .add(new THREE.Vector3(0, enemy.radius * 2 + 0.45, 0));
     this.addDamageNumber(
-      enemy.group.position
-        .clone()
-        .add(new THREE.Vector3(0, enemy.radius * 2 + 0.45, 0)),
-      `${armoured ? "ARMOR " : ""}${Math.round(appliedDamage)}`,
-      armoured ? 0x9ed8dd : 0xffbc8d,
+      feedbackPosition,
+      armoured ? `ARMOR ${feedback.label}` : feedback.label,
+      feedback.emphasis,
     );
+    this.registerCombatCombo(feedbackPosition);
     if (enemy.type !== "rootkit") {
       const knockback = enemy.group.position.clone().sub(hitPosition).setY(0);
       if (knockback.lengthSq() < 0.02) {
@@ -5675,7 +5786,11 @@ class FreemanEngine {
       }
       if (knockback.lengthSq() > 0.001) {
         enemy.group.position.add(
-          knockback.normalize().multiplyScalar(armoured ? 0.05 : 0.13),
+          knockback
+            .normalize()
+            .multiplyScalar(
+              this.reducedMotion ? 0.025 : armoured ? 0.05 : 0.13,
+            ),
         );
         this.clampToArena(enemy.group.position, 12.2);
       }
@@ -5683,7 +5798,11 @@ class FreemanEngine {
     const ratio = clamp01(enemy.hp / enemy.maxHp);
     enemy.healthFill.scale.x = Math.max(0.001, ratio);
     enemy.healthFill.position.x = -0.59 * (1 - ratio);
-    this.addBurst(hitPosition, 0xe77d44, 5);
+    this.addBurst(
+      hitPosition,
+      feedback.kind === "critical" ? 0xffd166 : 0xe77d44,
+      feedback.kind === "kill" ? 14 : feedback.kind === "critical" ? 9 : 6,
+    );
     this.hitStop = Math.max(this.hitStop, enemy.hp <= 0 ? 0.055 : 0.018);
     this.shake = Math.max(
       this.shake,
@@ -5838,6 +5957,26 @@ class FreemanEngine {
     );
   }
 
+  private pushEffect(effect: EffectRuntime) {
+    while (this.effects.length >= MAX_COMBAT_EFFECTS) {
+      const expired = this.effects.shift();
+      if (expired) this.disposeDynamicObject(expired.object);
+    }
+    this.effects.push(effect);
+  }
+
+  private registerCombatCombo(position: THREE.Vector3) {
+    if (this.combatComboLife <= 0) this.combatCombo = 0;
+    this.combatCombo = Math.min(MAX_COMBAT_COMBO, this.combatCombo + 1);
+    this.combatComboLife = COMBAT_COMBO_WINDOW_SECONDS;
+    if (this.combatCombo < 2) return;
+    this.addDamageNumber(
+      position.clone().add(new THREE.Vector3(0, 0.42, 0)),
+      `×${this.combatCombo} COMBO`,
+      "strong",
+    );
+  }
+
   private addRing(
     position: THREE.Vector3,
     color: number,
@@ -5869,7 +6008,7 @@ class FreemanEngine {
       maxLife: duration,
       kind,
     };
-    this.effects.push(effect);
+    this.pushEffect(effect);
     const animateScale = () => {
       if (!this.effects.includes(effect)) return;
       const progress = 1 - effect.life / effect.maxLife;
@@ -5896,11 +6035,45 @@ class FreemanEngine {
       }),
     );
     this.scene.add(line);
-    this.effects.push({
+    this.pushEffect({
       object: line,
       life: duration,
       maxLife: duration,
       kind: "beam",
+    });
+  }
+
+  private addSlashArc(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    color: number,
+  ) {
+    const center = origin.clone().addScaledVector(direction, 1.15).setY(0.68);
+    const facing = Math.atan2(direction.z, direction.x);
+    const points = Array.from({ length: 13 }, (_, index) => {
+      const angle = facing - 1.05 + (index / 12) * 2.1;
+      return new THREE.Vector3(
+        center.x + Math.cos(angle) * 1.25,
+        center.y + Math.sin((index / 12) * Math.PI) * 0.34,
+        center.z + Math.sin(angle) * 1.25,
+      );
+    });
+    const slash = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.94,
+        depthTest: false,
+      }),
+    );
+    slash.renderOrder = 7;
+    this.scene.add(slash);
+    this.pushEffect({
+      object: slash,
+      life: this.reducedMotion ? 0.16 : 0.28,
+      maxLife: this.reducedMotion ? 0.16 : 0.28,
+      kind: "slash",
     });
   }
 
@@ -5922,7 +6095,7 @@ class FreemanEngine {
       group.add(shard);
     }
     this.scene.add(group);
-    this.effects.push({
+    this.pushEffect({
       object: group,
       life: 0.55,
       maxLife: 0.55,
@@ -5933,7 +6106,7 @@ class FreemanEngine {
   private addDamageNumber(
     position: THREE.Vector3,
     label: string,
-    color: number,
+    color: number | CombatFeedbackEmphasis,
   ) {
     const canvas = document.createElement("canvas");
     canvas.width = 256;
@@ -5947,7 +6120,9 @@ class FreemanEngine {
     context.lineWidth = 8;
     context.strokeStyle = "rgba(4,8,10,.92)";
     context.strokeText(label, 128, 48);
-    context.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
+    const resolvedColor =
+      typeof color === "number" ? color : combatFeedbackColor(color);
+    context.fillStyle = `#${resolvedColor.toString(16).padStart(6, "0")}`;
     context.fillText(label, 128, 48);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -5962,7 +6137,7 @@ class FreemanEngine {
     sprite.position.copy(position);
     sprite.scale.set(2.4, 0.9, 1);
     this.scene.add(sprite);
-    this.effects.push({
+    this.pushEffect({
       object: sprite,
       life: 0.72,
       maxLife: 0.72,
@@ -6574,6 +6749,7 @@ type FlatEnemy = {
   slow: number;
   slowMultiplier: number;
   bossPhase: number;
+  hitFlash: number;
   tutorial: boolean;
   resistanceFlags: ResistanceFlag[];
   decoyOwnerId: number | null;
@@ -6644,7 +6820,7 @@ type FlatParticle = {
 };
 
 type FlatEffect = {
-  kind: "ring" | "beam" | "burst";
+  kind: "ring" | "beam" | "burst" | "slash" | "text";
   x: number;
   z: number;
   x2: number;
@@ -6655,6 +6831,8 @@ type FlatEffect = {
   radiusStart: number;
   radiusEnd: number;
   particles: FlatParticle[];
+  label?: string;
+  emphasis?: CombatFeedbackEmphasis;
 };
 
 const toCssColor = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
@@ -6790,6 +6968,8 @@ class FreemanCanvasEngine implements GameController {
   private dragX = 0;
   private reducedMotion = false;
   private shake = 0;
+  private combatCombo = 0;
+  private combatComboLife = 0;
   private hasPointerAim = false;
   private touchAimActive = false;
   private touchMovePointer: number | null = null;
@@ -6905,6 +7085,8 @@ class FreemanCanvasEngine implements GameController {
     this.tutorialKills = 0;
     this.tutorialResolved = false;
     this.placementActive = false;
+    this.combatCombo = 0;
+    this.combatComboLife = 0;
     this.waveActive = false;
     this.waveEndClock = 0;
     this.watchRecoveryClock = 0;
@@ -7433,14 +7615,17 @@ class FreemanCanvasEngine implements GameController {
     }
     const slashX = this.player.x + dx * 1.15;
     const slashZ = this.player.z + dz * 1.15;
-    this.addRing(slashX, slashZ, 0xffb277, 0.3, 2.5, 0.3);
+    this.addSlashArc(this.player.x, this.player.z, dx, dz, 0xffb277);
     this.addBurst(
       slashX,
       slashZ,
       hits > 0 ? 0xffd2ad : 0xd9793f,
       hits > 0 ? 13 : 7,
     );
-    this.shake = Math.max(this.shake, hits > 0 ? 0.22 : 0.08);
+    this.shake = Math.max(
+      this.shake,
+      this.reducedMotion ? 0.025 : hits > 0 ? 0.22 : 0.08,
+    );
     this.audio.play("attack");
   }
 
@@ -8722,6 +8907,7 @@ class FreemanCanvasEngine implements GameController {
       enemy.markedLeft = Math.max(0, enemy.markedLeft - delta);
       enemy.armorBrokenLeft = Math.max(0, enemy.armorBrokenLeft - delta);
       if (enemy.armorBrokenLeft === 0) enemy.armorBreakReduction = 0;
+      enemy.hitFlash = Math.max(0, enemy.hitFlash - delta);
       if (enemy.decoyOwnerId !== null) {
         enemy.decoyLeft -= delta;
         const ownerActive = this.enemies.some(
@@ -9038,6 +9224,8 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private updateEffects(delta: number) {
+    this.combatComboLife = Math.max(0, this.combatComboLife - delta);
+    if (this.combatComboLife === 0) this.combatCombo = 0;
     for (const effect of [...this.effects]) {
       effect.life -= delta;
       if (effect.kind === "burst") {
@@ -9178,6 +9366,7 @@ class FreemanCanvasEngine implements GameController {
         | "slow"
         | "slowMultiplier"
         | "bossPhase"
+        | "hitFlash"
         | "tutorial"
         | "resistanceFlags"
         | "decoyOwnerId"
@@ -9288,6 +9477,7 @@ class FreemanCanvasEngine implements GameController {
       slow: 0,
       slowMultiplier: 0.48,
       bossPhase: bossState ? 0 : type === "rootkit" ? 1 : 0,
+      hitFlash: 0,
       tutorial: options.tutorial ?? false,
       resistanceFlags,
       decoyOwnerId: options.decoyOwnerId ?? null,
@@ -9507,6 +9697,18 @@ class FreemanCanvasEngine implements GameController {
       if (isWatchMode(this.sessionMode) && this.core.hp <= 0) {
         if (!this.triggerWatchRecovery()) this.core.hp = 8;
       }
+      const feedback = classifyCombatFeedback({
+        kind: "core-warning",
+        damage,
+        critical: false,
+        target: "core",
+      });
+      this.addDamageNumber(
+        this.core.x,
+        this.core.z,
+        feedback.label,
+        feedback.emphasis,
+      );
       this.addBurst(this.core.x, this.core.z, 0xb7422e, 8);
     }
     this.shake = Math.max(this.shake, this.reducedMotion ? 0.03 : 0.2);
@@ -9591,7 +9793,43 @@ class FreemanCanvasEngine implements GameController {
     });
     enemy.hp -= appliedDamage;
     if (enemy.bossState) enemy.bossState.hp = enemy.hp;
-    this.addBurst(enemy.x, enemy.z, 0xe77d44, 5);
+    enemy.hitFlash = 0.11;
+    const critical =
+      enemy.markedLeft > 0 ||
+      appliedDamage >= Math.max(18, enemy.maxHp * 0.24);
+    const kind = enemy.hp <= 0 ? "kill" : critical ? "critical" : "hit";
+    const feedback = classifyCombatFeedback({
+      kind,
+      damage: appliedDamage,
+      critical,
+      target: "enemy",
+    });
+    this.addDamageNumber(
+      enemy.x,
+      enemy.z,
+      armoured ? `ARMOR ${feedback.label}` : feedback.label,
+      feedback.emphasis,
+    );
+    this.registerCombatCombo(enemy.x, enemy.z);
+    if (enemy.type !== "rootkit") {
+      const dx = enemy.x - this.player.x;
+      const dz = enemy.z - this.player.z;
+      const distance = Math.hypot(dx, dz) || 1;
+      const knockback = this.reducedMotion
+        ? 0.025
+        : armoured
+          ? 0.05
+          : 0.13;
+      enemy.x += (dx / distance) * knockback;
+      enemy.z += (dz / distance) * knockback;
+      this.clampToArena(enemy, 12.2);
+    }
+    this.addBurst(
+      enemy.x,
+      enemy.z,
+      feedback.kind === "critical" ? 0xffd166 : 0xe77d44,
+      feedback.kind === "kill" ? 14 : feedback.kind === "critical" ? 9 : 6,
+    );
     this.audio.play("hit");
     if (enemy.hp > 0) return;
     if (enemy.bossState) {
@@ -9701,6 +9939,19 @@ class FreemanCanvasEngine implements GameController {
     this.pickups.length = 0;
   }
 
+  private pushEffect(effect: FlatEffect) {
+    while (this.effects.length >= MAX_COMBAT_EFFECTS) this.effects.shift();
+    this.effects.push(effect);
+  }
+
+  private registerCombatCombo(x: number, z: number) {
+    if (this.combatComboLife <= 0) this.combatCombo = 0;
+    this.combatCombo = Math.min(MAX_COMBAT_COMBO, this.combatCombo + 1);
+    this.combatComboLife = COMBAT_COMBO_WINDOW_SECONDS;
+    if (this.combatCombo < 2) return;
+    this.addDamageNumber(x, z, `×${this.combatCombo} COMBO`, "strong");
+  }
+
   private addRing(
     x: number,
     z: number,
@@ -9709,7 +9960,7 @@ class FreemanCanvasEngine implements GameController {
     radiusEnd: number,
     duration: number,
   ) {
-    this.effects.push({
+    this.pushEffect({
       kind: "ring",
       x,
       z,
@@ -9732,7 +9983,7 @@ class FreemanCanvasEngine implements GameController {
     color: number,
     duration: number,
   ) {
-    this.effects.push({
+    this.pushEffect({
       kind: "beam",
       x,
       z,
@@ -9762,7 +10013,7 @@ class FreemanCanvasEngine implements GameController {
         vy: 0.6 + (index % 5) * 0.17,
       });
     }
-    this.effects.push({
+    this.pushEffect({
       kind: "burst",
       x,
       z,
@@ -9774,6 +10025,52 @@ class FreemanCanvasEngine implements GameController {
       radiusStart: 0,
       radiusEnd: 0,
       particles,
+    });
+  }
+
+  private addSlashArc(
+    x: number,
+    z: number,
+    dx: number,
+    dz: number,
+    color: number,
+  ) {
+    const duration = this.reducedMotion ? 0.16 : 0.28;
+    this.pushEffect({
+      kind: "slash",
+      x,
+      z,
+      x2: dx,
+      z2: dz,
+      life: duration,
+      maxLife: duration,
+      color: toCssColor(color),
+      radiusStart: 0.45,
+      radiusEnd: 2.1,
+      particles: [],
+    });
+  }
+
+  private addDamageNumber(
+    x: number,
+    z: number,
+    label: string,
+    emphasis: CombatFeedbackEmphasis,
+  ) {
+    this.pushEffect({
+      kind: "text",
+      x,
+      z,
+      x2: x,
+      z2: z,
+      life: 0.72,
+      maxLife: 0.72,
+      color: toCssColor(combatFeedbackColor(emphasis)),
+      radiusStart: 0,
+      radiusEnd: 0,
+      particles: [],
+      label,
+      emphasis,
     });
   }
 
@@ -10044,6 +10341,7 @@ class FreemanCanvasEngine implements GameController {
     this.drawPlatform();
     if (this.tutorialMarker) this.drawTutorialMarker();
     if (this.placementActive) this.drawPlacementPreview();
+    else this.drawTargetingPresentation();
 
     const drawables: Array<{
       depth: number;
@@ -10280,6 +10578,43 @@ class FreemanCanvasEngine implements GameController {
       center.x,
       center.y,
     );
+    context.restore();
+  }
+
+  private drawTargetingPresentation() {
+    if (this.mode !== "playing") return;
+    const target = this.resolveAim();
+    const targetPoint = this.project(target.x, target.z, 0.08);
+    const dx = target.x - this.player.x;
+    const dz = target.z - this.player.z;
+    const distance = Math.hypot(dx, dz) || 1;
+    const lineStart = this.project(
+      target.x - (dx / distance) * Math.min(1.35, distance),
+      target.z - (dz / distance) * Math.min(1.35, distance),
+      0.1,
+    );
+    const radius =
+      Math.max(7, targetPoint.scale * 0.38) *
+      (this.reducedMotion ? 1 : 1 + Math.sin(this.elapsed * 8) * 0.08);
+    const context = this.context;
+    context.save();
+    context.strokeStyle = "#ffd2ad";
+    context.shadowColor = "#ff9d68";
+    context.shadowBlur = 10;
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(lineStart.x, lineStart.y);
+    context.lineTo(targetPoint.x, targetPoint.y);
+    context.stroke();
+    context.beginPath();
+    context.arc(targetPoint.x, targetPoint.y, radius, 0, Math.PI * 2);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(targetPoint.x - radius - 5, targetPoint.y);
+    context.lineTo(targetPoint.x - radius + 2, targetPoint.y);
+    context.moveTo(targetPoint.x + radius - 2, targetPoint.y);
+    context.lineTo(targetPoint.x + radius + 5, targetPoint.y);
+    context.stroke();
     context.restore();
   }
 
@@ -10953,7 +11288,9 @@ class FreemanCanvasEngine implements GameController {
     context.shadowColor = color;
     context.shadowBlur = enemy.type === "rootkit" ? 36 : 22;
     context.fillStyle =
-      enemy.type === "trojan"
+      enemy.hitFlash > 0
+        ? "#ffe3c7"
+        : enemy.type === "trojan"
         ? "#8f3a2e"
         : enemy.type === "rootkit"
           ? "#9b2f25"
@@ -11140,12 +11477,51 @@ class FreemanCanvasEngine implements GameController {
         context.lineWidth = 1 + opacity * 2;
         context.stroke();
       }
+      if (effect.kind === "slash") {
+        const facing = Math.atan2(effect.z2, effect.x2);
+        const centerX = effect.x + effect.x2 * 1.15;
+        const centerZ = effect.z + effect.z2 * 1.15;
+        context.beginPath();
+        for (let index = 0; index <= 12; index += 1) {
+          const angle = facing - 1.05 + (index / 12) * 2.1;
+          const point = this.project(
+            centerX + Math.cos(angle) * 1.25,
+            centerZ + Math.sin(angle) * 1.25,
+            0.68 + Math.sin((index / 12) * Math.PI) * 0.34,
+          );
+          if (index === 0) context.moveTo(point.x, point.y);
+          else context.lineTo(point.x, point.y);
+        }
+        context.lineWidth = 2 + opacity * 2;
+        context.stroke();
+      }
       if (effect.kind === "burst") {
         for (const particle of effect.particles) {
           const point = this.project(particle.x, particle.z, particle.y);
           const size = 1.5 + opacity * 2.5;
           context.fillRect(point.x - size / 2, point.y - size / 2, size, size);
         }
+      }
+      if (effect.kind === "text" && effect.label) {
+        const point = this.project(
+          effect.x,
+          effect.z,
+          1.45 + progress * 0.7,
+        );
+        context.font = `${
+          effect.emphasis === "urgent"
+            ? 800
+            : effect.emphasis === "strong"
+              ? 750
+              : 700
+        } ${effect.emphasis === "standard" ? 13 : 16}px ui-monospace, monospace`;
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.lineWidth = 5;
+        context.strokeStyle = "rgba(4,8,10,.92)";
+        context.strokeText(effect.label, point.x, point.y);
+        context.fillStyle = effect.color;
+        context.fillText(effect.label, point.x, point.y);
       }
       context.restore();
     }

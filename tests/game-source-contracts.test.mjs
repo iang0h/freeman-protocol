@@ -110,6 +110,39 @@ test("WebGL targeting uses a spatial grid", () => {
   assert.match(game, /this\.enemyGrid\.query\(position, targetingRange\)/);
 });
 
+test("both renderers keep targeting and combat feedback readable and bounded", () => {
+  assert.match(game, /classifyCombatFeedback/);
+  assert.match(game, /const MAX_COMBAT_EFFECTS = \d+/);
+  assert.match(game, /const COMBAT_COMBO_WINDOW_SECONDS = [\d.]+/);
+
+  assert.match(webglGame, /private readonly aimReticle: THREE\.Mesh/);
+  assert.match(webglGame, /private readonly aimLine: THREE\.Line/);
+  assert.match(webglGame, /private updateTargetingPresentation\(\)/);
+  assert.match(webglGame, /private addSlashArc\(/);
+
+  assert.match(canvasGame, /private drawTargetingPresentation\(\)/);
+  assert.match(canvasGame, /private addSlashArc\(/);
+
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /classifyCombatFeedback\(\{\s*kind,\s*damage: appliedDamage,\s*critical,\s*target: "enemy",?\s*\}\)/,
+    );
+    assert.match(
+      engine,
+      /classifyCombatFeedback\(\{\s*kind: "core-warning",\s*damage,\s*critical: false,\s*target: "core",?\s*\}\)/,
+    );
+    assert.match(
+      engine,
+      /this\.addDamageNumber\([\s\S]*?feedback\.label,[\s\S]*?feedback\.emphasis/,
+    );
+    assert.match(engine, /private registerCombatCombo\(/);
+    assert.match(engine, /COMBAT_COMBO_WINDOW_SECONDS/);
+    assert.match(engine, /MAX_COMBAT_EFFECTS/);
+    assert.match(engine, /if \(this\.reducedMotion\)/);
+  }
+});
+
 test("both renderers pace spawns and include queued threats in the HUD", () => {
   assert.match(game, /getActiveEnemyLimit\("webgl"\)/);
   assert.match(game, /getActiveEnemyLimit\("canvas"\)/);

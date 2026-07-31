@@ -240,6 +240,32 @@ test("combat presentation classifies combat feedback by outcome", () => {
     emphasis: "urgent",
     label: "CORE HIT 9",
   });
+  assert.deepEqual(
+    classifyCombatFeedback({
+      kind: "kill",
+      damage: 31.6,
+      critical: true,
+      target: "enemy",
+    }),
+    {
+      kind: "kill",
+      emphasis: "strong",
+      label: "KILL 32",
+    },
+  );
+  assert.deepEqual(
+    classifyCombatFeedback({
+      kind: "hit",
+      damage: 5.4,
+      critical: false,
+      target: "core",
+    }),
+    {
+      kind: "core-warning",
+      emphasis: "urgent",
+      label: "CORE HIT 5",
+    },
+  );
 });
 
 test("repair lifecycle persists at the bay until the configured return ratio", async () => {
