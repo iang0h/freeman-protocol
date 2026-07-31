@@ -1,197 +1,240 @@
-# Task 6 report: warband and EMP discipline catalog
+# Task 6 report: integration, verification, and production deployment
 
-## Delivered
+## Status
 
-- Added an eight-card **Warband Discipline** catalog section for EMP discipline,
-  eight persistent warband slots, the repair bay, field kits, temporary
-  children, skill portraits, boss telegraphs, and rare loot. The catalog uses
-  existing CSS-rendered card visuals and introduces no new public asset paths.
-- Added a visible EMP charge status, a `CORE HEALTH · PROTECT-ONLY` HUD label,
-  and a corrected eight-slot `WARBAND` roster label. These are presentation-only
-  changes; game rules and combat values are unchanged.
-- Added source contracts for the catalog, the EMP/Core/roster/touch surface,
-  pooled enemy and loot cleanup, and mobile placement of the EMP, skill, and
-  repair actions.
-- Updated the README with the player loop: gather → recruit/upgrade → repair
-  → deploy skills → survive boss waves.
+Complete.
 
-## TDD evidence
+- Integrated application commit: `cbb1d38594eff8b1f66fd99ef6ade3846934a3c2`
+- Evidence-integration commit deployed to production:
+  `768079d89fce57068060426d0c8832ee84472c67`
+- Evidence-integration commit message:
+  `docs: preserve task verification evidence`
+- Production deployment:
+  `https://freeman-protocol-ct33m0uuv-iango.vercel.app`
+- Custom production domain: `https://freeman.skillrivals.com`
+- Deployment state: `READY` / Production
 
-1. Added the catalog and HUD source-contract tests before the matching catalog
-   and HUD copy existed.
-2. Ran the focused contracts with the bundled Node runtime. The initial run
-   reported two expected failures: missing catalog entries and missing visible
-   EMP/Core status labels.
-3. Added the presentation and catalog copy, then reran the focused contracts:
-   50 passed, 0 failed.
+The only pre-verification working-tree changes were the current Task 3 and Task 4
+reports. Their contents document the approved readable-feedback and meaningful-zone
+tasks, so they were preserved and committed. No unrelated product changes were
+staged.
 
-## Verification
+## Complete suite
 
-- `node --test tests/*.test.mjs` using the bundled Node runtime: 127 passed,
-  0 failed.
-- `tsc --noEmit` using the worktree-installed TypeScript binary: passed.
-- `eslint app tests` using the worktree-installed ESLint binary: passed.
-- `vinext build` using the worktree-installed Vinext binary: passed. It emitted
-  `/` and `/asset-catalog`; Vinext reported only its pre-existing chunk-size
-  and route-classification notices.
-- `bash scripts/validate-artifact.sh`: passed; confirmed the Sites manifest and
-  ESM Worker `default.fetch` export.
-- Production-worker route checks: `/`, `/asset-catalog`, and
-  `/audio/freeman-protocol.mp3` each returned HTTP 200; the audio route returned
-  `audio/mpeg`.
-- `git diff --check`: passed.
+Command:
 
-## V3 renderer-parity remediation (2026-07-29)
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/*.test.mjs
+```
 
-- Canvas boss telegraphs and jammer fields now trace projected polygon rings
-  from world-space circle samples. This preserves the arena's camera
-  y-compression and keeps visual warnings/evasion areas aligned with WebGL;
-  the old single projected-radius `context.arc` path was removed.
-- Skill HUD state now distinguishes `READY`, `DISABLED`, `REPAIR`, `RETREAT`,
-  and `OFFLINE`. Availability is derived from the same live agent action state,
-  while skill validation continues to pass each agent's `disabledLeftMs` into
-  `canUseSkill`.
-- Added source contracts covering projected Canvas rings and every unavailable
-  skill label, alongside the existing behavior and parity suite.
+Output:
 
-### V3 verification
+```text
+tests 202
+suites 0
+pass 202
+fail 0
+cancelled 0
+skipped 0
+todo 0
+duration_ms 161.787458
+exit 0
+```
 
-- Bundled Node suite: 150 passed, 0 failed.
-- TypeScript `tsc --noEmit --incremental false`: passed.
-- ESLint for the repository, excluding generated output: passed.
-- Production `vinext build`: passed; routes `/` and `/asset-catalog` emitted.
-- `scripts/validate-artifact.sh`: passed.
-- `git diff --check`: passed.
+## Lint
 
-## Environment and deployment note
+Command:
 
-The requested `pnpm exec` wrapper attempted the workspace's guarded install and
-stopped because native dependency build scripts are deliberately unapproved in
-this environment. Equivalent checks ran through the already installed project
-binaries with the bundled Node runtime. No archive deployment was attempted:
-this task has no final-workflow authorization to publish externally, and the
-required commit must exist before any such deployment.
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node_modules/.bin/eslint app tests
+```
 
-## Follow-up: Repair Cache protect-only correction
+Output:
 
-- Corrected the Repair Cache catalog card from Core restoration to operator and
-  field-kit recovery. Its visible copy now explicitly states that the Covenant
-  Core remains protect-only.
-- Added a source-contract regression that requires the operator/field-kit copy
-  and rejects Core-restore or Core-stabilization wording within that card.
-- TDD evidence: the new contract failed against the former `CORE RESTORE` /
-  “Stabilises a damaged Covenant Core” copy, then passed after the scoped copy
-  correction.
-- Verification: bundled `node --test tests/*.test.mjs` passed (128 tests);
-  bundled TypeScript `tsc --noEmit` and ESLint passed; `git diff --check`
-  passed. The `pnpm exec` wrapper remains unavailable because it triggers the
-  workspace's guarded install and fails on unapproved native dependency builds.
+```text
+exit 0
+(no stdout/stderr)
+```
 
-## Final integration-review remediation (2026-07-29)
+## Type-check
 
-### Runtime-rule corrections
+Command:
 
-- Replaced renderer-local EMP behavior with one shared EMP state machine. EMP
-  now starts charged, fires once, recharges deterministically, and uses a fixed
-  restrained base damage that is unaffected by roster size, terrain, or Relay
-  armor.
-- Limited each EMP upgrade to its documented dimension: Voltage rank one
-  changes cadence, Voltage rank two bypasses resistance, while Relay armor and
-  terrain modify radius only. Both renderers expose the same charge/cooldown
-  state and invoke the same activation path.
-- Added one shared action-state gate for persistent agents and their temporary
-  children. Retreating or disabled parents can no longer gather, spawn, fight,
-  receive Covenant support, or continue acting through children. Child
-  lifetimes still advance while inactive so suppression cannot make them
-  permanent.
-- Added `Lifetime Matrix` as a two-rank, Component-funded upgrade for all eight
-  agents. Purchased ranks produce the documented 10, 15, and 20 second
-  temporary-unit lifetimes in both renderer paths.
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node_modules/.bin/tsc --noEmit
+```
 
-### Encounter, repair, and interface corrections
+Output:
 
-- Boss telegraphs now snapshot a fixed world-space target and resolve damage
-  against the occupants present when the telegraph expires. Players can evade
-  after the warning, and entrants can be hit. Pending targets require both kind
-  and ID, avoiding collisions between entities with matching numeric IDs.
-- Boss target priority is measured from the boss rather than the arena origin.
-  Boss cooldown and telegraph transitions now consume the complete elapsed
-  timestep, producing the same state for equivalent large or partitioned
-  updates.
-- Repair Caches now restore their HP value and award exactly one field kit.
-  Canvas field-kit behavior matches WebGL: an unavailable repair does not spend
-  inventory or display success. Destroyed Repair Bay copy now truthfully states
-  that the bay remains offline for the rest of the mission.
-- Kept the mobile recruitment and upgrade dock interactive above its workshop
-  overlay, retained large touch-safe controls, and updated the visible and
-  accessible recruitment instructions for all slots 1–8 and their real
-  resource costs.
-- Synchronized the living catalog with runtime semantics for all eight agents,
-  EMP cadence/resistance/radius, Lifetime Matrix, loot amounts, Repair Bay
-  destruction, Relay armor, terrain, and fixed boss-area telegraphs.
+```text
+exit 0
+(no stdout/stderr)
+```
 
-### Regression coverage and review evidence
+## Production build
 
-- Expanded system tests for EMP charge and cooldown, upgrade isolation,
-  resistance composition, action-order parity, all eight Lifetime Matrix
-  purchases, fixed and evadable boss areas, kind-aware pending targets,
-  boss-relative target selection, timestep partition invariance, Repair Cache
-  inventory, unavailable field kits, and mission-long Repair Bay destruction.
-- Expanded source and mobile-layout contracts for shared renderer ownership,
-  catalog truthfulness, all-eight-agent controls, overlay stacking, and
-  touch-safe workshop interactions.
-- The added tests were observed failing against the pre-fix implementation and
-  passing after the scoped corrections. An independent final re-review found
-  no remaining P0–P2 findings.
+Command:
 
-### Final verification
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node_modules/.bin/vinext build
+```
 
-- Bundled Node test suite: 144 passed, 0 failed.
-- TypeScript `tsc --noEmit --incremental false`: passed.
-- ESLint for the repository, excluding generated output: passed.
-- Production `vinext build`: passed and emitted `/` and `/asset-catalog`; only
-  the existing chunk-size and route-classification notices remained.
-- `scripts/validate-artifact.sh`: passed and confirmed the hosting manifest and
-  ESM Worker `default.fetch` export.
-- `git diff --check`: passed.
+Output:
 
-The production build required an ad-hoc-signed copy of the bundled Node binary
-so macOS could load Rolldown's native module. Running the worktree-local Vinext
-binary avoided loading two dependency trees. This was an environment-only
-workaround; it did not change the repository. No external deployment was
-performed because this work was explicitly local-only.
+```text
+vinext build (Vite 8.0.13)
+136 client-reference modules transformed
+89 server-reference modules transformed
+142 RSC modules transformed
+96 client-environment modules transformed
+95 SSR-environment modules transformed
+Routes: / and /asset-catalog
+Build complete. Run `vinext start` to start the production server.
+exit 0
+```
 
-## V2 whole-branch review remediation (2026-07-29)
+The build emitted one non-fatal warning that some minified chunks exceed 500 kB.
+It also reported that route classification is currently limited by vinext static
+analysis. Neither warning affected the successful build.
 
-- First-wave checkpoints now snapshot and restore EMP charge/cooldown, all loot
-  counters, and Repair Bay HP in both WebGL and Canvas. The retry regression
-  proves a failed run cannot retain extra materials, a spent EMP, or a destroyed
-  bay across retry.
-- Forge's `armorReduction: 0.55` is now consumed by the live damage path. Armor
-  break raises damage from the normal armored multiplier while preserving a
-  non-bypass remainder; the shared `resolveArmoredDamage` result is covered by
-  a live damage-result test.
-- Manual agent skills now pass through `getAgentActionState`, so repairing,
-  retreating, disabled, dead, or otherwise unavailable agents cannot activate
-  skills. HUD skill controls expose the same availability state and disable
-  unavailable actions.
-- Removed Bastion's protected-Core `maxHp` mutation and strengthened the
-  protect-only contract to reject both Core HP and max-HP writes.
-- Durable help copy now documents recruitment shortcuts through slots 1–8.
-- Shard catalog copy now matches the economy: Protocol Shards fund late
-  persistent recruits and the one-shard temporary-child material cost. Boss
-  pickup presentation receives the actual pickup value in both renderers, so
-  cache labels/toasts announce variable quantities accurately.
-- Removed `fieldKits` from repair-decision semantics. A decision can only become
-  `repair` when a functioning Repair Bay exists; field-kit use remains an
-  explicit atomic action.
+## Generated-state restoration and diff review
 
-### V2 verification
+Commands:
 
-- Bundled Node suite: 149 passed, 0 failed.
-- TypeScript `tsc --noEmit --incremental false`: passed.
-- ESLint for the repository, excluding generated output: passed.
-- Production `vinext build`: passed; routes `/` and `/asset-catalog` emitted.
-- `scripts/validate-artifact.sh`: passed; ESM Worker `default.fetch` and the
-  hosting manifest were present.
-- `git diff --check`: passed.
+```text
+git restore -- tsconfig.tsbuildinfo
+git diff --check
+git status --short
+git diff --stat
+```
+
+Output:
+
+```text
+git restore: exit 0
+git diff --check: exit 0; no output
+git status --short:
+ M .superpowers/sdd/task-3-report.md
+ M .superpowers/sdd/task-4-report.md
+git diff --stat:
+ .superpowers/sdd/task-3-report.md | 309 +++++++++++++++++++++++++++++---------
+ .superpowers/sdd/task-4-report.md | 121 +++++++--------
+ 2 files changed, 290 insertions(+), 140 deletions(-)
+```
+
+After restoration, only the intentional Task 3 and Task 4 evidence reports
+remained. `tsconfig.tsbuildinfo` was not staged or committed.
+
+## Evidence integration commit and push
+
+Commands:
+
+```text
+git add .superpowers/sdd/task-3-report.md .superpowers/sdd/task-4-report.md
+git diff --cached --check
+git commit -m "docs: preserve task verification evidence"
+git push origin main
+```
+
+Output:
+
+```text
+git diff --cached --check: exit 0; no output
+[main 768079d] docs: preserve task verification evidence
+2 files changed, 290 insertions(+), 140 deletions(-)
+To https://github.com/iang0h/freeman-protocol.git
+   6886247..768079d  main -> main
+```
+
+Git reported that the commit identity was automatically inferred as
+`Ian Goh <iangoh@192.168.0.4>`. This was informational and did not block the
+commit or push.
+
+## Production deployment
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH pnpm dlx vercel --prod --yes --archive=tgz
+```
+
+Output:
+
+```text
+Vercel CLI 58.4.0 (Node.js 24.14.0)
+Deploying iango/freeman-protocol
+Production https://freeman-protocol-ct33m0uuv-iango.vercel.app
+Compiled successfully in 9.7s
+Finished TypeScript in 7.7s
+Generated static pages (6/6)
+Build Completed in /vercel/output [21s]
+Aliased https://freeman.skillrivals.com
+readyState: READY
+target: production
+message: Deployment freeman-protocol-ct33m0uuv-iango.vercel.app ready.
+exit 0
+```
+
+Vercel emitted a non-blocking warning that `package.json` specifies
+`"node": ">=22.13.0"`, so future new Node major versions may be selected
+automatically.
+
+## Deployment verification
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH pnpm dlx vercel ls freeman-protocol --yes
+```
+
+Relevant output:
+
+```text
+Deployment: https://freeman-protocol-ct33m0uuv-iango.vercel.app
+Status: Ready
+Environment: Production
+Duration: 33s
+exit 0
+```
+
+Command:
+
+```text
+curl -sS -I -L 'https://freeman.skillrivals.com/?v=768079d'
+```
+
+Output:
+
+```text
+HTTP/2 200
+content-type: text/html; charset=utf-8
+server: Vercel
+x-matched-path: /
+x-nextjs-prerender: 1
+content-length: 17183
+exit 0
+```
+
+## Spec-coverage review
+
+- Task 2 compact desktop HUD: covered by desktop presentation and overlay source
+  contracts in the passing suite.
+- Task 3 feedback: covered by targeting, feedback classification, renderer
+  parity, presentation-only recoil, pooling, and bounded-effect tests.
+- Task 4 meaningful zones: covered by deterministic shared zone-rule tests and
+  renderer/HUD source contracts.
+- Task 5 mobile readability: covered by mobile viewport, tray, type-size, Intel,
+  notice-clearance, and touch-action tests.
+- Simulation/performance preservation: covered by renderer-independent rule
+  tests, authoritative-state isolation, spatial-grid, centralized cleanup,
+  pooling, and bounded-collection source contracts.
+- Task 6 deployment: production deployment is Ready and the custom domain
+  returned HTTP 200.
+
+## Environment limitations
+
+No environment limitation blocked completion. The exact bundled Node runtime
+from the approved plan was used for tests, lint, type-check, build, and the
+Vercel CLI. The only environment notes were the non-fatal local chunk-size and
+vinext route-classification warnings, Vercel's broad Node-engine warning, and
+Git's automatically inferred author identity.
