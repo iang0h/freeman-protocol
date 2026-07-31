@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import FreemanProtocol, {
-  type AgentId,
   type RecruitmentAdvisorViewState,
 } from "./FreemanProtocol";
 import { createOverlayState, toggleOverlay } from "./game/combat-presentation-rules.mjs";
@@ -31,9 +30,12 @@ export default function Home() {
   const [overlayState, setOverlayState] = useState(createOverlayState);
   const [advisorState, setAdvisorState] =
     useState<RecruitmentAdvisorViewState | null>(null);
-  const [advisorAgentId, setAdvisorAgentId] = useState<AgentId | null>(null);
   const [advisorRequestKey, setAdvisorRequestKey] = useState(0);
   const recruitmentAdvice = advisorState?.recruitmentAdvice ?? null;
+  const advisorAgentId =
+    recruitmentAdvice?.state === "recruit"
+      ? recruitmentAdvice.agentId
+      : null;
   const advisorResources = advisorState?.resources ?? null;
   const advisorSessionMode = advisorState?.sessionMode ?? "campaign";
   const advisorWatchPriority = advisorState?.watchPriority ?? "survive";
@@ -77,7 +79,6 @@ export default function Home() {
           type="button"
           className="recruitment-advisor__action"
           onClick={() => {
-            setAdvisorAgentId(recruitmentAdvice.agentId);
             setAdvisorRequestKey((key) => key + 1);
           }}
         >

@@ -105,7 +105,11 @@ test("compact recruitment advisor explains the decision and only recruits throug
   assert.match(page, /MISSING/);
   assert.match(page, /RECRUIT NOW/);
   assert.match(page, /WATCH MODE · AI PRIORITY/);
-  assert.match(page, /setAdvisorAgentId\(recruitmentAdvice\.agentId\)/);
+  assert.match(
+    page,
+    /const advisorAgentId =\s*recruitmentAdvice\?\.state === "recruit"\s*\?\s*recruitmentAdvice\.agentId\s*:\s*null;/,
+  );
+  assert.doesNotMatch(page, /setAdvisorAgentId|useState<AgentId/);
   assert.match(page, /setAdvisorRequestKey\(\(key\) => key \+ 1\)/);
   assert.doesNotMatch(page, /engineRef|\.recruit\(|repairCore|useFieldKit/);
 

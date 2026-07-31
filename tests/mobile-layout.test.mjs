@@ -115,11 +115,19 @@ test("keeps recruitment advice readable and touch-safe beside Warband", () => {
   );
   assert.match(
     styles,
-    /@media \(max-width: 820px\)[\s\S]*?\.mobile-camera-toggle\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 258px\)/,
+    /@media \(max-width: 820px\)[\s\S]*?\.recruitment-advisor__resources dt\s*\{[\s\S]*?font-size:\s*12px/,
   );
   assert.match(
     styles,
-    /@media \(max-width: 820px\)[\s\S]*?\.boss-health-banner,[\s\S]*?\.mission-toast\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 312px\)/,
+    /@media \(max-width: 820px\)[\s\S]*?\.recruitment-advisor__resources dd\s*\{[\s\S]*?font-size:\s*16px/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.mobile-camera-toggle\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 278px\)/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.boss-health-banner,[\s\S]*?\.mission-toast\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 332px\)/,
   );
 });
 
@@ -218,7 +226,7 @@ test("keeps portrait and landscape combat notices clear of the larger status str
   );
   assert.match(
     styles,
-    /@media \(max-width: 820px\)[\s\S]*?\.boss-health-banner,[\s\S]*?\.wave-intermission-banner,[\s\S]*?\.placement-guide,[\s\S]*?\.mission-toast\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 312px\)/,
+    /@media \(max-width: 820px\)[\s\S]*?\.boss-health-banner,[\s\S]*?\.wave-intermission-banner,[\s\S]*?\.placement-guide,[\s\S]*?\.mission-toast\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 332px\)/,
   );
   assert.match(
     styles,

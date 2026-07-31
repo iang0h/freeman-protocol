@@ -3667,17 +3667,27 @@ canvas:focus-visible {
   .recruitment-advisor__resources {
     grid-column: 1;
     grid-row: 2;
-    grid-template-columns: repeat(3, minmax(0, auto));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 4px 8px;
   }
 
   .recruitment-advisor__resources > div {
-    display: flex;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 2px;
+  }
+
+  .recruitment-advisor__resources dt {
+    font-size: 12px;
   }
 
   .recruitment-advisor__resources dd {
-    font-size: 6px;
+    overflow-wrap: anywhere;
+    font-size: 16px;
+    line-height: 1.1;
+    text-align: left;
+    white-space: normal;
   }
 
   .recruitment-advisor__action {
@@ -3707,15 +3717,15 @@ canvas:focus-visible {
   .wave-intermission-banner,
   .placement-guide,
   .mission-toast {
-    top: calc(env(safe-area-inset-top) + 312px);
+    top: calc(env(safe-area-inset-top) + 332px);
   }
 
   .mobile-camera-toggle {
-    top: calc(env(safe-area-inset-top) + 258px);
+    top: calc(env(safe-area-inset-top) + 278px);
   }
 
   .watch-panel {
-    top: calc(env(safe-area-inset-top) + 258px);
+    top: calc(env(safe-area-inset-top) + 278px);
     bottom: calc(env(safe-area-inset-bottom) + 67px);
     max-height: none;
     overflow-y: auto;
@@ -3749,12 +3759,12 @@ canvas:focus-visible {
   .wave-intermission-banner,
   .placement-guide,
   .mission-toast {
-    top: calc(env(safe-area-inset-top) + 278px);
+    top: calc(env(safe-area-inset-top) + 298px);
   }
 
   .mobile-camera-toggle,
   .watch-panel {
-    top: calc(env(safe-area-inset-top) + 225px);
+    top: calc(env(safe-area-inset-top) + 245px);
   }
 }
 
