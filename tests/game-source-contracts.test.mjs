@@ -1005,6 +1005,37 @@ test("both renderers expose the shared watch-mode contract", async () => {
   assert.match(game, /RECRUITED BY THE NETWORK/);
 });
 
+test("Watch Mode activity defaults to a compact accessible disclosure", () => {
+  const watchPanel = game.slice(
+    game.indexOf('<aside className="watch-panel"'),
+    game.indexOf("{hud.boss &&"),
+  );
+
+  assert.match(
+    game,
+    /const \[watchActivityExpanded, setWatchActivityExpanded\] = useState\(false\)/,
+  );
+  assert.match(watchPanel, /aria-expanded=\{watchActivityExpanded\}/);
+  assert.match(watchPanel, /aria-controls="watch-activity-log"/);
+  assert.match(watchPanel, /id="watch-activity-log"/);
+  assert.match(
+    watchPanel,
+    /watchActivityExpanded\s*\?\s*\(\s*<ol>[\s\S]*hud\.autonomyLog\.slice\(0, 4\)/,
+  );
+  assert.match(
+    watchPanel,
+    /hud\.autonomyLog\[0\]\s*\?\?\s*hud\.lastAutonomyEvent/,
+  );
+  assert.match(
+    game,
+    /hud\.sessionMode !== "watch"[\s\S]*setWatchActivityExpanded\(false\)/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*\.watch-panel__activity-toggle\s*\{[\s\S]*min-height:\s*44px/,
+  );
+});
+
 test("watch mode pilots the player in both renderers", () => {
   assert.equal((game.match(/private updateWatchOperator\(delta: number\)/g) ?? []).length, 2);
   assert.equal((game.match(/this\.updateWatchOperator\(delta\)/g) ?? []).length, 2);

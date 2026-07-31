@@ -11905,12 +11905,23 @@ export default function FreemanProtocol({
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("command");
   const [cameraPresentation, setCameraPresentation] = useState<CameraPresentation>("macro");
   const [tutorialComplete, setTutorialComplete] = useState(false);
+  const [watchActivityExpanded, setWatchActivityExpanded] = useState(false);
 
   useEffect(() => {
     if (readStoredValue(TUTORIAL_STORAGE_KEY) !== "1") return;
     const timer = window.setTimeout(() => setTutorialComplete(true), 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (hud.sessionMode !== "watch") {
+      const timer = window.setTimeout(
+        () => setWatchActivityExpanded(false),
+        0,
+      );
+      return () => window.clearTimeout(timer);
+    }
+  }, [hud.sessionMode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -12167,14 +12178,36 @@ export default function FreemanProtocol({
                 <span><small>SHARDS</small><b>{hud.loot.shards}</b></span>
               </div>
               <div className="watch-panel__activity" aria-label="Live AI activity">
-                <small>LIVE AI ACTIVITY</small>
-                <ol>
-                  {hud.autonomyLog.slice(0, 4).map((event, index) => (
-                    <li key={`${event}-${index}`} className={index === 0 ? "is-current" : ""}>
-                      <span>{index === 0 ? "NOW" : `-${index}`}</span>{event}
-                    </li>
-                  ))}
-                </ol>
+                <div className="watch-panel__activity-heading">
+                  <small>LIVE AI ACTIVITY</small>
+                  <button
+                    type="button"
+                    className="watch-panel__activity-toggle"
+                    onClick={() => setWatchActivityExpanded((expanded) => !expanded)}
+                    aria-expanded={watchActivityExpanded}
+                    aria-controls="watch-activity-log"
+                  >
+                    {watchActivityExpanded ? "HIDE LOG" : "SHOW LOG"}
+                  </button>
+                </div>
+                <div id="watch-activity-log">
+                  {watchActivityExpanded ? (
+                    <ol>
+                      {hud.autonomyLog.slice(0, 4).map((event, index) => (
+                        <li key={`${event}-${index}`} className={index === 0 ? "is-current" : ""}>
+                          <span>{index === 0 ? "NOW" : `-${index}`}</span>{event}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="watch-panel__activity-summary">
+                      <span className="watch-panel__activity-marker">NOW</span>
+                      <span className="watch-panel__activity-event">
+                        {hud.autonomyLog[0] ?? hud.lastAutonomyEvent}
+                      </span>
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="watch-panel__controls">
                 <div>

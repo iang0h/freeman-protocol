@@ -1820,6 +1820,29 @@ canvas:focus-visible {
   border-bottom: 1px solid rgba(157, 181, 180, 0.2);
 }
 
+.watch-panel__activity-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.watch-panel__activity-toggle {
+  min-height: 2rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid rgba(157, 181, 180, 0.35);
+  background: rgba(10, 27, 31, 0.8);
+  color: #a9c1c0;
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+}
+
+.watch-panel__activity-toggle:hover,
+.watch-panel__activity-toggle:focus-visible {
+  border-color: #f0783f;
+  color: #fff3e7;
+}
+
 .watch-panel__activity ol {
   display: grid;
   gap: 0.28rem;
@@ -1852,6 +1875,30 @@ canvas:focus-visible {
 
 .watch-panel__activity li.is-current span {
   color: #f0783f;
+}
+
+.watch-panel__activity-summary {
+  display: flex;
+  gap: 0.45rem;
+  min-width: 0;
+  margin: 0;
+  color: #fff3e7;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+}
+
+.watch-panel__activity-marker {
+  flex: 0 0 1.5rem;
+  color: #f0783f;
+  font-size: 0.52rem;
+}
+
+.watch-panel__activity-event {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .watch-panel__controls {
@@ -1910,6 +1957,10 @@ canvas:focus-visible {
 
   .watch-panel__controls button {
     min-height: 2.7rem;
+  }
+
+  .watch-panel__activity-toggle {
+    min-height: 44px;
   }
 
   .enter-button--watch {
