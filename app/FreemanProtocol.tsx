@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  type ReactNode,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -142,6 +144,7 @@ import {
   WATCH_COMPONENT_SALVAGE_PER_WAVE,
   WATCH_STARTER_AGENT_COUNT,
 } from "./game/watch-mode-rules.mjs";
+import { getRecruitmentAdvice } from "./game/recruitment-advisor-rules.mjs";
 
 type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
@@ -149,7 +152,7 @@ type SessionMode = "campaign" | "watch";
 type CombatOverlay = "intel" | "warband" | "actions";
 type OverlayState = { active: "closed" | CombatOverlay };
 
-type AgentId =
+export type AgentId =
   | "kairos" | "kira" | "forge" | "covenant"
   | "relay" | "scout" | "warden" | "nova";
 type EvolutionAgentId = "kairos" | "kira" | "forge" | "covenant";
@@ -270,6 +273,31 @@ type AgentSkillHud = {
   status: AgentSkillAvailability;
 };
 
+type RecruitmentResources = {
+  compute: number;
+  components: number;
+  shards: number;
+};
+
+export type RecruitmentAdvice = {
+  state: "recruit" | "repair" | "defend" | "save";
+  eyebrow: string;
+  title: string;
+  detail: string;
+  role: string | null;
+  agentId: AgentId | null;
+  action: "recruit" | "repair" | "defend" | "save";
+  cost: Readonly<RecruitmentResources> | null;
+  missing: Readonly<RecruitmentResources> | null;
+};
+
+export type RecruitmentAdvisorViewState = {
+  recruitmentAdvice: RecruitmentAdvice;
+  resources: RecruitmentResources;
+  sessionMode: SessionMode;
+  watchPriority: "survive" | "farm" | "expand";
+};
+
 type FirstWaveCheckpoint = {
   data: number;
   score: number;
@@ -362,6 +390,7 @@ type HudState = {
   tutorialStep: TutorialStep | null;
   canRetryWave: boolean;
   loot: LootCounters;
+  recruitmentAdvice: RecruitmentAdvice;
   skills: Record<EvolutionAgentId, AgentSkillHud>;
   boss: {
     label: string;
@@ -773,6 +802,41 @@ const createInitialSkillHud = (): Record<EvolutionAgentId, AgentSkillHud> => ({
   forge: { ...AGENT_SKILLS.forge, cooldownLeftMs: 0, available: false, status: "offline" },
   covenant: { ...AGENT_SKILLS.covenant, cooldownLeftMs: 0, available: false, status: "offline" },
 });
+const getRecruitmentCandidates = (
+  activeAgents: number,
+  need: AutonomyRole | null,
+) => {
+  const candidate = WARBAND_SLOTS[activeAgents];
+  const cost = getRecruitCost(candidate);
+  if (!candidate || !cost) return [];
+  return [{
+    id: candidate.id,
+    role: candidate.role,
+    cost,
+    matchesThreat: candidate.role === need,
+  }];
+};
+const getRecruitmentNeed = ({
+  coreHp,
+  coreMaxHp,
+  operatorHp,
+  operatorMaxHp,
+  breachThreatCount,
+  activeThreatCount,
+}: {
+  coreHp: number;
+  coreMaxHp: number;
+  operatorHp: number;
+  operatorMaxHp: number;
+  breachThreatCount: number;
+  activeThreatCount: number;
+}): AutonomyRole | null => {
+  if (breachThreatCount > 0 || coreHp / Math.max(1, coreMaxHp) <= 0.7) {
+    return "defend";
+  }
+  if (operatorHp / Math.max(1, operatorMaxHp) <= 0.65) return "support";
+  return activeThreatCount > 0 ? "assault" : null;
+};
 const getArmorBonuses = (armorId: PlayerArmorId | null): ArmorBonuses =>
   armorId ? PLAYER_ARMORS[armorId].bonuses : {};
 const getComponentRank = (
@@ -863,6 +927,19 @@ const INITIAL_HUD: HudState = {
   tutorialStep: null,
   canRetryWave: false,
   loot: { repairs: 0, components: 0, shards: 0 },
+  recruitmentAdvice: getRecruitmentAdvice({
+    coreHp: 180,
+    coreMaxHp: 180,
+    operatorHp: 100,
+    operatorMaxHp: 100,
+    threatCount: 0,
+    activeAgents: 0,
+    maxAgents: WARBAND_SLOTS.length,
+    compute: 55,
+    components: 0,
+    shards: 0,
+    candidates: [],
+  }) as RecruitmentAdvice,
   skills: createInitialSkillHud(),
   boss: null,
 };
@@ -6777,6 +6854,33 @@ class FreemanEngine {
       z: this.player.group.position.z,
     });
     this.currentZone = zone.shortLabel;
+    const breachThreatCount = this.enemies.filter(
+      (enemy) => enemy.group.position.distanceTo(this.core.group.position) <= 4.5,
+    ).length;
+    const recruitmentNeed = getRecruitmentNeed({
+      coreHp: this.core.hp,
+      coreMaxHp: this.core.maxHp,
+      operatorHp: this.player.hp,
+      operatorMaxHp: this.player.maxHp,
+      breachThreatCount,
+      activeThreatCount: this.enemies.length,
+    });
+    const recruitmentAdvice = getRecruitmentAdvice({
+      coreHp: this.core.hp,
+      coreMaxHp: this.core.maxHp,
+      operatorHp: this.player.hp,
+      operatorMaxHp: this.player.maxHp,
+      threatCount: breachThreatCount,
+      activeAgents: this.agents.length,
+      maxAgents: WARBAND_SLOTS.length,
+      compute: this.data,
+      components: this.loot.components,
+      shards: this.loot.shards,
+      candidates: getRecruitmentCandidates(
+        this.agents.length,
+        recruitmentNeed,
+      ),
+    }) as RecruitmentAdvice;
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
@@ -6842,6 +6946,7 @@ class FreemanEngine {
       terrainLabel: this.terrain.label,
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
+      recruitmentAdvice,
       skills,
       boss: boss
         ? {
@@ -11795,6 +11900,33 @@ class FreemanCanvasEngine implements GameController {
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
     const zone = getArenaZone({ x: this.player.x, z: this.player.z });
     this.currentZone = zone.shortLabel;
+    const breachThreatCount = this.enemies.filter(
+      (enemy) => this.distance(enemy.x, enemy.z, this.core.x, this.core.z) <= 4.5,
+    ).length;
+    const recruitmentNeed = getRecruitmentNeed({
+      coreHp: this.core.hp,
+      coreMaxHp: this.core.maxHp,
+      operatorHp: this.player.hp,
+      operatorMaxHp: this.player.maxHp,
+      breachThreatCount,
+      activeThreatCount: this.enemies.length,
+    });
+    const recruitmentAdvice = getRecruitmentAdvice({
+      coreHp: this.core.hp,
+      coreMaxHp: this.core.maxHp,
+      operatorHp: this.player.hp,
+      operatorMaxHp: this.player.maxHp,
+      threatCount: breachThreatCount,
+      activeAgents: this.agents.length,
+      maxAgents: WARBAND_SLOTS.length,
+      compute: this.data,
+      components: this.loot.components,
+      shards: this.loot.shards,
+      candidates: getRecruitmentCandidates(
+        this.agents.length,
+        recruitmentNeed,
+      ),
+    }) as RecruitmentAdvice;
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
@@ -11860,6 +11992,7 @@ class FreemanCanvasEngine implements GameController {
       terrainLabel: this.terrain.label,
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
+      recruitmentAdvice,
       skills,
       boss: boss
         ? {
@@ -11883,17 +12016,27 @@ class FreemanCanvasEngine implements GameController {
 type FreemanProtocolProps = {
   overlayState: OverlayState;
   onToggleOverlay: (panel: CombatOverlay) => void;
+  recruitmentAdvisor: ReactNode;
+  onRecruitmentAdvisorChange: (state: RecruitmentAdvisorViewState) => void;
+  advisorAgentId: AgentId | null;
+  advisorRequestKey: number;
 };
 
 export default function FreemanProtocol({
   overlayState,
   onToggleOverlay,
+  recruitmentAdvisor,
+  onRecruitmentAdvisorChange,
+  advisorAgentId,
+  advisorRequestKey,
 }: FreemanProtocolProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameController | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const helpPausedGameRef = useRef(false);
   const overlayPausedCampaignRef = useRef(false);
+  const advisorRequestHandledRef = useRef(0);
+  const recruitmentAdvisorChangeRef = useRef(onRecruitmentAdvisorChange);
   const [mode, setMode] = useState<GameMode>("intro");
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -11906,6 +12049,10 @@ export default function FreemanProtocol({
   const [cameraPresentation, setCameraPresentation] = useState<CameraPresentation>("macro");
   const [tutorialComplete, setTutorialComplete] = useState(false);
   const [watchActivityExpanded, setWatchActivityExpanded] = useState(false);
+
+  useEffect(() => {
+    recruitmentAdvisorChangeRef.current = onRecruitmentAdvisorChange;
+  }, [onRecruitmentAdvisorChange]);
 
   useEffect(() => {
     if (readStoredValue(TUTORIAL_STORAGE_KEY) !== "1") return;
@@ -11928,7 +12075,19 @@ export default function FreemanProtocol({
     if (!canvas) return;
     const callbacks: GameCallbacks = {
       onMode: setMode,
-      onHud: setHud,
+      onHud: (nextHud) => {
+        setHud(nextHud);
+        recruitmentAdvisorChangeRef.current({
+          recruitmentAdvice: nextHud.recruitmentAdvice,
+          resources: {
+            compute: nextHud.data,
+            components: nextHud.loot.components,
+            shards: nextHud.loot.shards,
+          },
+          sessionMode: nextHud.sessionMode,
+          watchPriority: nextHud.watchPriority,
+        });
+      },
       onTutorialComplete: () => {
         setTutorialComplete(true);
         writeStoredValue(TUTORIAL_STORAGE_KEY, "1");
@@ -11978,7 +12137,7 @@ export default function FreemanProtocol({
     }
   };
 
-  const toggleCombatOverlay = (panel: CombatOverlay) => {
+  const toggleCombatOverlay = useCallback((panel: CombatOverlay) => {
     const closing = overlayState.active === panel;
     const opening = overlayState.active === "closed";
 
@@ -11996,7 +12155,27 @@ export default function FreemanProtocol({
       }
     }
     onToggleOverlay(panel);
-  };
+  }, [hud.sessionMode, mode, onToggleOverlay, overlayState.active]);
+
+  useEffect(() => {
+    if (
+      advisorRequestKey <= 0 ||
+      advisorRequestHandledRef.current === advisorRequestKey
+    ) {
+      return;
+    }
+    advisorRequestHandledRef.current = advisorRequestKey;
+    setMobilePanel("command");
+    setMobileSquadOpen(true);
+    if (overlayState.active !== "warband") {
+      toggleCombatOverlay("warband");
+    }
+  }, [
+    advisorAgentId,
+    advisorRequestKey,
+    overlayState.active,
+    toggleCombatOverlay,
+  ]);
 
   const isOverlay = mode !== "playing";
   const canRecruitWarband = canRecruitPersistentWarband(mode);
@@ -12107,6 +12286,12 @@ export default function FreemanProtocol({
             </button>
           ))}
         </div>
+
+        {mode !== "intro" && (
+          <div className="combat-hud__advisor">
+            {recruitmentAdvisor}
+          </div>
+        )}
 
         <div className="hud-actions">
           <a href="/asset-catalog">ASSET LEDGER</a>
@@ -12620,9 +12805,10 @@ export default function FreemanProtocol({
                   <button
                     type="button"
                     key={agent.id}
-                    className={`agent-card ${recruited ? "is-recruited" : ""}`}
+                    className={`agent-card ${recruited ? "is-recruited" : ""} ${advisorAgentId === agent.id ? "is-advised" : ""}`}
                     onClick={() => engineRef.current?.recruit(agent.id)}
                     disabled={recruited || !canRecruitWarband}
+                    aria-current={advisorAgentId === agent.id ? "true" : undefined}
                     aria-label={
                       recruited
                         ? `${agent.name} recruited`

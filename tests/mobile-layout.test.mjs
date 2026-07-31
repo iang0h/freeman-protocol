@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [layout, game, styles] = await Promise.all([
+const [layout, game, page, styles] = await Promise.all([
   readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/FreemanProtocol.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
 ]);
 
@@ -94,6 +95,32 @@ test("provides a compact, touch-safe mobile status and switcher", () => {
   assert.match(styles, /\.mobile-panel-switcher/);
   assert.match(styles, /\.mobile-panel-switcher button[\s\S]*min-height:\s*48px/);
   assert.match(styles, /\.mobile-action-tray[\s\S]*padding-bottom:\s*calc\(env\(safe-area-inset-bottom\)/);
+});
+
+test("keeps recruitment advice readable and touch-safe beside Warband", () => {
+  assert.match(page, /className=\{`recruitment-advisor recruitment-advisor--\$\{recruitmentAdvice\.state\}`\}/);
+  assert.match(game, /className="combat-hud__advisor"/);
+  assert.match(styles, /\.recruitment-advisor\s*\{/);
+  assert.match(
+    styles,
+    /\.recruitment-advisor__action\s*\{[\s\S]*?min-height:\s*44px[\s\S]*?touch-action:\s*manipulation/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.combat-hud__advisor\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 145px\)/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.recruitment-advisor\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.mobile-camera-toggle\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 258px\)/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.boss-health-banner,[\s\S]*?\.mission-toast\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 312px\)/,
+  );
 });
 
 test("limits live mobile status to combat vitals, zone, and one alert", () => {
@@ -191,7 +218,7 @@ test("keeps portrait and landscape combat notices clear of the larger status str
   );
   assert.match(
     styles,
-    /@media \(max-width: 820px\)[\s\S]*?\.boss-health-banner,[\s\S]*?\.wave-intermission-banner,[\s\S]*?\.placement-guide,[\s\S]*?\.mission-toast\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 204px\)/,
+    /@media \(max-width: 820px\)[\s\S]*?\.boss-health-banner,[\s\S]*?\.wave-intermission-banner,[\s\S]*?\.placement-guide,[\s\S]*?\.mission-toast\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 312px\)/,
   );
   assert.match(
     styles,

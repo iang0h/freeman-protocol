@@ -69,6 +69,51 @@ test("recruitment advisor rules stay pure and renderer-independent", () => {
   );
 });
 
+test("both renderers expose recruitment advice from authoritative battlefield state", () => {
+  assert.match(
+    game,
+    /import\s+\{\s*getRecruitmentAdvice\s*\}\s+from "\.\/game\/recruitment-advisor-rules\.mjs"/,
+  );
+  assert.match(game, /type RecruitmentAdvice =/);
+  assert.match(game, /recruitmentAdvice: RecruitmentAdvice/);
+  assert.ok(
+    (game.match(/const recruitmentAdvice = getRecruitmentAdvice\(\{/g) ?? []).length >= 2,
+  );
+  assert.ok(
+    (game.match(/threatCount: breachThreatCount/g) ?? []).length >= 2,
+  );
+  assert.ok(
+    (game.match(/candidates: getRecruitmentCandidates\(/g) ?? []).length >= 2,
+  );
+  assert.ok((game.match(/recruitmentAdvice,/g) ?? []).length >= 2);
+});
+
+test("compact recruitment advisor explains the decision and only recruits through Warband", () => {
+  for (const label of [
+    "RECRUIT ADVISED",
+    "REPAIR FIRST",
+    "DEFEND CORE",
+    "HOLD COMPUTE",
+  ]) {
+    assert.match(page, new RegExp(label));
+  }
+
+  assert.match(page, /className="recruitment-advisor__reason"/);
+  assert.match(page, /recruitmentAdvice\.detail/);
+  assert.match(page, /CURRENT/);
+  assert.match(page, /COST/);
+  assert.match(page, /MISSING/);
+  assert.match(page, /RECRUIT NOW/);
+  assert.match(page, /WATCH MODE · AI PRIORITY/);
+  assert.match(page, /setAdvisorAgentId\(recruitmentAdvice\.agentId\)/);
+  assert.match(page, /setAdvisorRequestKey\(\(key\) => key \+ 1\)/);
+  assert.doesNotMatch(page, /engineRef|\.recruit\(|repairCore|useFieldKit/);
+
+  assert.match(game, /advisorAgentId === agent\.id \? "is-advised" : ""/);
+  assert.match(game, /aria-current=\{advisorAgentId === agent\.id \? "true" : undefined\}/);
+  assert.match(game, /toggleCombatOverlay\("warband"\)/);
+});
+
 test("both renderers mark the shared arena zones and throttle the live zone HUD", () => {
   assert.match(game, /import\s+\{\s*classifyCombatFeedback,\s*getArenaZone,?\s*\}/);
   assert.match(webglGame, /private buildArenaZoneMarkers\(\)/);
