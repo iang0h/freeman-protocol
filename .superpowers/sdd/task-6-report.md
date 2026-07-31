@@ -238,3 +238,260 @@ from the approved plan was used for tests, lint, type-check, build, and the
 Vercel CLI. The only environment notes were the non-fatal local chunk-size and
 vinext route-classification warnings, Vercel's broad Node-engine warning, and
 Git's automatically inferred author identity.
+
+## Important-review follow-up: collapsed Watch Mode activity
+
+### Scope delivered
+
+- Added local `watchActivityExpanded` presentation state initialized to `false`.
+- Replaced the always-visible four-row activity log with an accessible button
+  using `aria-expanded` and `aria-controls`.
+- The collapsed state renders only the latest autonomy event, falling back to
+  `lastAutonomyEvent`; the expanded state renders the existing four-event log.
+- Leaving Watch Mode resets the disclosure to collapsed.
+- Added compact summary/ellipsis styles and a 44px mobile touch target.
+- Kept both renderer telemetry payloads, Watch Mode controls, and mobile panel
+  behavior unchanged.
+- Design commit: `d322ad7 docs: design watch activity disclosure`
+- Plan commit: `f9bd261 docs: plan watch activity disclosure`
+- Implementation commit: `1c0a82d fix: collapse watch activity by default`
+
+### TDD RED
+
+The source/UI contract was added before production changes.
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/game-source-contracts.test.mjs
+```
+
+Output:
+
+```text
+not ok - Watch Mode activity defaults to a compact accessible disclosure
+AssertionError: The input did not match
+/const \[watchActivityExpanded, setWatchActivityExpanded\] = useState\(false\)/
+tests 70
+pass 69
+fail 1
+duration_ms 88.091625
+exit 1
+```
+
+The failure was expected because the disclosure state and toggle did not exist.
+
+### TDD GREEN
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/game-source-contracts.test.mjs
+```
+
+Output after the implementation:
+
+```text
+ok - Watch Mode activity defaults to a compact accessible disclosure
+tests 70
+pass 70
+fail 0
+duration_ms 92.86625
+exit 0
+```
+
+After the compact event text was given a dedicated ellipsis-safe flex child, the
+same focused command was rerun:
+
+```text
+tests 70
+pass 70
+fail 0
+duration_ms 65.406125
+exit 0
+```
+
+### Related Watch/UI/system verification
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/game-source-contracts.test.mjs tests/game-systems.test.mjs tests/rendered-html.test.mjs
+```
+
+Output:
+
+```text
+tests 168
+pass 168
+fail 0
+duration_ms 130.847916
+exit 0
+```
+
+A scoped lint check of the changed source/test files had zero errors. Including
+`app/globals.css` in that scoped command produced the existing ESLint warning
+that CSS has no matching configuration; the required full lint command below
+does not target CSS and was clean.
+
+### Full verification
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node --test tests/*.test.mjs
+```
+
+Output:
+
+```text
+tests 203
+suites 0
+pass 203
+fail 0
+cancelled 0
+skipped 0
+todo 0
+duration_ms 156.465416
+exit 0
+```
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node_modules/.bin/eslint app tests
+```
+
+Output:
+
+```text
+exit 0
+(no stdout/stderr)
+```
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node_modules/.bin/tsc --noEmit
+```
+
+Output:
+
+```text
+exit 0
+(no stdout/stderr)
+```
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node_modules/.bin/vinext build
+```
+
+Output:
+
+```text
+vinext build (Vite 8.0.13)
+136 client-reference modules transformed
+89 server-reference modules transformed
+142 RSC modules transformed
+96 client-environment modules transformed
+95 SSR-environment modules transformed
+Build complete. Run `vinext start` to start the production server.
+exit 0
+```
+
+The build repeated the non-fatal chunk-size and vinext route-classification
+warnings documented above.
+
+Commands:
+
+```text
+git restore -- tsconfig.tsbuildinfo
+git diff --check
+git status --short --branch
+```
+
+Output:
+
+```text
+git restore: exit 0
+git diff --check: exit 0; no output
+## main...origin/main [ahead 3]
+```
+
+Only the three committed design, plan, and implementation commits were ahead;
+the worktree was clean. They were pushed with:
+
+```text
+git push origin main
+```
+
+Output:
+
+```text
+To https://github.com/iang0h/freeman-protocol.git
+   a76edc7..1c0a82d  main -> main
+exit 0
+```
+
+### Follow-up production deployment
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH pnpm dlx vercel --prod --yes --archive=tgz
+```
+
+Output:
+
+```text
+Vercel CLI 58.4.0 (Node.js 24.14.0)
+Deploying iango/freeman-protocol
+Production https://freeman-protocol-kg5orhtp2-iango.vercel.app
+Compiled successfully in 9.9s
+Finished TypeScript in 7.7s
+Generated static pages (6/6)
+Build Completed in /vercel/output [22s]
+Aliased https://freeman.skillrivals.com
+readyState: READY
+target: production
+message: Deployment freeman-protocol-kg5orhtp2-iango.vercel.app ready.
+exit 0
+```
+
+Vercel repeated the non-blocking broad Node-engine warning documented above.
+
+Command:
+
+```text
+PATH=/Users/iangoh/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH pnpm dlx vercel ls freeman-protocol --yes
+```
+
+Relevant output:
+
+```text
+Deployment: https://freeman-protocol-kg5orhtp2-iango.vercel.app
+Status: Ready
+Environment: Production
+Duration: 35s
+exit 0
+```
+
+Command:
+
+```text
+curl -sS -I -L 'https://freeman.skillrivals.com/?v=1c0a82d'
+```
+
+Output:
+
+```text
+HTTP/2 200
+content-type: text/html; charset=utf-8
+server: Vercel
+x-matched-path: /
+x-nextjs-prerender: 1
+content-length: 17183
+exit 0
+```
