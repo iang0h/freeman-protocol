@@ -39,6 +39,21 @@ const ARENA_ZONES = Object.freeze({
   }),
 });
 
+const OPEN_FLOOR_ZONES = Object.freeze({
+  repair: Object.freeze({
+    id: "repair",
+    label: "WEST APPROACH",
+    shortLabel: "WEST",
+    kind: "open-floor",
+  }),
+  compute: Object.freeze({
+    id: "compute",
+    label: "EAST APPROACH",
+    shortLabel: "EAST",
+    kind: "open-floor",
+  }),
+});
+
 const CORE_RADIUS = 1.75;
 const REPAIR_BAY = Object.freeze({ x: -3.1, z: 1.15, radius: 1.25 });
 const COMPUTE_NODE = Object.freeze({ x: 3.1, z: 1.15, radius: 1.25 });
@@ -76,7 +91,7 @@ export function getArenaZone(position) {
   if (point.z <= NORTH_BREACH_Z) return Object.freeze({ ...ARENA_ZONES["north-breach"] });
   if (point.z >= SOUTH_BREACH_Z) return Object.freeze({ ...ARENA_ZONES["south-breach"] });
   return Object.freeze({
-    ...(point.x < 0 ? ARENA_ZONES.repair : ARENA_ZONES.compute),
+    ...(point.x < 0 ? OPEN_FLOOR_ZONES.repair : OPEN_FLOOR_ZONES.compute),
   });
 }
 
