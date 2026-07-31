@@ -26,6 +26,10 @@ const threeResources = await readFile(
   new URL("../app/game/three-resources.ts", import.meta.url),
   "utf8",
 );
+const combatPresentationRules = await readFile(
+  new URL("../app/game/combat-presentation-rules.mjs", import.meta.url),
+  "utf8",
+).catch(() => "");
 const webglGame = game.slice(
   game.indexOf("class FreemanEngine"),
   game.indexOf("type FlatEnemy"),
@@ -34,6 +38,15 @@ const canvasGame = game.slice(
   game.indexOf("class FreemanCanvasEngine"),
   game.indexOf("export default function FreemanProtocol"),
 );
+
+test("combat presentation rules stay renderer-independent", () => {
+  assert.match(combatPresentationRules, /export const OVERLAYS/);
+  assert.match(combatPresentationRules, /export function createOverlayState/);
+  assert.match(combatPresentationRules, /export function toggleOverlay/);
+  assert.match(combatPresentationRules, /export function getArenaZone/);
+  assert.match(combatPresentationRules, /export function classifyCombatFeedback/);
+  assert.doesNotMatch(combatPresentationRules, /from\s+["'][^"']*(?:three|FreemanProtocol)/i);
+});
 
 test("enemy rendering does not allocate a point light per enemy", () => {
   const createEnemy = game.slice(

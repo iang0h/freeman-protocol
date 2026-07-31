@@ -122,10 +122,71 @@ import {
   setWatchSpeed,
   tickWatchState,
 } from "../app/game/watch-mode-rules.mjs";
+import {
+  OVERLAYS,
+  classifyCombatFeedback,
+  createOverlayState,
+  getArenaZone,
+  toggleOverlay,
+} from "../app/game/combat-presentation-rules.mjs";
 
 async function loadRepairRules() {
   return import("../app/game/repair-rules.mjs");
 }
+
+test("combat presentation keeps one management overlay active at a time", () => {
+  const initial = createOverlayState();
+  const intel = toggleOverlay(initial, "intel");
+
+  assert.deepEqual(OVERLAYS, ["closed", "intel", "warband", "actions"]);
+  assert.deepEqual(initial, { active: "closed" });
+  assert.deepEqual(intel, { active: "intel" });
+  assert.notEqual(intel, initial);
+  assert.deepEqual(toggleOverlay(intel, "warband"), { active: "warband" });
+  assert.deepEqual(toggleOverlay(intel, "intel"), { active: "closed" });
+});
+
+test("combat presentation assigns deterministic compact-arena zones", () => {
+  assert.deepEqual(getArenaZone({ x: 0, z: 0 }), {
+    id: "core",
+    label: "CORE CHAMBER",
+    shortLabel: "CORE",
+    kind: "core",
+  });
+  assert.equal(getArenaZone({ x: -3.1, z: 1.15 }).id, "repair");
+  assert.equal(getArenaZone({ x: 3.1, z: 1.15 }).id, "compute");
+  assert.equal(getArenaZone({ x: 0, z: -5 }).id, "north-breach");
+  assert.equal(getArenaZone({ x: 0, z: 5 }).id, "south-breach");
+  assert.equal(getArenaZone({ x: 0, z: -7 }).id, "boss-portal");
+  assert.equal(
+    getArenaZone({ x: 0, z: -6 }).id,
+    "boss-portal",
+    "the portal owns its shared north-lane boundary",
+  );
+});
+
+test("combat presentation classifies combat feedback by outcome", () => {
+  assert.deepEqual(classifyCombatFeedback({ damage: 12 }), {
+    kind: "hit",
+    emphasis: "standard",
+    label: "12",
+  });
+  assert.deepEqual(classifyCombatFeedback({ damage: 24, critical: true }), {
+    kind: "critical",
+    emphasis: "strong",
+    label: "CRITICAL 24",
+  });
+  assert.deepEqual(classifyCombatFeedback({ damage: 8, killed: true }), {
+    kind: "kill",
+    emphasis: "strong",
+    label: "KILL 8",
+  });
+  assert.deepEqual(classifyCombatFeedback({ kind: "core-warning", damage: 9 }), {
+    kind: "core-warning",
+    emphasis: "urgent",
+    label: "CORE HIT 9",
+  });
+});
 
 test("repair lifecycle persists at the bay until the configured return ratio", async () => {
   const { getRepairDecision, tickRepairBay } = await loadRepairRules();
