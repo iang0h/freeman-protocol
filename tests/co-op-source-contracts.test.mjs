@@ -227,7 +227,7 @@ test("co-op combat renders the authoritative snapshot while local simulation is 
   assert.match(styles, /\.co-op-remote-status/);
   assert.match(styles, /\.co-op-connection-strip/);
   assert.match(styles, /\.co-op-world/);
-  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*?\.co-op-world__hud/);
+  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*?\.co-op-world__hud\s*\{\s*display:\s*none/);
 });
 
 test("co-op starts with every mobile command tray collapsed", async () => {

@@ -3959,22 +3959,7 @@ canvas:focus-visible {
 
 @media (max-width: 820px) {
   .co-op-world__hud {
-    top: calc(env(safe-area-inset-top) + 72px);
-    right: 10px;
-    grid-template-columns: repeat(2, minmax(72px, 1fr));
-    width: min(194px, calc(100vw - 20px));
-  }
-
-  .co-op-world__hud span {
-    padding: 7px 8px;
-  }
-
-  .co-op-world__hud small {
-    font-size: 8px;
-  }
-
-  .co-op-world__hud strong {
-    font-size: 12px;
+    display: none;
   }
 
   .mobile-status-strip {
