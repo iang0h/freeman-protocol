@@ -91,22 +91,22 @@ function canonicalizeRuntimeEntity(value, fields) {
 }
 
 function canonicalizeRuntime(state) {
-  const enemies = Array.isArray(state.enemies) ? state.enemies.map((enemy) => canonicalizeRuntimeEntity(enemy, [
+  const enemies = state.enemies === undefined ? [] : Array.isArray(state.enemies) ? state.enemies.map((enemy) => canonicalizeRuntimeEntity(enemy, [
     ["kind", "identifier"], ["health", "number"], ["maxHealth", "number"], ["x", "number"], ["y", "number"], ["armored", "boolean"],
   ])) : null;
-  const loot = Array.isArray(state.loot) ? state.loot.map((item) => canonicalizeRuntimeEntity(item, [
+  const loot = state.loot === undefined ? [] : Array.isArray(state.loot) ? state.loot.map((item) => canonicalizeRuntimeEntity(item, [
     ["type", "identifier"], ["value", "number"], ["x", "number"], ["y", "number"],
   ])) : null;
-  const sentries = Array.isArray(state.sentries) ? state.sentries.map((sentry) => canonicalizeRuntimeEntity(sentry, [
+  const sentries = state.sentries === undefined ? [] : Array.isArray(state.sentries) ? state.sentries.map((sentry) => canonicalizeRuntimeEntity(sentry, [
     ["x", "number"], ["y", "number"], ["health", "number"], ["maxHealth", "number"],
   ])) : null;
-  const subAgents = Array.isArray(state.subAgents) ? state.subAgents.map((agent) => canonicalizeRuntimeEntity(agent, [
+  const subAgents = state.subAgents === undefined ? [] : Array.isArray(state.subAgents) ? state.subAgents.map((agent) => canonicalizeRuntimeEntity(agent, [
     ["parentId", "identifier"], ["role", "identifier"], ["remainingMs", "number"],
   ])) : null;
-  const boss = state.boss === null ? null : canonicalizeRuntimeEntity(state.boss, [
+  const boss = state.boss === undefined || state.boss === null ? null : canonicalizeRuntimeEntity(state.boss, [
     ["kind", "identifier"], ["health", "number"], ["maxHealth", "number"], ["x", "number"], ["y", "number"], ["scheduled", "boolean"],
   ]);
-  return enemies && loot && sentries && subAgents && (state.boss === null || boss)
+  return enemies && loot && sentries && subAgents && (state.boss === undefined || state.boss === null || boss)
     ? { enemies, loot, sentries, boss, subAgents }
     : null;
 }

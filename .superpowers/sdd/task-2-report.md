@@ -165,3 +165,42 @@ todo 0
 `tsc --noEmit --incremental false`, `vite build`, and `git diff --check` all
 exited 0. The Vite build retains its pre-existing chunk-size and
 ineffective-dynamic-import warnings.
+
+## Important review-fix update
+
+- Reserve deployment now stages all three children against copied materials and
+  child state. If the parent has fewer than three free slots, it returns
+  `RESERVE_CAPACITY` with the original room object and no partial debit.
+- Snapshot parsing remains protocol version 1 compatible: absent runtime
+  fields in legacy snapshots canonicalize to empty collections and a null boss,
+  while new authoritative snapshots continue to include those fields.
+
+### RED
+
+```text
+tests 18
+pass 16
+fail 2
+```
+
+The added tests exposed partial second-batch deployment and rejection of a
+previously valid v1 snapshot with no runtime fields.
+
+### GREEN and final verification
+
+Focused room/protocol tests: 18 passed, 0 failed.
+
+Full suite:
+
+```text
+tests 232
+pass 232
+fail 0
+cancelled 0
+skipped 0
+todo 0
+```
+
+`tsc --noEmit --incremental false`, `vite build`, and `git diff --check` all
+exited 0. Vite continues to emit its existing chunk-size and
+ineffective-dynamic-import warnings.

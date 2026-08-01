@@ -329,10 +329,9 @@ export function applyCoOpAction(state, playerId, message) {
     const materials = { components: state.resources.components, shards: state.resources.shards };
     for (let index = 0; index < PLAYER_RESERVE_BATCH_SIZE; index += 1) {
       const spawned = spawnTemporarySubAgent(parent, { wavePressure: 1, materials, subAgents });
-      if (!spawned) break;
+      if (!spawned) return { state, error: actionError("RESERVE_CAPACITY", "Reserve parent lacks room for a full batch") };
       subAgents.push(spawned);
     }
-    if (subAgents.length === (state.subAgents ?? []).length) return { state, error: actionError("INVALID_RESERVE", "No reserve can be deployed") };
     return { state: { ...state, resources: { ...state.resources, components: materials.components, shards: materials.shards }, subAgents }, error: null };
   }
 

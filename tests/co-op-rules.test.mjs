@@ -381,3 +381,46 @@ test("rejects unowned reserve agents and stale or pre-game input", async () => {
   assert.equal(reserve.error.code, "UNOWNED_AGENT");
   assert.strictEqual(reserve.room, accepted.room);
 });
+
+test("deploys a full reserve batch atomically or leaves the shared state unchanged", async () => {
+  const { applyClientMessage, createRoom, joinRoom, setPlayerReady, startRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({
+    roomCode: "ABC123",
+    seed: "test-seed",
+    resources: { compute: 45, components: 6, shards: 6 },
+  });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+  room = applyClientMessage(room, "p1", { type: "action", sequence: 1, action: "recruit", agentId: "kairos" }).room;
+  const first = applyClientMessage(room, "p1", { type: "action", sequence: 2, action: "deploy-reserve", agentId: "kairos" });
+
+  assert.equal(first.error, null);
+  assert.equal(first.room.subAgents.length, 3);
+  assert.deepEqual(first.room.resources, { compute: 0, components: 3, shards: 3, repairKits: 0, modules: 0 });
+
+  const second = applyClientMessage(first.room, "p1", { type: "action", sequence: 3, action: "deploy-reserve", agentId: "kairos" });
+  assert.equal(second.error.code, "RESERVE_CAPACITY");
+  assert.strictEqual(second.room, first.room);
+  assert.equal(second.room.subAgents.length, 3);
+  assert.equal(second.room.resources.components, 3);
+  assert.equal(second.room.resources.shards, 3);
+});
+
+test("accepts legacy v1 snapshots and defaults omitted runtime collections", async () => {
+  const { createEmptyCoOpSnapshot, parseServerMessage } = await import("../app/game/co-op-protocol.mjs");
+  const legacy = JSON.parse(JSON.stringify(createEmptyCoOpSnapshot("test-seed")));
+  delete legacy.enemies;
+  delete legacy.loot;
+  delete legacy.sentries;
+  delete legacy.boss;
+  delete legacy.subAgents;
+  const parsed = parseServerMessage({ type: "snapshot", snapshotId: 1, serverTick: 1, state: legacy });
+
+  assert.deepEqual(parsed.state.enemies, []);
+  assert.deepEqual(parsed.state.loot, []);
+  assert.deepEqual(parsed.state.sentries, []);
+  assert.equal(parsed.state.boss, null);
+  assert.deepEqual(parsed.state.subAgents, []);
+  assert.ok(Object.isFrozen(parsed.state.enemies));
+});
