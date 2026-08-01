@@ -142,6 +142,46 @@ test("reconnects with bounded backoff and resumes the authoritative snapshot", a
   assert.deepEqual(scheduled.slice(-3).map((timer) => timer.delay), [5, 10, 20]);
 });
 
+test("ignores stale socket messages after a newer connection opens", async () => {
+  const { TestSocket, sockets } = createSocketFactory();
+  const { createEmptyCoOpSnapshot, createMatchSummary } = await import("../app/game/co-op-protocol.mjs");
+  const { CoOpClient } = await import("../app/game/co-op-client.mjs");
+  const scheduled = [];
+  const receivedEvents = [];
+  const ended = [];
+  const client = new CoOpClient({
+    WebSocket: TestSocket,
+    setTimeout(callback) {
+      const timer = { callback, cleared: false };
+      scheduled.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      timer.cleared = true;
+    },
+    onEvent: (event) => receivedEvents.push(event),
+    onEnded: (message) => ended.push(message),
+  });
+
+  client.connect("wss://example.test/rooms/ABC123", "Ian");
+  sockets[0].open();
+  sockets[0].drop();
+  scheduled[0].callback();
+  sockets[1].open();
+  const liveState = { ...createEmptyCoOpSnapshot("seed"), wave: { number: 1, status: "playing", elapsedMs: 0 } };
+  sockets[1].receive({ type: "snapshot", snapshotId: 10, serverTick: 10, state: liveState });
+
+  sockets[0].receive({ type: "snapshot", snapshotId: 11, serverTick: 11, state: liveState });
+  sockets[0].receive({ type: "event", eventId: 1, kind: "hit", payload: { targetId: "enemy-1" } });
+  sockets[0].receive({ type: "ended", result: "defeat", summary: createMatchSummary() });
+
+  assert.equal(client.lastSnapshotId, 10);
+  assert.equal(client.lastEventId, 0);
+  assert.equal(client.connectionState, "playing");
+  assert.deepEqual(receivedEvents, []);
+  assert.deepEqual(ended, []);
+});
+
 test("does not retry permanent protocol errors and clears scheduled reconnects on disconnect", async () => {
   const { TestSocket, sockets } = createSocketFactory();
   const { CoOpClient } = await import("../app/game/co-op-client.mjs");

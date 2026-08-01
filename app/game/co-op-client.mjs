@@ -216,8 +216,14 @@ export class CoOpClient {
     this.socket = socket;
     const open = () => this.handleSocketOpen(socket, isReconnect);
     const close = () => this.handleSocketClose(socket);
-    const error = () => this.reportError({ type: "error", code: "SOCKET_ERROR", message: "The co-op connection encountered an error" });
-    const message = (event) => this.handleMessage(event);
+    const error = () => {
+      if (!this.isCurrentSocket(socket)) return;
+      this.reportError({ type: "error", code: "SOCKET_ERROR", message: "The co-op connection encountered an error" });
+    };
+    const message = (event) => {
+      if (!this.isCurrentSocket(socket)) return;
+      this.handleMessage(event);
+    };
     if (typeof socket.addEventListener === "function") {
       socket.addEventListener("open", open);
       socket.addEventListener("close", close);
@@ -247,6 +253,10 @@ export class CoOpClient {
     this.socket = null;
     if (this.manualDisconnect || this.permanentProtocolError || this.connectionState === "ended") return;
     this.scheduleReconnect();
+  }
+
+  isCurrentSocket(socket) {
+    return socket === this.socket && !this.ignoredSockets.has(socket);
   }
 
   scheduleReconnect() {
