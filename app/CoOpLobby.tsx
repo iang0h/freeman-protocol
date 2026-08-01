@@ -26,6 +26,24 @@ type RoomMessage = {
   players: RoomPlayer[];
 };
 
+export type CoOpMatchResult = "victory" | "defeat" | "abandoned" | "manual";
+
+export type MatchSummary = {
+  wavesSurvived: number;
+  coreHealth: number;
+  agentsRecruited: number;
+  resourcesGathered: {
+    compute: number;
+    components: number;
+    shards: number;
+  };
+  players: Array<{
+    id: string;
+    name: string;
+    contribution: Record<string, number>;
+  }>;
+};
+
 type CoOpLobbyClient = {
   connectionState?: string;
   onRoom?: (message: RoomMessage) => void;
@@ -43,7 +61,8 @@ type CoOpLobbyProps = {
   featureEnabled: boolean;
   room?: RoomMessage | null;
   connectionState?: string;
-  endedResult?: string;
+  endedResult?: CoOpMatchResult | "";
+  endedSummary?: MatchSummary | null;
   onStartSession: (session: { roomCode: string; playerId: string; client: CoOpLobbyClient }) => void;
   onCreateNewRoom: () => void;
   onLeave: () => void;
@@ -85,6 +104,21 @@ function statusLabel(state: LobbyState) {
   }
 }
 
+function resultLabel(result: CoOpMatchResult | "") {
+  switch (result) {
+    case "victory":
+      return "NETWORK SECURED";
+    case "defeat":
+      return "CORE OVERRUN";
+    case "abandoned":
+      return "ROOM ABANDONED";
+    case "manual":
+      return "RUN LEFT BY DEFENDER";
+    default:
+      return "CO-OP RUN ENDED";
+  }
+}
+
 export default function CoOpLobby({
   client,
   endpoint = "",
@@ -92,6 +126,7 @@ export default function CoOpLobby({
   room = null,
   connectionState = "idle",
   endedResult = "",
+  endedSummary = null,
   onStartSession,
   onCreateNewRoom,
   onLeave,
@@ -178,13 +213,19 @@ export default function CoOpLobby({
 
   function leaveRoom() {
     client.disconnect();
+    setRoomCode("");
+    setCreatedRoom(false);
+    setCopyHint("");
+    setView("landing");
     onLeave();
   }
 
   function createFreshRoom() {
+    client.disconnect();
     onCreateNewRoom();
     setRoomCode("");
     setCopyHint("");
+    setView("landing");
     createRoom();
   }
 
@@ -198,7 +239,7 @@ export default function CoOpLobby({
           <small>CO-OP NETWORK DEFENSE</small>
         </div>
         <button type="button" className="co-op-lobby__leave" onClick={leaveRoom}>
-          BACK TO SOLO
+          LEAVE ROOM
         </button>
       </header>
 
@@ -294,11 +335,57 @@ export default function CoOpLobby({
         )}
 
         {lobbyState === "ended" && (
-          <div className="co-op-lobby__ended-actions">
-            <p className="co-op-lobby__end-note">{endedResult.toUpperCase()} · Create a fresh room to begin another run.</p>
-            <button type="button" className="co-op-lobby__primary" disabled={!featureEnabled} onClick={createFreshRoom}>
-              CREATE NEW ROOM
-            </button>
+          <div className="co-op-lobby__ended">
+            <section className="co-op-lobby__summary" aria-labelledby="co-op-summary-title">
+              <p className="co-op-lobby__eyebrow">MATCH SUMMARY</p>
+              <h2 id="co-op-summary-title">{resultLabel(endedResult)}</h2>
+              {endedSummary ? (
+                <>
+                  <div className="co-op-lobby__summary-grid">
+                    <div>
+                      <span>WAVES SURVIVED</span>
+                      <strong>{endedSummary.wavesSurvived}</strong>
+                    </div>
+                    <div>
+                      <span>CORE HEALTH</span>
+                      <strong>{endedSummary.coreHealth}</strong>
+                    </div>
+                    <div>
+                      <span>AGENTS RECRUITED</span>
+                      <strong>{endedSummary.agentsRecruited}</strong>
+                    </div>
+                  </div>
+                  <div className="co-op-lobby__summary-resources">
+                    <span>RESOURCES GATHERED</span>
+                    <strong>
+                      {endedSummary.resourcesGathered.compute} C · {endedSummary.resourcesGathered.components} COMP · {endedSummary.resourcesGathered.shards} SHARDS
+                    </strong>
+                  </div>
+                  <div className="co-op-lobby__contributions" aria-label="Defender contributions">
+                    <span>DEFENDER CONTRIBUTIONS</span>
+                    {endedSummary.players.map((player) => (
+                      <div key={player.id}>
+                        <strong>{player.name}</strong>
+                        <small>
+                          {Object.entries(player.contribution).map(([key, value]) => `${key.replaceAll("_", " ")} ${value}`).join(" · ") || "NO RECORDED ACTIONS"}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="co-op-lobby__summary-note">RUN RESULTS ARE LOCAL TO THIS ROOM · NOTHING IS SAVED TO AN ACCOUNT</p>
+                </>
+              ) : (
+                <p className="co-op-lobby__end-note">{endedResult.toUpperCase()} · No contribution data was received before the room closed.</p>
+              )}
+            </section>
+            <div className="co-op-lobby__ended-actions">
+              <button type="button" className="co-op-lobby__primary" disabled={!featureEnabled} onClick={createFreshRoom}>
+                PLAY AGAIN · CREATE NEW ROOM
+              </button>
+              <button type="button" className="co-op-lobby__secondary" onClick={leaveRoom}>
+                LEAVE ROOM
+              </button>
+            </div>
           </div>
         )}
       </section>

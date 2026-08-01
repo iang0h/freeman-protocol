@@ -6,7 +6,7 @@ import FreemanProtocol, {
   type CoOpCombatSnapshot,
   type RecruitmentAdvisorViewState,
 } from "./FreemanProtocol";
-import CoOpLobby from "./CoOpLobby";
+import CoOpLobby, { type CoOpMatchResult, type MatchSummary } from "./CoOpLobby";
 import { createOverlayState, toggleOverlay } from "./game/combat-presentation-rules.mjs";
 import { CoOpClient } from "./game/co-op-client.mjs";
 
@@ -49,7 +49,8 @@ export default function Home() {
   const [coOpSession, setCoOpSession] = useState<CoOpSession | null>(null);
   const [coOpSnapshot, setCoOpSnapshot] = useState<CoOpCombatSnapshot | null>(null);
   const [coOpConnectionState, setCoOpConnectionState] = useState("idle");
-  const [coOpEndedResult, setCoOpEndedResult] = useState("");
+  const [coOpEndedResult, setCoOpEndedResult] = useState<CoOpMatchResult | "">("");
+  const [coOpEndedSummary, setCoOpEndedSummary] = useState<MatchSummary | null>(null);
   const [overlayState, setOverlayState] = useState(createOverlayState);
   const [advisorState, setAdvisorState] =
     useState<RecruitmentAdvisorViewState | null>(null);
@@ -57,11 +58,12 @@ export default function Home() {
   const [coOpClient] = useState(() => new CoOpClient({
     onRoom: (message: CoOpRoom) => setCoOpRoom(message),
     onSnapshot: (message: CoOpCombatSnapshot) => setCoOpSnapshot(message),
-    onEnded: (message: { result: string }) => {
+    onEnded: (message: { result: CoOpMatchResult; summary: MatchSummary }) => {
       setCoOpRoom(null);
       setCoOpSession(null);
       setCoOpSnapshot(null);
       setCoOpEndedResult(message.result);
+      setCoOpEndedSummary(message.summary);
       setCoOpLobbyOpen(true);
     },
     onConnectionChange: (state: string) => {
@@ -69,13 +71,14 @@ export default function Home() {
       if (state === "connecting") {
         setCoOpRoom(null);
         setCoOpEndedResult("");
+        setCoOpEndedSummary(null);
       }
     },
   }));
   const handleCoOpAction = useCallback((action: CoOpAction) => {
-    if (!coOpSession) return false;
+    if (!coOpSession || coOpConnectionState === "reconnecting") return false;
     return coOpClient.sendAction(action);
-  }, [coOpClient, coOpSession]);
+  }, [coOpClient, coOpConnectionState, coOpSession]);
   const recruitmentAdvice = advisorState?.recruitmentAdvice ?? null;
   const advisorAgentId =
     recruitmentAdvice?.state === "recruit"
@@ -146,6 +149,7 @@ export default function Home() {
         room={coOpRoom}
         connectionState={coOpConnectionState}
         endedResult={coOpEndedResult}
+        endedSummary={coOpEndedSummary}
         onStartSession={({ roomCode, playerId }) => {
           setCoOpSession({ roomCode, playerId });
           setCoOpSnapshot(null);
@@ -156,6 +160,7 @@ export default function Home() {
           setCoOpSession(null);
           setCoOpSnapshot(null);
           setCoOpEndedResult("");
+          setCoOpEndedSummary(null);
           setCoOpConnectionState("idle");
         }}
         onLeave={() => {
@@ -163,6 +168,7 @@ export default function Home() {
           setCoOpSession(null);
           setCoOpSnapshot(null);
           setCoOpEndedResult("");
+          setCoOpEndedSummary(null);
           setCoOpConnectionState("idle");
           setCoOpLobbyOpen(false);
         }}

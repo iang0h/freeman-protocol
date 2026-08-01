@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 function createSocketFactory() {
@@ -221,4 +222,37 @@ test("does not retry permanent protocol errors and clears scheduled reconnects o
   secondClient.disconnect();
   assert.equal(scheduled.at(-1).cleared, true);
   assert.equal(secondClient.connectionState, "idle");
+});
+
+test("renders an in-memory match summary for every co-op ending and offers a fresh run", async () => {
+  const [lobby, page, styles] = await Promise.all([
+    readFile(new URL("../app/CoOpLobby.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /coOpEndedSummary/);
+  assert.match(page, /setCoOpEndedSummary\(message\.summary\)/);
+  assert.match(lobby, /MATCH SUMMARY/);
+  assert.match(lobby, /wavesSurvived/);
+  assert.match(lobby, /resourcesGathered/);
+  assert.match(lobby, /contribution/);
+  assert.match(lobby, /PLAY AGAIN/);
+  assert.match(lobby, /LEAVE ROOM/);
+  assert.match(styles, /\.co-op-lobby__summary/);
+  assert.match(styles, /\.co-op-lobby__summary-grid/);
+});
+
+test("blocks duplicate co-op intents while reconnecting without persisting match economy", async () => {
+  const [page, lobby] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/CoOpLobby.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /coOpConnectionState === "reconnecting"/);
+  assert.match(page, /return false/);
+  assert.match(lobby, /connectionState === "reconnecting"/);
+  assert.match(lobby, /disabled=\{.*reconnecting/);
+  assert.match(lobby, /client\.disconnect\(\)/);
+  assert.doesNotMatch(page, /localStorage\.(setItem|getItem)\([^)]*economy/i);
 });

@@ -358,7 +358,8 @@ canvas:focus-visible {
 
 .co-op-lobby__copy-hint,
 .co-op-lobby__disabled-reason,
-.co-op-lobby__end-note {
+.co-op-lobby__end-note,
+.co-op-lobby__summary-note {
   margin: 8px 0 0;
   color: var(--muted);
   font-size: 12px;
@@ -407,6 +408,103 @@ canvas:focus-visible {
 
 .co-op-lobby__room-actions > div {
   min-width: 0;
+}
+
+.co-op-lobby__ended {
+  margin-top: 22px;
+}
+
+.co-op-lobby__summary {
+  padding: 18px;
+  border: 1px solid rgba(158, 191, 192, 0.34);
+  background: rgba(3, 9, 11, 0.72);
+}
+
+.co-op-lobby__summary h2 {
+  margin: 4px 0 18px;
+  color: var(--ivory);
+  font-family: var(--serif);
+  font-size: clamp(28px, 5vw, 42px);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+.co-op-lobby__summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.co-op-lobby__summary-grid > div,
+.co-op-lobby__summary-resources,
+.co-op-lobby__contributions {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+}
+
+.co-op-lobby__summary-grid span,
+.co-op-lobby__summary-resources > span,
+.co-op-lobby__contributions > span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+}
+
+.co-op-lobby__summary-grid strong,
+.co-op-lobby__summary-resources strong {
+  color: var(--ivory);
+  font-family: var(--mono);
+  font-size: 15px;
+  letter-spacing: 0.05em;
+}
+
+.co-op-lobby__summary-resources {
+  margin-top: 8px;
+}
+
+.co-op-lobby__contributions {
+  margin-top: 8px;
+}
+
+.co-op-lobby__contributions > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(225, 235, 231, 0.12);
+}
+
+.co-op-lobby__contributions > div strong {
+  color: var(--ivory);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.co-op-lobby__contributions > div small {
+  color: var(--ice);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-align: right;
+}
+
+.co-op-lobby__summary-note {
+  color: var(--ice);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.07em;
+}
+
+.co-op-lobby__ended-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 @media (max-width: 820px) {
@@ -486,6 +584,32 @@ canvas:focus-visible {
   .co-op-lobby__code-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .co-op-lobby__summary {
+    padding: 14px;
+  }
+
+  .co-op-lobby__summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .co-op-lobby__summary-grid > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .co-op-lobby__contributions > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .co-op-lobby__contributions > div small {
+    text-align: left;
+  }
+
+  .co-op-lobby__ended-actions {
+    grid-template-columns: 1fr;
   }
 }
 
