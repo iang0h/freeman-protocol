@@ -147,3 +147,33 @@ test("adapter broadcasts each queued authoritative event once per live instance"
   assert.equal(sent.filter((message) => message.type === "event").length, 1);
   assert.equal(sent.find((message) => message.type === "event").eventId, 1);
 });
+
+test("the focused co-op lobby provides an accessible room-code flow", async () => {
+  const [lobby, page] = await Promise.all([
+    readFile(new URL("../app/CoOpLobby.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /CO-OP/);
+  assert.match(page, /CoOpLobby/);
+  assert.match(page, /CO_OP_WS_URL/);
+  assert.match(page, /onLeave=\{\(\) => \{[\s\S]{0,240}setCoOpRoom\(null\)/);
+  assert.match(lobby, /CREATE ROOM/);
+  assert.match(lobby, /JOIN ROOM/);
+  assert.match(lobby, /ROOM CODE/);
+  assert.match(lobby, /DISPLAY NAME/);
+  assert.match(lobby, /COPY CODE/);
+  assert.match(lobby, /READY/);
+  assert.match(lobby, /START RUN/);
+  assert.match(lobby, /aria-live="polite"/);
+  assert.match(lobby, /navigator\.clipboard/);
+  assert.match(lobby, /CO-OP COMING SOON/);
+});
+
+test("co-op lobby CSS preserves a touch-safe single-column mobile screen", async () => {
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+
+  assert.match(styles, /\.co-op-lobby/);
+  assert.match(styles, /@media \(max-width: 820px\)/);
+  assert.match(styles, /\.co-op-lobby[\s\S]{0,800}min-height: 48px/);
+});

@@ -53,6 +53,362 @@ canvas:focus-visible {
   outline-offset: 3px;
 }
 
+.co-op-entry-shell {
+  position: relative;
+}
+
+.co-op-entry {
+  position: fixed;
+  top: 18px;
+  right: 238px;
+  z-index: 60;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  background: rgba(7, 10, 10, 0.82);
+  color: var(--ice);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+.co-op-entry:hover {
+  border-color: var(--ice);
+  color: var(--ivory);
+}
+
+.co-op-lobby {
+  position: relative;
+  display: grid;
+  min-height: 100dvh;
+  align-content: center;
+  overflow: auto;
+  padding: max(32px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  background: radial-gradient(circle at 55% 50%, rgba(43, 99, 106, 0.18), transparent 43%), #071014;
+}
+
+.co-op-lobby__grid {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.42;
+  background-image: linear-gradient(rgba(105, 167, 174, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(105, 167, 174, 0.1) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at center, black, transparent 74%);
+}
+
+.co-op-lobby__header,
+.co-op-lobby__panel {
+  position: relative;
+  z-index: 1;
+  width: min(720px, 100%);
+  margin-inline: auto;
+}
+
+.co-op-lobby__header {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 22px;
+  font-family: var(--mono);
+}
+
+.co-op-lobby__sigil {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid var(--signal);
+  color: var(--signal);
+  font-family: var(--serif);
+  font-size: 24px;
+  font-style: italic;
+}
+
+.co-op-lobby__header p,
+.co-op-lobby__header small {
+  display: block;
+  margin: 0;
+  letter-spacing: 0.14em;
+}
+
+.co-op-lobby__header p {
+  font-family: var(--serif);
+  font-size: 15px;
+}
+
+.co-op-lobby__header small,
+.co-op-lobby__eyebrow,
+.co-op-lobby__field > span,
+.co-op-lobby__code-row span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+}
+
+.co-op-lobby__leave {
+  min-height: 48px;
+  margin-left: auto;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  background: rgba(7, 10, 10, 0.7);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+.co-op-lobby__panel {
+  padding: clamp(22px, 5vw, 48px);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--signal);
+  background: linear-gradient(120deg, rgba(220, 117, 64, 0.08), transparent 54%), rgba(6, 13, 16, 0.94);
+  box-shadow: 0 26px 84px rgba(0, 0, 0, 0.42);
+}
+
+.co-op-lobby__eyebrow {
+  margin: 0 0 10px;
+  color: var(--signal);
+}
+
+.co-op-lobby h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: clamp(34px, 6vw, 66px);
+  font-weight: 500;
+  letter-spacing: 0.025em;
+}
+
+.co-op-lobby__intro {
+  max-width: 550px;
+  margin: 15px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.co-op-lobby__status {
+  margin: 26px 0 18px;
+  padding: 11px 13px;
+  border: 1px solid rgba(158, 191, 192, 0.34);
+  color: var(--ice);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.09em;
+}
+
+.co-op-lobby__field {
+  display: grid;
+  gap: 7px;
+}
+
+.co-op-lobby__field input {
+  min-height: 48px;
+  width: 100%;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  background: rgba(3, 9, 11, 0.9);
+  color: var(--ivory);
+  font-family: var(--mono);
+  font-size: 16px;
+  letter-spacing: 0.08em;
+}
+
+.co-op-lobby__field input:focus {
+  border-color: var(--ice);
+  outline: none;
+}
+
+.co-op-lobby__entry-actions,
+.co-op-lobby__room-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.co-op-lobby__join {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.co-op-lobby__primary,
+.co-op-lobby__secondary,
+.co-op-lobby__copy {
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--ice);
+  background: rgba(14, 49, 52, 0.65);
+  color: #e2f2ef;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+.co-op-lobby__secondary,
+.co-op-lobby__copy {
+  border-color: var(--line-strong);
+  background: rgba(6, 13, 16, 0.75);
+  color: var(--ivory);
+}
+
+.co-op-lobby__primary:hover:not(:disabled),
+.co-op-lobby__secondary:hover:not(:disabled),
+.co-op-lobby__copy:hover:not(:disabled),
+.co-op-lobby__leave:hover {
+  border-color: var(--signal);
+  color: var(--ivory);
+}
+
+.co-op-lobby button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.co-op-lobby__room {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.co-op-lobby__code-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.co-op-lobby__code-row > div {
+  display: grid;
+  gap: 4px;
+}
+
+.co-op-lobby__code-row strong {
+  color: var(--ivory);
+  font-family: var(--mono);
+  font-size: 26px;
+  letter-spacing: 0.18em;
+}
+
+.co-op-lobby__copy-hint,
+.co-op-lobby__disabled-reason,
+.co-op-lobby__end-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.co-op-lobby__copy-hint {
+  color: var(--ice);
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+}
+
+.co-op-lobby__players {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.co-op-lobby__player {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  color: var(--ivory);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.co-op-lobby__player strong {
+  color: var(--ice);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+}
+
+.co-op-lobby__player.is-empty {
+  justify-content: center;
+  border-style: dashed;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.co-op-lobby__room-actions > div {
+  min-width: 0;
+}
+
+@media (max-width: 820px) {
+  .co-op-entry {
+    top: calc(env(safe-area-inset-top) + 10px);
+    right: 12px;
+    min-height: 48px;
+  }
+
+  .co-op-lobby {
+    align-content: start;
+    padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  }
+
+  .co-op-lobby__header {
+    margin-bottom: 14px;
+  }
+
+  .co-op-lobby__header p {
+    font-size: 13px;
+  }
+
+  .co-op-lobby__leave {
+    min-height: 48px;
+    padding: 0 10px;
+    font-size: 8px;
+  }
+
+  .co-op-lobby__panel {
+    padding: 24px 18px;
+  }
+
+  .co-op-lobby h1 {
+    font-size: clamp(32px, 11vw, 48px);
+  }
+
+  .co-op-lobby__intro {
+    font-size: 14px;
+  }
+
+  .co-op-lobby__entry-actions,
+  .co-op-lobby__room-actions,
+  .co-op-lobby__join,
+  .co-op-lobby__players {
+    grid-template-columns: 1fr;
+  }
+
+  .co-op-lobby__primary,
+  .co-op-lobby__secondary,
+  .co-op-lobby__copy {
+    min-height: 48px;
+  }
+
+  .co-op-lobby__code-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .game-shell {
   position: relative;
   width: 100vw;

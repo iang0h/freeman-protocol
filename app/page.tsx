@@ -4,7 +4,11 @@ import { useState } from "react";
 import FreemanProtocol, {
   type RecruitmentAdvisorViewState,
 } from "./FreemanProtocol";
+import CoOpLobby from "./CoOpLobby";
 import { createOverlayState, toggleOverlay } from "./game/combat-presentation-rules.mjs";
+import { CoOpClient } from "./game/co-op-client.mjs";
+
+const CO_OP_WS_URL = process.env.NEXT_PUBLIC_CO_OP_WS_URL ?? "";
 
 const ADVISOR_LABELS = {
   recruit: "RECRUIT ADVISED",
@@ -26,11 +30,32 @@ const formatResources = (
   ? `${resources.compute} C · ${resources.components} COMP · ${resources.shards} SHARDS`
   : "NONE";
 
+type CoOpRoom = {
+  roomCode: string;
+  hostPlayerId?: string;
+  players: Array<{ id: string; name: string; ready: boolean; connected: boolean }>;
+};
+
 export default function Home() {
+  const [coOpLobbyOpen, setCoOpLobbyOpen] = useState(false);
+  const [coOpRoom, setCoOpRoom] = useState<CoOpRoom | null>(null);
+  const [coOpConnectionState, setCoOpConnectionState] = useState("idle");
+  const [coOpEndedResult, setCoOpEndedResult] = useState("");
   const [overlayState, setOverlayState] = useState(createOverlayState);
   const [advisorState, setAdvisorState] =
     useState<RecruitmentAdvisorViewState | null>(null);
   const [advisorRequestKey, setAdvisorRequestKey] = useState(0);
+  const [coOpClient] = useState(() => new CoOpClient({
+    onRoom: (message: CoOpRoom) => setCoOpRoom(message),
+    onEnded: (message: { result: string }) => setCoOpEndedResult(message.result),
+    onConnectionChange: (state: string) => {
+      setCoOpConnectionState(state);
+      if (state === "connecting") {
+        setCoOpRoom(null);
+        setCoOpEndedResult("");
+      }
+    },
+  }));
   const recruitmentAdvice = advisorState?.recruitmentAdvice ?? null;
   const advisorAgentId =
     recruitmentAdvice?.state === "recruit"
@@ -92,7 +117,38 @@ export default function Home() {
     </aside>
   ) : null;
 
+  if (coOpLobbyOpen) {
+    return (
+      <CoOpLobby
+        client={coOpClient}
+        endpoint={CO_OP_WS_URL}
+        featureEnabled={Boolean(CO_OP_WS_URL)}
+        room={coOpRoom}
+        connectionState={coOpConnectionState}
+        endedResult={coOpEndedResult}
+        onStartSession={() => {
+          // Task 6 projects this authoritative session into the combat renderer.
+        }}
+        onLeave={() => {
+          setCoOpRoom(null);
+          setCoOpEndedResult("");
+          setCoOpConnectionState("idle");
+          setCoOpLobbyOpen(false);
+        }}
+      />
+    );
+  }
+
   return (
+    <div className="co-op-entry-shell">
+      <button
+        type="button"
+        className="co-op-entry"
+        onClick={() => setCoOpLobbyOpen(true)}
+        aria-label="Open co-op lobby"
+      >
+        CO-OP
+      </button>
     <FreemanProtocol
       overlayState={overlayState}
       onToggleOverlay={(panel) =>
@@ -103,5 +159,6 @@ export default function Home() {
       advisorAgentId={advisorAgentId}
       advisorRequestKey={advisorRequestKey}
     />
+    </div>
   );
 }
