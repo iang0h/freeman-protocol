@@ -8,11 +8,14 @@ import {
   applyClientMessage,
   createRoom,
   disconnectPlayer,
+  endRoom,
+  getEndedMessage,
+  getExpiredDisconnectedPlayerIds,
+  getNextDisconnectDeadline,
   getRoomMessage,
   getSnapshot,
   joinRoom,
   reconnectPlayer,
-  startRoom,
   tickRoom,
 } from "../app/game/co-op-room.mjs";
 
@@ -81,14 +84,20 @@ function roomCodeFromRequest(request: Request) {
  * intents; snapshots are always derived from the shared room reducer.
  */
 export class MultiplayerRoom {
+  private readonly state: DurableObjectState;
   private room: RoomState | null = null;
   private readonly sockets = new Map<string, RoomSocket>();
+  private readonly socketAttachments = new Map<RoomSocket, SocketAttachment>();
   private tickTimer: ReturnType<typeof setTimeout> | null = null;
   private broadcastElapsedMs = 0;
   private nextSocketId = 1;
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly handledSockets = new WeakSet<RoomSocket>();
+  private finishingRoom = false;
 
-  constructor(private readonly state: DurableObjectState) {}
+  constructor(state: DurableObjectState) {
+    this.state = state;
+  }
 
   async fetch(request: Request): Promise<Response> {
     if (request.method !== "GET") {
@@ -101,7 +110,6 @@ export class MultiplayerRoom {
     const roomCode = roomCodeFromRequest(request);
     if (!roomCode) return new Response("Invalid room code", { status: 400 });
     await this.ensureRoom(roomCode);
-    await this.cancelRoomExpiry();
 
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -114,6 +122,7 @@ export class MultiplayerRoom {
     };
     server.serializeAttachment?.(attachment);
     this.sockets.set(attachment.socketId, server);
+    this.socketAttachments.set(server, attachment);
 
     if (typeof this.state.acceptWebSocket === "function") {
       this.state.acceptWebSocket(server);
@@ -123,6 +132,7 @@ export class MultiplayerRoom {
       server.addEventListener("close", () => void this.closeSocket(server));
       server.addEventListener("error", () => void this.closeSocket(server));
     }
+    await this.scheduleNextAlarm();
 
     return new Response(null, { status: 101, webSocket: client } as WebSocketResponseInit);
   }
@@ -140,11 +150,23 @@ export class MultiplayerRoom {
   }
 
   async alarm(): Promise<void> {
-    await this.expireRoom();
+    this.expiryTimer = null;
+    if (!this.room) this.room = await this.state.storage.get<RoomState>(ROOM_STORAGE_KEY) ?? null;
+    if (!this.room) return;
+    if (this.room.phase === "ended") {
+      await this.finishRoom(this.room.result ?? "abandoned");
+      return;
+    }
+    if (await this.finishExpiredDisconnects()) return;
+    if (this.connectedSockets().length === 0) {
+      await this.expireRoom();
+      return;
+    }
+    await this.scheduleNextAlarm();
   }
 
   private socketAttachment(socket: RoomSocket): SocketAttachment | null {
-    const attachment = socket.deserializeAttachment?.();
+    const attachment = socket.deserializeAttachment?.() ?? this.socketAttachments.get(socket);
     if (!attachment || typeof attachment !== "object") return null;
     return attachment;
   }
@@ -152,9 +174,10 @@ export class MultiplayerRoom {
   private async ensureRoom(roomCode: string): Promise<RoomState> {
     if (this.room) return this.room;
     const stored = await this.state.storage.get<RoomState>(ROOM_STORAGE_KEY);
-    this.room = stored && stored.roomCode === roomCode
+    this.room = stored && stored.roomCode === roomCode && stored.phase !== "ended"
       ? stored
       : createRoom({ roomCode, seed: roomCode });
+    if (stored?.phase === "ended") await this.state.storage.delete(ROOM_STORAGE_KEY);
     return this.room;
   }
 
@@ -190,6 +213,7 @@ export class MultiplayerRoom {
     }
     this.sockets.set(attachment.socketId, socket);
     await this.ensureRoom(attachment.roomCode);
+    if (await this.finishExpiredDisconnects()) return;
 
     const message = parseClientMessage(rawMessage);
     if (!message) {
@@ -226,11 +250,9 @@ export class MultiplayerRoom {
       return;
     }
     this.room = transition.room;
-    if (this.room.phase === "ready" && this.room.players.every((player: CoOpPlayer) => player.ready && player.connected)) {
-      this.room = startRoom(this.room);
-    }
     await this.persistRoom();
     this.broadcastRoomAndSnapshot();
+    await this.scheduleNextAlarm();
     this.scheduleTick();
   }
 
@@ -238,7 +260,7 @@ export class MultiplayerRoom {
     const room = await this.ensureRoom(attachment.roomCode);
     const name = normalizeDisplayName(displayName);
     const reconnectable = room.players.find((player: CoOpPlayer) => (
-      player.id && !player.connected && player.name === name && room.disconnectDeadlines[player.id] >= Date.now()
+      player.id && !player.connected && player.name === name && room.disconnectDeadlines[player.id] > Date.now()
     ));
     try {
       if (reconnectable?.id) {
@@ -253,6 +275,7 @@ export class MultiplayerRoom {
       socket.serializeAttachment?.(attachment);
       await this.persistRoom();
       this.broadcastRoomAndSnapshot();
+      await this.scheduleNextAlarm();
       this.scheduleTick();
     } catch (failure) {
       const code = failure instanceof Error ? failure.message : "ROOM_UNAVAILABLE";
@@ -269,17 +292,17 @@ export class MultiplayerRoom {
   private async tick(): Promise<void> {
     this.tickTimer = null;
     if (!this.room || this.room.phase !== "playing") return;
+    if (await this.finishExpiredDisconnects()) return;
     this.room = tickRoom(this.room, TICK_INTERVAL_MS);
     this.broadcastElapsedMs += TICK_INTERVAL_MS;
+    if (this.room.phase === "ended") {
+      await this.finishRoom(this.room.result ?? "defeat");
+      return;
+    }
     await this.persistRoom();
-    if (this.broadcastElapsedMs >= BROADCAST_INTERVAL_MS || this.room.phase === "ended") {
+    if (this.broadcastElapsedMs >= BROADCAST_INTERVAL_MS) {
       this.broadcastElapsedMs = 0;
       this.broadcastRoomAndSnapshot();
-    }
-    if (this.room.phase === "ended") {
-      this.stopTick();
-      await this.scheduleRoomExpiry();
-      return;
     }
     this.scheduleTick();
   }
@@ -290,11 +313,14 @@ export class MultiplayerRoom {
   }
 
   private async closeSocket(socket: RoomSocket): Promise<void> {
+    if (this.handledSockets.has(socket)) return;
+    this.handledSockets.add(socket);
     const attachment = this.socketAttachment(socket);
     if (!attachment) return;
     this.sockets.delete(attachment.socketId);
+    this.socketAttachments.delete(socket);
     await this.ensureRoom(attachment.roomCode);
-    if (attachment.playerId && this.room) {
+    if (attachment.playerId && this.room?.phase !== "ended") {
       try {
         this.room = disconnectPlayer(this.room, attachment.playerId);
         await this.persistRoom();
@@ -303,22 +329,56 @@ export class MultiplayerRoom {
         // The socket may have already been replaced or the room may have expired.
       }
     }
-    if (this.connectedSockets().length === 0) await this.scheduleRoomExpiry();
+    await this.scheduleNextAlarm();
   }
 
-  private async cancelRoomExpiry(): Promise<void> {
+  private async cancelScheduledAlarm(): Promise<void> {
     if (this.expiryTimer) clearTimeout(this.expiryTimer);
     this.expiryTimer = null;
     await this.state.storage.deleteAlarm?.();
   }
 
-  private async scheduleRoomExpiry(): Promise<void> {
-    if (this.state.storage.setAlarm) {
-      await this.state.storage.setAlarm(Date.now() + ROOM_IDLE_EXPIRY_MS);
+  private async scheduleNextAlarm(): Promise<void> {
+    if (this.expiryTimer) clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+    const disconnectDeadline = this.room ? getNextDisconnectDeadline(this.room) : null;
+    const scheduledTime = disconnectDeadline ?? (this.connectedSockets().length === 0 ? Date.now() + ROOM_IDLE_EXPIRY_MS : null);
+    if (scheduledTime === null) {
+      await this.state.storage.deleteAlarm?.();
       return;
     }
-    if (this.expiryTimer) return;
-    this.expiryTimer = setTimeout(() => void this.expireRoom(), ROOM_IDLE_EXPIRY_MS);
+    if (this.state.storage.setAlarm) {
+      await this.state.storage.setAlarm(scheduledTime);
+      return;
+    }
+    this.expiryTimer = setTimeout(() => void this.alarm(), Math.max(0, scheduledTime - Date.now()));
+  }
+
+  private async finishExpiredDisconnects(now = Date.now()): Promise<boolean> {
+    if (!this.room || getExpiredDisconnectedPlayerIds(this.room, now).length === 0) return false;
+    await this.finishRoom("abandoned");
+    return true;
+  }
+
+  private async finishRoom(result: "victory" | "defeat" | "abandoned"): Promise<void> {
+    if (!this.room || this.finishingRoom) return;
+    this.finishingRoom = true;
+    const endedRoom = this.room.phase === "ended" && ["victory", "defeat", "abandoned"].includes(this.room.result)
+      ? this.room
+      : endRoom(this.room, result);
+    const endedMessage = getEndedMessage(endedRoom);
+    const sockets = this.connectedSockets();
+    for (const socket of sockets) this.handledSockets.add(socket);
+    this.stopTick();
+    this.broadcast(getSnapshot(endedRoom));
+    this.broadcast(endedMessage);
+    await this.cancelScheduledAlarm();
+    this.room = null;
+    await this.state.storage.delete(ROOM_STORAGE_KEY);
+    for (const socket of sockets) socket.close(1000, "ROOM_ENDED");
+    this.sockets.clear();
+    this.socketAttachments.clear();
+    this.finishingRoom = false;
   }
 
   private async expireRoom(): Promise<void> {

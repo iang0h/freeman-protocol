@@ -1,4 +1,5 @@
 import {
+  createMatchSummary,
   createEmptyCoOpSnapshot,
   normalizeDisplayName,
   parseClientMessage,
@@ -64,6 +65,7 @@ export function createRoom(options = {}) {
   return freeze({
     phase: "waiting",
     roomCode,
+    hostPlayerId: null,
     seed: snapshot.seed,
     players: snapshot.players.map((player) => playerSlot(player, player.slot)),
     core: clone(snapshot.core),
@@ -83,6 +85,7 @@ export function createRoom(options = {}) {
     subAgents: [],
     autonomousElapsedMs: 0,
     boss: null,
+    result: null,
   });
 }
 
@@ -102,6 +105,7 @@ export function joinRoom(room, player) {
     connected: true,
     ready: false,
   };
+  if (!next.hostPlayerId) next.hostPlayerId = id;
   if (next.players.every((entry) => entry.id !== null)) next.phase = "ready";
   return freeze(next);
 }
@@ -142,6 +146,14 @@ export function applyClientMessage(room, playerId, message) {
       return result(setPlayerReady(room, playerId, parsed.ready));
     } catch (failure) {
       return result(room, error("ROOM_CLOSED", failure.message));
+    }
+  }
+  if (parsed.type === "start") {
+    if (room.hostPlayerId !== playerId) return result(room, error("HOST_ONLY", "Only the host can start the room"));
+    try {
+      return result(startRoom(room));
+    } catch (failure) {
+      return result(room, error("ROOM_NOT_READY", failure.message));
     }
   }
   if (parsed.type === "input") {
@@ -186,8 +198,57 @@ export function disconnectPlayer(room, playerId, now = Date.now()) {
   if (!Number.isFinite(now)) throw new Error("INVALID_TIME");
   const next = cloneRoom(room);
   next.players[index].connected = false;
+  next.players[index].input = {
+    moveX: 0,
+    moveY: 0,
+    aimX: next.players[index].input?.aimX ?? next.players[index].operator?.aimX ?? 0,
+    aimY: next.players[index].input?.aimY ?? next.players[index].operator?.aimY ?? 1,
+  };
   next.disconnectDeadlines[playerId] = now + RECONNECT_GRACE_MS;
   return freeze(next);
+}
+
+export function getNextDisconnectDeadline(room) {
+  assertRoom(room);
+  const deadlines = room.players
+    .filter((player) => player.id && !player.connected)
+    .map((player) => room.disconnectDeadlines[player.id])
+    .filter(Number.isFinite);
+  return deadlines.length > 0 ? Math.min(...deadlines) : null;
+}
+
+export function getExpiredDisconnectedPlayerIds(room, now = Date.now()) {
+  assertRoom(room);
+  if (!Number.isFinite(now)) throw new Error("INVALID_TIME");
+  return freeze(room.players
+    .filter((player) => player.id && !player.connected && Number.isFinite(room.disconnectDeadlines[player.id]) && now >= room.disconnectDeadlines[player.id])
+    .map((player) => player.id));
+}
+
+export function endRoom(room, matchResult = "abandoned") {
+  assertRoom(room);
+  if (!["victory", "defeat", "abandoned"].includes(matchResult)) throw new Error("INVALID_MATCH_RESULT");
+  const next = cloneRoom(room);
+  next.phase = "ended";
+  next.result = matchResult;
+  next.wave = { ...next.wave, status: "ended" };
+  next.players = next.players.map((player) => ({
+    ...player,
+    input: { moveX: 0, moveY: 0, aimX: player.input?.aimX ?? 0, aimY: player.input?.aimY ?? 1 },
+  }));
+  return freeze(next);
+}
+
+export function getEndedMessage(room) {
+  assertRoom(room);
+  if (room.phase !== "ended") throw new Error("ROOM_NOT_ENDED");
+  const message = parseServerMessage({
+    type: "ended",
+    result: room.result,
+    summary: createMatchSummary(room),
+  });
+  if (!message) throw new Error("INVALID_MATCH_SUMMARY");
+  return message;
 }
 
 export function reconnectPlayer(room, playerId, now = Date.now()) {
@@ -195,7 +256,7 @@ export function reconnectPlayer(room, playerId, now = Date.now()) {
   const index = playerIndex(room, playerId);
   if (index < 0) throw new Error("UNKNOWN_PLAYER");
   const deadline = room.disconnectDeadlines[playerId];
-  if (!Number.isFinite(deadline) || !Number.isFinite(now) || now > deadline) throw new Error("RECONNECT_EXPIRED");
+  if (!Number.isFinite(deadline) || !Number.isFinite(now) || now >= deadline) throw new Error("RECONNECT_EXPIRED");
   const next = cloneRoom(room);
   next.players[index].connected = true;
   delete next.disconnectDeadlines[playerId];
@@ -207,6 +268,7 @@ export function getRoomMessage(room) {
   return parseServerMessage({
     type: "room",
     roomCode: room.roomCode,
+    ...(room.hostPlayerId ? { hostPlayerId: room.hostPlayerId } : {}),
     players: room.players.filter((player) => player.id).map((player) => ({
       id: player.id,
       name: player.name,

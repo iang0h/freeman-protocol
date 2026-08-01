@@ -177,7 +177,7 @@ function collectVisibleLoot(state) {
 function tickOperators(state, elapsedMs) {
   return (state.players ?? []).map((player) => {
     const operator = player.operator ?? {};
-    const input = player.input ?? {};
+    const input = player.connected ? player.input ?? {} : {};
     const distance = elapsedMs / 1_000 * 3;
     const length = Math.hypot(finite(input.moveX), finite(input.moveY));
     const scale = length > 1 ? 1 / length : 1;

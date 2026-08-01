@@ -56,6 +56,7 @@ test("parses only valid client messages without mutating input", async () => {
   });
   assert.equal(isClientMessage({ type: "unknown" }), false);
   assert.equal(isClientMessage({ type: "ready", ready: true }), true);
+  assert.deepEqual(parseClientMessage({ type: "start" }), { type: "start" });
 });
 
 test("rejects unsafe client action identifiers at the protocol boundary", async () => {
@@ -222,8 +223,24 @@ test("starts only a two-player ready room without mutating earlier states", asyn
 
   assert.equal(created.phase, "waiting");
   assert.equal(withHost.players.filter((player) => player.id).length, 1);
+  assert.equal(withHost.hostPlayerId, "p1");
   assert.equal(started.phase, "playing");
   assert.equal(started.wave.status, "playing");
+});
+
+test("only the host can start a fully ready connected room", async () => {
+  const { applyClientMessage, createRoom, getRoomMessage, joinRoom, setPlayerReady } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+
+  assert.equal(getRoomMessage(room).hostPlayerId, "p1");
+  assert.equal(applyClientMessage(room, "p1", { type: "start" }).error.code, "ROOM_NOT_READY");
+  room = setPlayerReady(setPlayerReady(room, "p1", true), "p2", true);
+  assert.equal(applyClientMessage(room, "p2", { type: "start" }).error.code, "HOST_ONLY");
+  const started = applyClientMessage(room, "p1", { type: "start" });
+  assert.equal(started.error, null);
+  assert.equal(started.room.phase, "playing");
 });
 
 test("caps rooms at two players and reports lifecycle validation errors", async () => {
@@ -275,15 +292,49 @@ test("produces monotonically numbered immutable snapshots", async () => {
 });
 
 test("preserves a disconnected player for a thirty-second reconnect grace period", async () => {
-  const { createRoom, disconnectPlayer, joinRoom, reconnectPlayer } = await import("../app/game/co-op-room.mjs");
+  const { createRoom, disconnectPlayer, getExpiredDisconnectedPlayerIds, getNextDisconnectDeadline, joinRoom, reconnectPlayer } = await import("../app/game/co-op-room.mjs");
   let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
   room = joinRoom(room, { id: "p1", name: "Host" });
   const disconnected = disconnectPlayer(room, "p1", 1_000);
 
   assert.equal(disconnected.players[0].connected, false);
   assert.equal(disconnected.disconnectDeadlines.p1, 31_000);
-  assert.equal(reconnectPlayer(disconnected, "p1", 31_000).players[0].connected, true);
-  assert.throws(() => reconnectPlayer(disconnected, "p1", 31_001), /RECONNECT_EXPIRED/);
+  assert.equal(getNextDisconnectDeadline(disconnected), 31_000);
+  assert.deepEqual(getExpiredDisconnectedPlayerIds(disconnected, 31_000), ["p1"]);
+  assert.equal(reconnectPlayer(disconnected, "p1", 30_999).players[0].connected, true);
+  assert.throws(() => reconnectPlayer(disconnected, "p1", 31_000), /RECONNECT_EXPIRED/);
+});
+
+test("a disconnected operator cannot keep moving from stale input", async () => {
+  const { applyClientMessage, createRoom, disconnectPlayer, joinRoom, setPlayerReady, startRoom, tickRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+  room = applyClientMessage(room, "p1", { type: "input", sequence: 1, moveX: 1, moveY: 0, aimX: 1, aimY: 0 }).room;
+  room = disconnectPlayer(room, "p1", 1_000);
+  const before = room.players[0].operator;
+  const ticked = tickRoom(room, 1_000);
+
+  assert.equal(ticked.players[0].operator.x, before.x);
+  assert.equal(ticked.players[0].operator.y, before.y);
+  assert.deepEqual(ticked.players[0].input, { moveX: 0, moveY: 0, aimX: 1, aimY: 0 });
+});
+
+test("creates a valid abandoned match ending without mutating the active room", async () => {
+  const { createRoom, endRoom, getEndedMessage, joinRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  const ended = endRoom(room, "abandoned");
+  const message = getEndedMessage(ended);
+
+  assert.equal(room.phase, "waiting");
+  assert.equal(ended.phase, "ended");
+  assert.equal(ended.result, "abandoned");
+  assert.equal(message.type, "ended");
+  assert.equal(message.result, "abandoned");
+  assert.equal(message.summary.players[0].id, "p1");
+  assert.ok(Object.isFrozen(message));
 });
 
 test("keeps enemy defeat, loot, wave transitions, and shared resources authoritative", async () => {

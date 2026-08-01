@@ -230,6 +230,8 @@ export function parseClientMessage(value) {
       });
     case "ready":
       return typeof message.ready === "boolean" ? deepFreeze({ type: "ready", ready: message.ready }) : null;
+    case "start":
+      return deepFreeze({ type: "start" });
     case "input":
       if (!isSequence(message.sequence) || ![message.moveX, message.moveY, message.aimX, message.aimY].every(isFiniteNumber)) return null;
       return deepFreeze({
@@ -288,7 +290,14 @@ export function parseServerMessage(value) {
         if (!id || typeof player.name !== "string" || typeof player.ready !== "boolean" || typeof player.connected !== "boolean") return null;
         return { id, name: normalizeDisplayName(player.name), ready: player.ready, connected: player.connected };
       });
-      return players.every(Boolean) ? deepFreeze({ type: "room", roomCode: message.roomCode, players }) : null;
+      const hostPlayerId = message.hostPlayerId === undefined ? undefined : optionalIdentifier(message.hostPlayerId);
+      if (message.hostPlayerId !== undefined && (!hostPlayerId || !players.some((player) => player?.id === hostPlayerId))) return null;
+      return players.every(Boolean) ? deepFreeze({
+        type: "room",
+        roomCode: message.roomCode,
+        players,
+        ...(hostPlayerId ? { hostPlayerId } : {}),
+      }) : null;
     }
     case "snapshot":
       const state = canonicalizeSnapshot(message.state);
