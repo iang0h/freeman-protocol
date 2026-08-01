@@ -325,7 +325,7 @@ export type CoOpCombatSnapshot = {
       maxAgents: number;
       priority: "follow" | "guard" | "focus";
     };
-    wave: { number: number; status: "waiting" | "playing" | "complete" | "defeat"; elapsedMs: number };
+    wave: { number: number; status: "waiting" | "playing" | "intermission" | "ended"; elapsedMs: number };
     boss: { id: string; kind: string; health: number; maxHealth: number; x: number; y: number } | null;
     subAgents: Array<{ id: string; parentId: string; role: string; remainingMs: number }>;
   };
@@ -12230,6 +12230,9 @@ export default function FreemanProtocol({
     const pressed = new Set<string>();
     let aimX = 0;
     let aimY = 1;
+    let touchPointerId: number | null = null;
+    let touchStartX = 0;
+    let touchStartY = 0;
     const sendInput = () => {
       const moveX = Number(pressed.has("KeyD")) - Number(pressed.has("KeyA"));
       const moveY = Number(pressed.has("KeyS")) - Number(pressed.has("KeyW"));
@@ -12242,6 +12245,46 @@ export default function FreemanProtocol({
       aimX = Math.max(-1, Math.min(1, (event.clientX - bounds.left) / bounds.width * 2 - 1));
       aimY = Math.max(-1, Math.min(1, (event.clientY - bounds.top) / bounds.height * 2 - 1));
       sendInput();
+    };
+    const sendCoOpTouchInput = (event: PointerEvent) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const bounds = canvas.getBoundingClientRect();
+      aimX = Math.max(-1, Math.min(1, (event.clientX - bounds.left) / bounds.width * 2 - 1));
+      aimY = Math.max(-1, Math.min(1, (event.clientY - bounds.top) / bounds.height * 2 - 1));
+      const movementRadius = Math.max(48, Math.min(bounds.width, bounds.height) * 0.16);
+      const deltaX = event.clientX - touchStartX;
+      const deltaY = event.clientY - touchStartY;
+      const distance = Math.hypot(deltaX, deltaY);
+      const scale = distance > movementRadius ? movementRadius / distance : 1;
+      coOpClient.sendInput({
+        moveX: Math.max(-1, Math.min(1, deltaX * scale / movementRadius)),
+        moveY: Math.max(-1, Math.min(1, deltaY * scale / movementRadius)),
+        aimX,
+        aimY,
+      });
+    };
+    const onCoOpPointerDown = (event: PointerEvent) => {
+      if (event.pointerType !== "touch" || event.button !== 0) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      touchPointerId = event.pointerId;
+      touchStartX = event.clientX;
+      touchStartY = event.clientY;
+      canvas.setPointerCapture(event.pointerId);
+      sendCoOpTouchInput(event);
+    };
+    const onCoOpPointerMove = (event: PointerEvent) => {
+      if (event.pointerId === touchPointerId) {
+        sendCoOpTouchInput(event);
+        return;
+      }
+      updateAim(event);
+    };
+    const releaseCoOpTouch = (event: PointerEvent) => {
+      if (event.pointerId !== touchPointerId) return;
+      touchPointerId = null;
+      coOpClient.sendInput({ moveX: 0, moveY: 0, aimX, aimY });
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (!/^(KeyW|KeyA|KeyS|KeyD)$/.test(event.code)) return;
@@ -12256,11 +12299,18 @@ export default function FreemanProtocol({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     const canvas = canvasRef.current;
-    canvas?.addEventListener("pointermove", updateAim, { passive: true });
+    canvas?.addEventListener("pointerdown", onCoOpPointerDown);
+    canvas?.addEventListener("pointermove", onCoOpPointerMove, { passive: true });
+    canvas?.addEventListener("pointerup", releaseCoOpTouch);
+    canvas?.addEventListener("pointercancel", releaseCoOpTouch);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
-      canvas?.removeEventListener("pointermove", updateAim);
+      if (touchPointerId !== null) coOpClient.sendInput({ moveX: 0, moveY: 0, aimX, aimY });
+      canvas?.removeEventListener("pointerdown", onCoOpPointerDown);
+      canvas?.removeEventListener("pointermove", onCoOpPointerMove);
+      canvas?.removeEventListener("pointerup", releaseCoOpTouch);
+      canvas?.removeEventListener("pointercancel", releaseCoOpTouch);
     };
   }, [coOpActive, coOpClient]);
 
@@ -12460,13 +12510,14 @@ export default function FreemanProtocol({
 
   useEffect(() => {
     if (mode !== "playing") {
+      const tutorialRequiresCommand = hud.tutorialStep === "recruit";
       const timer = window.setTimeout(() => {
-        setMobilePanel("command");
-        setMobileSquadOpen(false);
+        setMobilePanel(tutorialRequiresCommand ? "command" : "closed");
+        setMobileSquadOpen(tutorialRequiresCommand);
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [mode]);
+  }, [hud.tutorialStep, mode]);
 
   useEffect(() => {
     const open =

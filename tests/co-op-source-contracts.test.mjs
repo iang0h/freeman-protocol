@@ -216,12 +216,18 @@ test("co-op combat renders the authoritative snapshot while local simulation is 
   assert.match(combat, /coOpSnapshot\.state\.warband\.agents/);
   assert.match(combat, /interpolateCoOpPosition/);
   assert.match(combat, /previousCoOpSnapshot\?\.state\.enemies/);
+  assert.match(combat, /canvas\?\.addEventListener\("pointerdown", onCoOpPointerDown/);
+  assert.match(combat, /canvas\?\.addEventListener\("pointercancel", releaseCoOpTouch/);
+  assert.match(combat, /canvas\.setPointerCapture\(event\.pointerId\)/);
+  assert.match(combat, /coOpClient\.sendInput\(\{ moveX: 0, moveY: 0, aimX, aimY \}\)/);
+  assert.match(combat, /status: "waiting" \| "playing" \| "intermission" \| "ended"/);
   assert.match(page, /onSnapshot:[\s\S]{0,240}setCoOpSnapshot/);
   assert.match(page, /coOpSnapshot=\{coOpSnapshot\}/);
   assert.match(page, /onCoOpAction=\{handleCoOpAction\}/);
   assert.match(styles, /\.co-op-remote-status/);
   assert.match(styles, /\.co-op-connection-strip/);
   assert.match(styles, /\.co-op-world/);
+  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*?\.co-op-world__hud/);
 });
 
 test("co-op starts with every mobile command tray collapsed", async () => {
@@ -229,4 +235,5 @@ test("co-op starts with every mobile command tray collapsed", async () => {
 
   assert.match(combat, /useState<MobilePanel \| "closed">\("closed"\)/);
   assert.match(combat, /mobilePanel === panel \? "closed" : panel/);
+  assert.match(combat, /setMobilePanel\(tutorialRequiresCommand \? "command" : "closed"\)/);
 });
