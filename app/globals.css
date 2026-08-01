@@ -3439,7 +3439,7 @@ canvas:focus-visible {
     letter-spacing: 0.08em;
   }
 
-  .hud-actions .co-op-leave-button {
+  .hud-actions button.co-op-leave-button {
     display: grid;
     min-height: 34px;
     padding: 0 7px;
