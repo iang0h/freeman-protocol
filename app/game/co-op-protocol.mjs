@@ -72,6 +72,18 @@ function canonicalizeContribution(value) {
   return Object.fromEntries(entries);
 }
 
+function createContribution(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key, amount]) => /^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(key) && isFiniteNumber(amount))
+    .slice(0, 16)
+    .map(([key, amount]) => [key, clamp(amount, 0, Number.MAX_SAFE_INTEGER)]));
+}
+
+function boundedConstructorNumber(value, minimum, maximum) {
+  return isFiniteNumber(value) ? clamp(value, minimum, maximum) : minimum;
+}
+
 function canonicalizeSnapshot(state) {
   if (!state || typeof state !== "object" || Array.isArray(state) || typeof state.seed !== "string" || state.seed.length > CO_OP_IDENTIFIER_MAX_LENGTH) return null;
   if (!Array.isArray(state.players) || state.players.length !== ROOM_MAX_PLAYERS) return null;
@@ -84,7 +96,7 @@ function canonicalizeSnapshot(state) {
     if (maxHealth === null || boundedNumber(operator.health, 0, maxHealth) === null || [operator.x, operator.y].some((value) => boundedNumber(value, -10000, 10000) === null) || [operator.aimX, operator.aimY].some((value) => boundedNumber(value, -1, 1) === null)) return null;
     return {
       slot,
-      id: player.id,
+      id: player.id === null ? null : optionalIdentifier(player.id),
       name: player.name,
       connected: player.connected,
       ready: player.ready,
@@ -105,12 +117,13 @@ function canonicalizeSnapshot(state) {
   if (!players.every(Boolean) || !core || typeof core !== "object" || Array.isArray(core) || !resources || !warband || typeof warband !== "object" || Array.isArray(warband) || !wave || typeof wave !== "object" || Array.isArray(wave)) return null;
   const maxCore = boundedNumber(core.maxHealth, 1, 10000);
   if (maxCore === null || boundedNumber(core.health, 0, maxCore) === null || !Array.isArray(warband.agents) || warband.agents.length > 8 || warband.agents.some((agent) => !optionalIdentifier(agent)) || !Number.isSafeInteger(warband.maxAgents) || warband.maxAgents < 0 || warband.maxAgents > 8 || !PRIORITIES.has(warband.priority) || !Number.isSafeInteger(wave.number) || wave.number < 1 || !WAVE_STATUSES.has(wave.status) || boundedNumber(wave.elapsedMs, 0, Number.MAX_SAFE_INTEGER) === null) return null;
+  const agents = warband.agents.map(optionalIdentifier);
   return {
     seed: state.seed,
     players,
     core: { health: core.health, maxHealth: maxCore },
     resources,
-    warband: { agents: [...warband.agents], maxAgents: warband.maxAgents, priority: warband.priority },
+    warband: { agents, maxAgents: warband.maxAgents, priority: warband.priority },
     wave: { number: wave.number, status: wave.status, elapsedMs: wave.elapsedMs },
   };
 }
@@ -122,7 +135,7 @@ function canonicalizeMatchSummary(summary) {
   const players = summary.players.map((player) => {
     if (!player || typeof player !== "object" || Array.isArray(player) || !optionalIdentifier(player.id) || typeof player.name !== "string" || normalizeDisplayName(player.name) !== player.name) return null;
     const contribution = canonicalizeContribution(player.contribution);
-    return contribution === null ? null : { id: player.id, name: player.name, contribution };
+    return contribution === null ? null : { id: optionalIdentifier(player.id), name: player.name, contribution };
   });
   return players.every(Boolean) ? {
     wavesSurvived: summary.wavesSurvived,
@@ -258,7 +271,7 @@ export function isServerMessage(value) {
 
 export function createEmptyCoOpSnapshot(seed) {
   return deepFreeze({
-    seed: String(seed ?? ""),
+    seed: String(seed ?? "").trim().slice(0, CO_OP_IDENTIFIER_MAX_LENGTH),
     players: Array.from({ length: ROOM_MAX_PLAYERS }, (_, slot) => ({
       slot,
       id: null,
@@ -278,19 +291,19 @@ export function createMatchSummary(state = {}) {
   const waveNumber = Number.isFinite(state?.wave?.number) ? state.wave.number : 1;
   const resources = state?.resourcesGathered ?? state?.resources ?? {};
   const summary = {
-    wavesSurvived: Math.max(0, Number.isFinite(state?.wavesSurvived) ? state.wavesSurvived : Math.floor(waveNumber) - 1),
-    coreHealth: Math.max(0, Number.isFinite(state?.core?.health) ? state.core.health : 0),
-    agentsRecruited: Array.isArray(state?.warband?.agents) ? state.warband.agents.length : 0,
+    wavesSurvived: Math.floor(boundedConstructorNumber(state?.wavesSurvived ?? Math.floor(waveNumber) - 1, 0, Number.MAX_SAFE_INTEGER)),
+    coreHealth: boundedConstructorNumber(state?.core?.health, 0, 10000),
+    agentsRecruited: clamp(Array.isArray(state?.warband?.agents) ? state.warband.agents.length : 0, 0, 8),
     resourcesGathered: {
-      compute: Math.max(0, Number.isFinite(resources.compute) ? resources.compute : 0),
-      components: Math.max(0, Number.isFinite(resources.components) ? resources.components : 0),
-      shards: Math.max(0, Number.isFinite(resources.shards) ? resources.shards : 0),
+      compute: boundedConstructorNumber(resources.compute, 0, Number.MAX_SAFE_INTEGER),
+      components: boundedConstructorNumber(resources.components, 0, Number.MAX_SAFE_INTEGER),
+      shards: boundedConstructorNumber(resources.shards, 0, Number.MAX_SAFE_INTEGER),
     },
     players: Array.isArray(state?.players)
-      ? state.players.filter((player) => player && typeof player === "object").map((player) => ({
-        id: typeof player.id === "string" ? player.id : "",
+      ? state.players.filter((player) => player && typeof player === "object" && optionalIdentifier(player.id)).slice(0, ROOM_MAX_PLAYERS).map((player) => ({
+        id: optionalIdentifier(player.id),
         name: normalizeDisplayName(player.name),
-        contribution: cloneValue(player.contribution ?? {}),
+        contribution: createContribution(player.contribution),
       }))
       : [],
   };

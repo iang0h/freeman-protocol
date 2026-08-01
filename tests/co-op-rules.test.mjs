@@ -175,3 +175,39 @@ test("creates an immutable empty shared co-op snapshot and match summary", async
     players: [{ id: "p1", name: "Ian", contribution: { kills: 7 } }],
   });
 });
+
+test("canonicalizes nested identifiers and keeps constructor output server-valid", async () => {
+  const {
+    createEmptyCoOpSnapshot,
+    createMatchSummary,
+    isServerMessage,
+    parseServerMessage,
+  } = await import("../app/game/co-op-protocol.mjs");
+  const snapshot = JSON.parse(JSON.stringify(createEmptyCoOpSnapshot("x".repeat(80))));
+  snapshot.players[0] = {
+    ...snapshot.players[0],
+    id: " p1 ",
+    name: "Ian",
+    connected: true,
+  };
+  snapshot.warband.agents = [" agent-01 "];
+  const parsedSnapshot = parseServerMessage({ type: "snapshot", snapshotId: 1, serverTick: 2, state: snapshot });
+
+  assert.equal(parsedSnapshot.state.seed.length, 64);
+  assert.equal(parsedSnapshot.state.players[0].id, "p1");
+  assert.deepEqual(parsedSnapshot.state.warband.agents, ["agent-01"]);
+  assert.equal(isServerMessage({ type: "snapshot", snapshotId: 1, serverTick: 2, state: createEmptyCoOpSnapshot("x".repeat(80)) }), true);
+
+  const summary = createMatchSummary({
+    wave: { number: Number.MAX_VALUE },
+    core: { health: Number.MAX_VALUE },
+    warband: { agents: Array.from({ length: 12 }, (_, index) => `agent-${index}`) },
+    resourcesGathered: { compute: Number.MAX_VALUE, components: 1, shards: 2 },
+    players: [{ id: " p1 ", name: " Ian ", contribution: { kills: Number.MAX_VALUE, "bad key": 3 } }],
+  });
+
+  assert.equal(summary.players[0].id, "p1");
+  assert.equal(summary.players[0].name, "Ian");
+  assert.equal(summary.agentsRecruited, 8);
+  assert.equal(isServerMessage({ type: "ended", result: "victory", summary }), true);
+});
