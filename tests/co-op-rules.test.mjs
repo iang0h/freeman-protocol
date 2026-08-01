@@ -308,4 +308,76 @@ test("keeps enemy defeat, loot, wave transitions, and shared resources authorita
   const nextWave = tickRoom(afterLoot, 3_000);
   assert.equal(nextWave.wave.number, 2);
   assert.equal(nextWave.wave.status, "playing");
+  assert.ok(nextWave.enemies.length > 0);
+});
+
+test("starts and advances deterministic waves without injected enemies", async () => {
+  const { createRoom, joinRoom, setPlayerReady, startRoom, tickRoom } = await import("../app/game/co-op-room.mjs");
+  const readyRoom = (seed) => {
+    let room = createRoom({ roomCode: "ABC123", seed });
+    room = joinRoom(room, { id: "p1", name: "Host" });
+    room = joinRoom(room, { id: "p2", name: "Guest" });
+    return setPlayerReady(setPlayerReady(room, "p1", true), "p2", true);
+  };
+  const started = startRoom(readyRoom("test-seed"));
+  const repeated = startRoom(readyRoom("test-seed"));
+
+  assert.ok(started.enemies.length > 0);
+  assert.deepEqual(started.enemies, repeated.enemies);
+  const cleared = { ...started, enemies: [], wave: { ...started.wave, status: "intermission", intermissionRemainingMs: 1 } };
+  const nextWave = tickRoom(cleared, 1);
+  assert.equal(nextWave.wave.number, 2);
+  assert.ok(nextWave.enemies.length > 0);
+});
+
+test("serializes immutable authoritative world runtime in snapshots", async () => {
+  const { createRoom, getSnapshot, joinRoom, setPlayerReady, startRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+  const snapshot = getSnapshot({
+    ...room,
+    loot: [{ id: "loot-1", type: "component", value: 2, x: 0, y: 0 }],
+    sentries: [{ id: "sentry-1", x: 4.8, y: 0, health: 100, maxHealth: 100 }],
+    boss: { id: "boss-1", kind: "warboss", hp: 100, maxHp: 100, x: 0, y: 0, scheduled: true },
+    subAgents: [{ id: "subagent-kairos-1", parentId: "kairos", role: "defend", remainingMs: 1_000 }],
+  });
+
+  assert.equal(snapshot.state.enemies.length, room.enemies.length);
+  assert.deepEqual(snapshot.state.loot, [{ id: "loot-1", type: "component", value: 2, x: 0, y: 0 }]);
+  assert.equal(snapshot.state.sentries[0].id, "sentry-1");
+  assert.equal(snapshot.state.boss.id, "boss-1");
+  assert.equal(snapshot.state.subAgents[0].id, "subagent-kairos-1");
+  assert.ok(Object.isFrozen(snapshot.state.enemies));
+});
+
+test("autonomous network executes a selected sentry build action", async () => {
+  const { applyClientMessage, createRoom, joinRoom, setPlayerReady, startRoom, tickRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed", resources: { compute: 80 } });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+  room = applyClientMessage(room, "p1", { type: "priority", priority: "focus" }).room;
+  const ticked = tickRoom(room, 3_500);
+
+  assert.equal(ticked.sentries.length, 1);
+  assert.equal(ticked.resources.compute, 0);
+});
+
+test("rejects unowned reserve agents and stale or pre-game input", async () => {
+  const { applyClientMessage, createRoom, joinRoom, setPlayerReady, startRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed", resources: { components: 3, shards: 3 } });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  const input = { type: "input", sequence: 1, moveX: 1, moveY: 0, aimX: 0, aimY: 1 };
+
+  assert.equal(applyClientMessage(room, "p1", input).error.code, "ROOM_NOT_PLAYING");
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+  const accepted = applyClientMessage(room, "p1", input);
+  assert.equal(accepted.error, null);
+  assert.equal(applyClientMessage(accepted.room, "p1", input).error.code, "STALE_SEQUENCE");
+  const reserve = applyClientMessage(accepted.room, "p1", { type: "action", sequence: 2, action: "deploy-reserve", agentId: "kairos" });
+  assert.equal(reserve.error.code, "UNOWNED_AGENT");
+  assert.strictEqual(reserve.room, accepted.room);
 });

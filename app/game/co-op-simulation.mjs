@@ -9,6 +9,7 @@ import { selectAutoSentryPosition } from "./sentry-placement.mjs";
 import { tickWaveIntermission } from "./wave-rules.mjs";
 import { WARBAND_SLOTS, canRecruitWarbandSlot, recruitWarbandSlot } from "./warband-rules.mjs";
 import { getBossEncounter, tickBoss } from "./boss-rules.mjs";
+import { getTerrainModifier, getWaveModifiers } from "./encounter-rules.mjs";
 
 export const SENTRY_BASE_COST = 80;
 export const SENTRY_COST_STEP = 35;
@@ -32,6 +33,49 @@ function seededRandom(seed) {
     next ^= next + Math.imul(next ^ (next >>> 7), next | 61);
     return ((next ^ (next >>> 14)) >>> 0) / 4_294_967_296;
   };
+}
+
+function spawnWaveEnemies(state, waveNumber) {
+  const random = seededRandom(`${state.seed}:wave:${waveNumber}`);
+  const modifiers = getWaveModifiers(waveNumber);
+  const terrain = getTerrainModifier(waveNumber);
+  const types = ["virus", "phisher", "trojan", "rootkit"];
+  const count = Math.min(20, 3 + waveNumber * 2);
+  return Array.from({ length: count }, (_, index) => {
+    const kind = types[Math.min(types.length - 1, Math.floor(random() * Math.min(types.length, 1 + Math.ceil(waveNumber / 2))))];
+    const angle = random() * Math.PI * 2 + terrain.spawnAngleOffset;
+    const distance = 7 + random() * 2;
+    const health = 10 + waveNumber * 4 + (kind === "rootkit" ? 22 : kind === "trojan" ? 12 : 0);
+    return {
+      id: `wave-${waveNumber}-enemy-${index + 1}`,
+      kind,
+      health,
+      maxHealth: health,
+      x: Number((Math.cos(angle) * distance).toFixed(3)),
+      y: Number((Math.sin(angle) * distance).toFixed(3)),
+      armored: modifiers.flagsByType[kind].includes("armor"),
+      armorMultiplier: modifiers.flagsByType[kind].includes("armor") ? 0.76 : 1,
+      coreDamage: kind === "rootkit" ? 6 : kind === "trojan" ? 4 : 3,
+    };
+  });
+}
+
+function beginWave(state, waveNumber, preserveEnemies = false) {
+  const enemies = preserveEnemies && (state.enemies ?? []).length > 0
+    ? state.enemies.map((enemy) => ({ ...enemy }))
+    : spawnWaveEnemies(state, waveNumber);
+  const boss = getBossEncounter(waveNumber, state.seed, state.warband.agents.length);
+  return {
+    ...state,
+    enemies,
+    boss: boss.scheduled ? { ...boss, health: boss.hp, maxHealth: boss.maxHp, x: 0, y: -7 } : null,
+    wave: { number: waveNumber, status: "playing", elapsedMs: 0 },
+    subAgents: clearSubAgents(),
+  };
+}
+
+export function startCoOpSimulation(state) {
+  return beginWave(state, state.wave.number, true);
 }
 
 function enemyHealth(enemy) {
@@ -173,7 +217,7 @@ function tickAutonomousNetwork(state, elapsedMs) {
     maxDefenses: 3,
     compute: state.resources.compute,
     defenseCost: SENTRY_BASE_COST + (state.sentries ?? []).length * SENTRY_COST_STEP,
-    watchPriority: state.priority,
+    watchPriority: state.priority === "focus" ? "expand" : state.priority === "guard" ? "survive" : "farm",
   });
   if (action === "repair-core") {
     const repaired = repairCore({ hp: state.core.health, maxHp: state.core.maxHealth }, state.resources.components);
@@ -185,7 +229,35 @@ function tickAutonomousNetwork(state, elapsedMs) {
       resources: { ...state.resources, components: repaired.components },
     };
   }
+  if (action === "repair-sentry") {
+    const sentry = (state.sentries ?? []).find((entry) => entry.health < entry.maxHealth);
+    if (sentry) {
+      const repaired = repairTurret({ ...sentry, hp: sentry.health, maxHp: sentry.maxHealth }, state.resources.components);
+      if (repaired.components < state.resources.components) return {
+        ...state,
+        autonomousElapsedMs: 0,
+        subAgents: tickSubAgents(state.subAgents ?? [], elapsedMs),
+        resources: { ...state.resources, components: repaired.components },
+        sentries: state.sentries.map((entry) => entry.id === sentry.id ? { ...entry, health: repaired.turret.hp } : { ...entry }),
+      };
+    }
+  }
+  if (action === "build-sentry") {
+    const built = buildSentry(state);
+    if (!built.error) return { ...built.state, autonomousElapsedMs: 0, subAgents: tickSubAgents(state.subAgents ?? [], elapsedMs) };
+  }
   return { ...state, autonomousElapsedMs: 0, subAgents: tickSubAgents(state.subAgents ?? [], elapsedMs) };
+}
+
+function buildSentry(state) {
+  const cost = SENTRY_BASE_COST + (state.sentries ?? []).length * SENTRY_COST_STEP;
+  const costRecord = { compute: cost, components: 0, shards: 0 };
+  const position = selectAutoSentryPosition(state.sentries ?? [], state.blockers ?? []);
+  if (!position) return { state, error: actionError("INVALID_POSITION", "No valid sentry position remains") };
+  if (!canAffordMaterialCost(state.resources, costRecord)) return { state, error: actionError("INSUFFICIENT_RESOURCES", "Shared resources cannot build a sentry") };
+  const spent = spendMaterialCost(state.resources, costRecord);
+  const id = `sentry-${(state.sentries ?? []).length + 1}`;
+  return { state: { ...state, resources: { ...state.resources, ...spent }, sentries: [...(state.sentries ?? []), { id, ...position, health: 100, maxHealth: 100, repairCost: 1, repairAmount: 25 }] }, error: null };
 }
 
 function tickBossState(state, elapsedMs) {
@@ -245,19 +317,14 @@ export function applyCoOpAction(state, playerId, message) {
   }
 
   if (message.action === "build-sentry") {
-    const cost = SENTRY_BASE_COST + (state.sentries ?? []).length * SENTRY_COST_STEP;
-    const costRecord = { compute: cost, components: 0, shards: 0 };
-    const position = selectAutoSentryPosition(state.sentries ?? [], state.blockers ?? []);
-    if (!position) return { state, error: actionError("INVALID_POSITION", "No valid sentry position remains") };
-    if (!canAffordMaterialCost(state.resources, costRecord)) return { state, error: actionError("INSUFFICIENT_RESOURCES", "Shared resources cannot build a sentry") };
-    const spent = spendMaterialCost(state.resources, costRecord);
-    const id = `sentry-${(state.sentries ?? []).length + 1}`;
-    return { state: { ...state, resources: { ...state.resources, ...spent }, sentries: [...(state.sentries ?? []), { id, ...position, health: 100, maxHealth: 100, repairCost: 1, repairAmount: 25 }] }, error: null };
+    return buildSentry(state);
   }
 
   if (message.action === "deploy-reserve") {
-    if (!canSpendTemporarySubAgent(state.resources)) return { state, error: actionError("INSUFFICIENT_RESOURCES", "A reserve needs components and shards") };
-    const parent = { id: message.agentId ?? playerId, role: "defend" };
+    const slot = WARBAND_SLOTS.find((entry) => entry.id === message.agentId);
+    if (!slot || !state.warband.agents.includes(slot.id)) return { state, error: actionError("UNOWNED_AGENT", "Reserve parent is not in the shared warband") };
+    if (!canSpendTemporarySubAgent(state.resources) || state.resources.components < PLAYER_RESERVE_BATCH_SIZE || state.resources.shards < PLAYER_RESERVE_BATCH_SIZE) return { state, error: actionError("INSUFFICIENT_RESOURCES", "A reserve needs three Components and three Shards") };
+    const parent = { id: slot.id, role: slot.role };
     const subAgents = [...(state.subAgents ?? [])];
     const materials = { components: state.resources.components, shards: state.resources.shards };
     for (let index = 0; index < PLAYER_RESERVE_BATCH_SIZE; index += 1) {
@@ -279,9 +346,7 @@ export function tickCoOpSimulation(state, elapsedMs) {
   if (next.wave.status === "intermission") {
     const remaining = tickWaveIntermission(next.wave.intermissionRemainingMs ?? 3_000, duration);
     if (remaining > 0) return { ...next, wave: { ...next.wave, elapsedMs: next.wave.elapsedMs + duration, intermissionRemainingMs: remaining } };
-    const number = next.wave.number + 1;
-    const boss = getBossEncounter(number, next.seed, next.warband.agents.length);
-    return { ...next, wave: { number, status: "playing", elapsedMs: 0 }, boss: boss.scheduled ? boss : null, subAgents: clearSubAgents() };
+    return beginWave(next, next.wave.number + 1);
   }
   next = tickEnemyPressure(next, duration);
   next = tickAutonomousNetwork(next, duration);

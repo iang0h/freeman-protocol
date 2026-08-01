@@ -65,6 +65,52 @@ function canonicalizeResources(resources) {
   return Object.values(result).every((value) => value !== null) ? result : null;
 }
 
+function canonicalizeRuntimeEntity(value, fields) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const id = optionalIdentifier(value.id);
+  if (!id) return null;
+  const result = { id };
+  for (const [key, type] of fields) {
+    if (type === "identifier") {
+      const identifier = optionalIdentifier(value[key]);
+      if (!identifier) return null;
+      result[key] = identifier;
+    } else if (type === "string") {
+      if (typeof value[key] !== "string" || value[key].length > CO_OP_IDENTIFIER_MAX_LENGTH) return null;
+      result[key] = value[key];
+    } else if (type === "number") {
+      const number = boundedNumber(value[key], -10000, Number.MAX_SAFE_INTEGER);
+      if (number === null) return null;
+      result[key] = number;
+    } else if (type === "boolean") {
+      if (typeof value[key] !== "boolean") return null;
+      result[key] = value[key];
+    }
+  }
+  return result;
+}
+
+function canonicalizeRuntime(state) {
+  const enemies = Array.isArray(state.enemies) ? state.enemies.map((enemy) => canonicalizeRuntimeEntity(enemy, [
+    ["kind", "identifier"], ["health", "number"], ["maxHealth", "number"], ["x", "number"], ["y", "number"], ["armored", "boolean"],
+  ])) : null;
+  const loot = Array.isArray(state.loot) ? state.loot.map((item) => canonicalizeRuntimeEntity(item, [
+    ["type", "identifier"], ["value", "number"], ["x", "number"], ["y", "number"],
+  ])) : null;
+  const sentries = Array.isArray(state.sentries) ? state.sentries.map((sentry) => canonicalizeRuntimeEntity(sentry, [
+    ["x", "number"], ["y", "number"], ["health", "number"], ["maxHealth", "number"],
+  ])) : null;
+  const subAgents = Array.isArray(state.subAgents) ? state.subAgents.map((agent) => canonicalizeRuntimeEntity(agent, [
+    ["parentId", "identifier"], ["role", "identifier"], ["remainingMs", "number"],
+  ])) : null;
+  const boss = state.boss === null ? null : canonicalizeRuntimeEntity(state.boss, [
+    ["kind", "identifier"], ["health", "number"], ["maxHealth", "number"], ["x", "number"], ["y", "number"], ["scheduled", "boolean"],
+  ]);
+  return enemies && loot && sentries && subAgents && (state.boss === null || boss)
+    ? { enemies, loot, sentries, boss, subAgents }
+    : null;
+}
+
 function canonicalizeContribution(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const entries = Object.entries(value);
@@ -112,9 +158,10 @@ function canonicalizeSnapshot(state) {
   });
   const core = state.core;
   const resources = canonicalizeResources(state.resources);
+  const runtime = canonicalizeRuntime(state);
   const warband = state.warband;
   const wave = state.wave;
-  if (!players.every(Boolean) || !core || typeof core !== "object" || Array.isArray(core) || !resources || !warband || typeof warband !== "object" || Array.isArray(warband) || !wave || typeof wave !== "object" || Array.isArray(wave)) return null;
+  if (!players.every(Boolean) || !core || typeof core !== "object" || Array.isArray(core) || !resources || !runtime || !warband || typeof warband !== "object" || Array.isArray(warband) || !wave || typeof wave !== "object" || Array.isArray(wave)) return null;
   const maxCore = boundedNumber(core.maxHealth, 1, 10000);
   if (maxCore === null || boundedNumber(core.health, 0, maxCore) === null || !Array.isArray(warband.agents) || warband.agents.length > 8 || warband.agents.some((agent) => !optionalIdentifier(agent)) || !Number.isSafeInteger(warband.maxAgents) || warband.maxAgents < 0 || warband.maxAgents > 8 || !PRIORITIES.has(warband.priority) || !Number.isSafeInteger(wave.number) || wave.number < 1 || !WAVE_STATUSES.has(wave.status) || boundedNumber(wave.elapsedMs, 0, Number.MAX_SAFE_INTEGER) === null) return null;
   const agents = warband.agents.map(optionalIdentifier);
@@ -125,6 +172,7 @@ function canonicalizeSnapshot(state) {
     resources,
     warband: { agents, maxAgents: warband.maxAgents, priority: warband.priority },
     wave: { number: wave.number, status: wave.status, elapsedMs: wave.elapsedMs },
+    ...runtime,
   };
 }
 
@@ -284,6 +332,11 @@ export function createEmptyCoOpSnapshot(seed) {
     resources: { compute: 0, components: 0, shards: 0, repairKits: 0, modules: 0 },
     warband: { agents: [], maxAgents: 8, priority: "follow" },
     wave: { number: 1, status: "waiting", elapsedMs: 0 },
+    enemies: [],
+    loot: [],
+    sentries: [],
+    boss: null,
+    subAgents: [],
   });
 }
 

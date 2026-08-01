@@ -4,7 +4,7 @@ import {
   parseClientMessage,
   parseServerMessage,
 } from "./co-op-protocol.mjs";
-import { applyCoOpAction, tickCoOpSimulation } from "./co-op-simulation.mjs";
+import { applyCoOpAction, startCoOpSimulation, tickCoOpSimulation } from "./co-op-simulation.mjs";
 
 export const RECONNECT_GRACE_MS = 30_000;
 
@@ -74,6 +74,7 @@ export function createRoom(options = {}) {
     snapshotId: 0,
     serverTick: 0,
     lastActionByPlayer: {},
+    lastInputByPlayer: {},
     disconnectDeadlines: {},
     enemies: Array.isArray(options.enemies) ? clone(options.enemies) : [],
     loot: [],
@@ -125,7 +126,7 @@ export function startRoom(room) {
   const next = cloneRoom(room);
   next.phase = "playing";
   next.wave = { ...next.wave, status: "playing", elapsedMs: 0 };
-  return freeze(next);
+  return freeze(startCoOpSimulation(next));
 }
 
 export function applyClientMessage(room, playerId, message) {
@@ -144,9 +145,13 @@ export function applyClientMessage(room, playerId, message) {
     }
   }
   if (parsed.type === "input") {
+    if (room.phase !== "playing") return result(room, error("ROOM_NOT_PLAYING", "The room has not started"));
+    const watermark = room.lastInputByPlayer[playerId] ?? -1;
+    if (parsed.sequence <= watermark) return result(room, error("STALE_SEQUENCE", "Input sequence was already processed"));
     const next = cloneRoom(room);
     const index = playerIndex(next, playerId);
     next.players[index].input = { moveX: parsed.moveX, moveY: parsed.moveY, aimX: parsed.aimX, aimY: parsed.aimY };
+    next.lastInputByPlayer[playerId] = parsed.sequence;
     return result(freeze(next));
   }
   if (parsed.type === "priority") {
@@ -231,6 +236,27 @@ export function getSnapshot(room) {
       resources: room.resources,
       warband: { agents: room.warband.agents, maxAgents: room.warband.maxAgents, priority: room.priority },
       wave: { number: room.wave.number, status: room.wave.status, elapsedMs: room.wave.elapsedMs },
+      enemies: room.enemies.map((enemy) => ({
+        id: enemy.id,
+        kind: enemy.kind ?? enemy.type ?? "virus",
+        health: enemy.health ?? enemy.hp,
+        maxHealth: enemy.maxHealth ?? enemy.maxHp ?? enemy.health ?? enemy.hp,
+        x: enemy.x,
+        y: enemy.y ?? enemy.z,
+        armored: enemy.armored === true,
+      })),
+      loot: room.loot,
+      sentries: room.sentries.map((sentry) => ({ ...sentry, y: sentry.y ?? sentry.z })),
+      boss: room.boss ? {
+        id: room.boss.id,
+        kind: room.boss.kind,
+        health: room.boss.health ?? room.boss.hp,
+        maxHealth: room.boss.maxHealth ?? room.boss.maxHp,
+        x: room.boss.x ?? 0,
+        y: room.boss.y ?? room.boss.z ?? 0,
+        scheduled: room.boss.scheduled === true,
+      } : null,
+      subAgents: room.subAgents,
     },
   });
 }
