@@ -1,6 +1,7 @@
 export const CO_OP_PROTOCOL_VERSION = 1;
 export const ROOM_CODE_LENGTH = 6;
 export const ROOM_MAX_PLAYERS = 2;
+export const CO_OP_IDENTIFIER_MAX_LENGTH = 64;
 
 const ROOM_CODE_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const CLIENT_ACTIONS = new Set([
@@ -12,6 +13,8 @@ const CLIENT_ACTIONS = new Set([
   "deploy-reserve",
 ]);
 const PRIORITIES = new Set(["follow", "guard", "focus"]);
+const SERVER_EVENT_KINDS = new Set(["hit", "critical", "kill", "loot", "agent-task", "wave", "boss"]);
+const MATCH_RESULTS = new Set(["victory", "defeat", "abandoned"]);
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
@@ -26,7 +29,13 @@ function isSequence(value) {
 }
 
 function optionalIdentifier(value) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  if (typeof value !== "string") return null;
+  const identifier = value.trim();
+  return identifier.length > 0
+    && identifier.length <= CO_OP_IDENTIFIER_MAX_LENGTH
+    && /^[A-Za-z0-9_-]+$/.test(identifier)
+    ? identifier
+    : null;
 }
 
 function cloneValue(value) {
@@ -116,6 +125,53 @@ export function parseClientMessage(value) {
 
 export function isClientMessage(value) {
   return parseClientMessage(value) !== null;
+}
+
+export function parseServerMessage(value) {
+  let message = value;
+  if (typeof message === "string") {
+    try {
+      message = JSON.parse(message);
+    } catch {
+      return null;
+    }
+  }
+  if (!message || typeof message !== "object" || Array.isArray(message) || typeof message.type !== "string") return null;
+
+  switch (message.type) {
+    case "room": {
+      if (typeof message.roomCode !== "string" || !/^[A-Z0-9]{6}$/.test(message.roomCode) || !Array.isArray(message.players) || message.players.length > ROOM_MAX_PLAYERS) return null;
+      const players = message.players.map((player) => {
+        if (!player || typeof player !== "object" || Array.isArray(player)) return null;
+        const id = optionalIdentifier(player.id);
+        if (!id || typeof player.name !== "string" || typeof player.ready !== "boolean" || typeof player.connected !== "boolean") return null;
+        return { id, name: normalizeDisplayName(player.name), ready: player.ready, connected: player.connected };
+      });
+      return players.every(Boolean) ? deepFreeze({ type: "room", roomCode: message.roomCode, players }) : null;
+    }
+    case "snapshot":
+      return isSequence(message.snapshotId) && isSequence(message.serverTick) && message.state && typeof message.state === "object" && !Array.isArray(message.state)
+        ? deepFreeze({ type: "snapshot", snapshotId: message.snapshotId, serverTick: message.serverTick, state: cloneValue(message.state) })
+        : null;
+    case "event":
+      return isSequence(message.eventId) && SERVER_EVENT_KINDS.has(message.kind) && message.payload && typeof message.payload === "object" && !Array.isArray(message.payload)
+        ? deepFreeze({ type: "event", eventId: message.eventId, kind: message.kind, payload: cloneValue(message.payload) })
+        : null;
+    case "error":
+      return typeof message.code === "string" && message.code.trim() && typeof message.message === "string" && message.message.trim()
+        ? deepFreeze({ type: "error", code: message.code.trim(), message: message.message.trim() })
+        : null;
+    case "ended":
+      return MATCH_RESULTS.has(message.result) && message.summary && typeof message.summary === "object" && !Array.isArray(message.summary)
+        ? deepFreeze({ type: "ended", result: message.result, summary: cloneValue(message.summary) })
+        : null;
+    default:
+      return null;
+  }
+}
+
+export function isServerMessage(value) {
+  return parseServerMessage(value) !== null;
 }
 
 export function createEmptyCoOpSnapshot(seed) {

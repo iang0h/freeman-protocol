@@ -58,6 +58,77 @@ test("parses only valid client messages without mutating input", async () => {
   assert.equal(isClientMessage({ type: "ready", ready: true }), true);
 });
 
+test("rejects unsafe client action identifiers at the protocol boundary", async () => {
+  const { parseClientMessage } = await import("../app/game/co-op-protocol.mjs");
+
+  assert.equal(parseClientMessage({
+    type: "action",
+    sequence: 1,
+    action: "shoot",
+    targetId: "target!",
+  }), null);
+  assert.equal(parseClientMessage({
+    type: "action",
+    sequence: 1,
+    action: "recruit",
+    agentId: "a".repeat(65),
+  }), null);
+  assert.deepEqual(parseClientMessage({
+    type: "action",
+    sequence: 1,
+    action: "shoot",
+    targetId: "enemy_01",
+    agentId: "agent-01",
+  }), {
+    type: "action",
+    sequence: 1,
+    action: "shoot",
+    targetId: "enemy_01",
+    agentId: "agent-01",
+  });
+});
+
+test("parses all defined server messages and rejects malformed variants", async () => {
+  const { isServerMessage, parseServerMessage } = await import("../app/game/co-op-protocol.mjs");
+  const state = { core: { health: 180 } };
+  const summary = { wavesSurvived: 3 };
+
+  assert.deepEqual(parseServerMessage({
+    type: "room",
+    roomCode: "ABC123",
+    players: [{ id: "p1", name: "Ian", ready: true, connected: true }],
+  }), {
+    type: "room",
+    roomCode: "ABC123",
+    players: [{ id: "p1", name: "Ian", ready: true, connected: true }],
+  });
+  assert.deepEqual(parseServerMessage({ type: "snapshot", snapshotId: 1, serverTick: 2, state }), {
+    type: "snapshot",
+    snapshotId: 1,
+    serverTick: 2,
+    state,
+  });
+  assert.deepEqual(parseServerMessage({ type: "event", eventId: 1, kind: "hit", payload: { target: "enemy_01" } }), {
+    type: "event",
+    eventId: 1,
+    kind: "hit",
+    payload: { target: "enemy_01" },
+  });
+  assert.deepEqual(parseServerMessage({ type: "error", code: "ROOM_FULL", message: "Room is full" }), {
+    type: "error",
+    code: "ROOM_FULL",
+    message: "Room is full",
+  });
+  assert.deepEqual(parseServerMessage({ type: "ended", result: "victory", summary }), {
+    type: "ended",
+    result: "victory",
+    summary,
+  });
+  assert.equal(parseServerMessage({ type: "event", eventId: 1, kind: "hack", payload: {} }), null);
+  assert.equal(parseServerMessage({ type: "room", roomCode: "bad", players: [] }), null);
+  assert.equal(isServerMessage({ type: "ended", result: "abandoned", summary: {} }), true);
+});
+
 test("creates an immutable empty shared co-op snapshot and match summary", async () => {
   const { createEmptyCoOpSnapshot, createMatchSummary } = await import(
     "../app/game/co-op-protocol.mjs"
