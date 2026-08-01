@@ -8,6 +8,7 @@ import {
 import { applyCoOpAction, startCoOpSimulation, tickCoOpSimulation } from "./co-op-simulation.mjs";
 
 export const RECONNECT_GRACE_MS = 30_000;
+export const ROOM_EVENT_LIMIT = 64;
 
 const identifier = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
 const clone = (value) => Array.isArray(value)
@@ -58,6 +59,71 @@ function assertRoom(room) {
   if (!room || typeof room !== "object") throw new Error("INVALID_ROOM");
 }
 
+function eventSequence(room) {
+  if (Number.isSafeInteger(room.nextEventId) && room.nextEventId >= 1) return room.nextEventId;
+  return Math.max(0, ...(room.events ?? []).map((event) => Number.isSafeInteger(event?.eventId) ? event.eventId : 0)) + 1;
+}
+
+function runtimeHealth(entity) {
+  return Math.max(0, Number.isFinite(entity?.health) ? entity.health : Number.isFinite(entity?.hp) ? entity.hp : 0);
+}
+
+function bossHealth(boss) {
+  return Math.max(0, Number.isFinite(boss?.hp) ? boss.hp : Number.isFinite(boss?.health) ? boss.health : 0);
+}
+
+export function appendRoomEvent(room, kind, payload = {}) {
+  assertRoom(room);
+  const eventId = eventSequence(room);
+  const event = parseServerMessage({ type: "event", eventId, kind, payload });
+  if (!event) throw new Error("INVALID_ROOM_EVENT");
+  const next = cloneRoom(room);
+  next.events = [...(next.events ?? []), event].slice(-ROOM_EVENT_LIMIT);
+  next.nextEventId = eventId + 1;
+  return freeze(next);
+}
+
+export function getEventMessages(room, afterEventId = 0) {
+  assertRoom(room);
+  if (!Number.isSafeInteger(afterEventId) || afterEventId < 0) throw new Error("INVALID_EVENT_ID");
+  return freeze((room.events ?? []).filter((event) => event.eventId > afterEventId).map(clone));
+}
+
+function appendCombatEvents(before, after, sourceId, action = "simulation") {
+  const afterById = new Map((after.enemies ?? []).map((enemy) => [enemy.id, enemy]));
+  let next = after;
+  for (const enemy of before.enemies ?? []) {
+    const current = afterById.get(enemy.id);
+    if (!current) {
+      next = appendRoomEvent(next, "kill", { sourceId, targetId: enemy.id, action });
+    } else if (runtimeHealth(current) < runtimeHealth(enemy)) {
+      next = appendRoomEvent(next, "hit", { sourceId, targetId: enemy.id, action });
+    }
+  }
+  return next;
+}
+
+function appendSimulationEvents(before, after) {
+  let next = appendCombatEvents(before, after, "network");
+  const remainingLoot = new Set((after.loot ?? []).map((loot) => loot.id));
+  for (const loot of before.loot ?? []) {
+    if (!remainingLoot.has(loot.id)) next = appendRoomEvent(next, "loot", { lootId: loot.id, lootType: loot.type });
+  }
+  if (before.wave?.number !== after.wave?.number || before.wave?.status !== after.wave?.status) {
+    next = appendRoomEvent(next, "wave", { number: after.wave?.number, status: after.wave?.status });
+  }
+  if (!before.boss && after.boss?.scheduled) {
+    next = appendRoomEvent(next, "boss", { bossId: after.boss.id, state: "arrived", wave: after.wave?.number });
+  } else if (before.boss && (
+    !after.boss
+    || (bossHealth(before.boss) > 0 && bossHealth(after.boss) <= 0)
+    || (before.boss.rewardClaimed !== true && after.boss?.rewardClaimed === true)
+  )) {
+    next = appendRoomEvent(next, "boss", { bossId: before.boss.id, state: "defeated", wave: after.wave?.number });
+  }
+  return next;
+}
+
 export function createRoom(options = {}) {
   const roomCode = typeof options.roomCode === "string" ? options.roomCode.trim().toUpperCase() : "";
   if (!/^[A-Z0-9]{6}$/.test(roomCode)) throw new Error("INVALID_ROOM_CODE");
@@ -86,6 +152,8 @@ export function createRoom(options = {}) {
     autonomousElapsedMs: 0,
     boss: null,
     result: null,
+    events: [],
+    nextEventId: 1,
   });
 }
 
@@ -130,7 +198,7 @@ export function startRoom(room) {
   const next = cloneRoom(room);
   next.phase = "playing";
   next.wave = { ...next.wave, status: "playing", elapsedMs: 0 };
-  return freeze(startCoOpSimulation(next));
+  return appendRoomEvent(startCoOpSimulation(next), "wave", { number: next.wave.number, status: "playing" });
 }
 
 export function applyClientMessage(room, playerId, message) {
@@ -178,16 +246,27 @@ export function applyClientMessage(room, playerId, message) {
   if (parsed.sequence <= watermark) return result(room, error("DUPLICATE_SEQUENCE", "Action sequence was already processed"));
   const applied = applyCoOpAction(room, playerId, parsed);
   if (applied.error) return result(room, freeze(applied.error));
-  const next = cloneRoom(applied.state);
+  let next = cloneRoom(applied.state);
   next.lastActionByPlayer[playerId] = parsed.sequence;
+  if (["shoot", "emp"].includes(parsed.action)) {
+    next = appendCombatEvents(room, next, playerId, parsed.action);
+  } else {
+    next = appendRoomEvent(next, "agent-task", {
+      playerId,
+      task: parsed.action,
+      ...(parsed.targetId ? { targetId: parsed.targetId } : {}),
+      ...(parsed.agentId ? { agentId: parsed.agentId } : {}),
+    });
+  }
   return result(freeze(next));
 }
 
 export function tickRoom(room, elapsedMs) {
   assertRoom(room);
-  const next = tickCoOpSimulation(room, elapsedMs);
+  let next = tickCoOpSimulation(room, elapsedMs);
   next.snapshotId = room.snapshotId + 1;
   next.serverTick = room.serverTick + 1;
+  next = appendSimulationEvents(room, next);
   return freeze(next);
 }
 

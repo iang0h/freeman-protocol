@@ -36,6 +36,9 @@ test("co-op room broadcasts on a bounded cadence and cleans up sockets", () => {
   assert.match(room, /close\(1000, "ROOM_ENDED"\)/);
   assert.match(room, /getExpiredDisconnectedPlayerIds/);
   assert.match(room, /getNextDisconnectDeadline/);
+  assert.match(room, /getEventMessages/);
+  assert.match(room, /lastBroadcastEventId/);
+  assert.match(room, /broadcastPendingEvents/);
 });
 
 test("co-op starts only from the host start intent and ends through one terminal path", () => {
@@ -108,4 +111,39 @@ test("expired reconnect grace broadcasts an abandoned ending and terminal closes
   await adapter.webSocketError(socket);
   assert.equal(records.has("co-op:room"), false);
   assert.equal(adapter.room, null);
+});
+
+test("adapter broadcasts each queued authoritative event once per live instance", async () => {
+  const [{ MultiplayerRoom }, roomState] = await Promise.all([
+    import("../worker/multiplayer-room.ts"),
+    import("../app/game/co-op-room.mjs"),
+  ]);
+  const sent = [];
+  const socket = {
+    readyState: WebSocket.OPEN,
+    send: (value) => sent.push(JSON.parse(value)),
+    close: () => {},
+  };
+  const state = {
+    storage: {
+      get: async () => undefined,
+      put: async () => {},
+      delete: async () => true,
+      setAlarm: async () => {},
+      deleteAlarm: async () => {},
+    },
+    getWebSockets: () => [socket],
+  };
+  const adapter = new MultiplayerRoom(state);
+  adapter.room = roomState.appendRoomEvent(
+    roomState.createRoom({ roomCode: "ABC123", seed: "test-seed" }),
+    "hit",
+    { targetId: "enemy-1" },
+  );
+
+  adapter.broadcastRoomAndSnapshot();
+  adapter.broadcastRoomAndSnapshot();
+
+  assert.equal(sent.filter((message) => message.type === "event").length, 1);
+  assert.equal(sent.find((message) => message.type === "event").eventId, 1);
 });

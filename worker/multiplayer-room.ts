@@ -10,6 +10,7 @@ import {
   disconnectPlayer,
   endRoom,
   getEndedMessage,
+  getEventMessages,
   getExpiredDisconnectedPlayerIds,
   getNextDisconnectDeadline,
   getRoomMessage,
@@ -90,6 +91,7 @@ export class MultiplayerRoom {
   private readonly socketAttachments = new Map<RoomSocket, SocketAttachment>();
   private tickTimer: ReturnType<typeof setTimeout> | null = null;
   private broadcastElapsedMs = 0;
+  private lastBroadcastEventId = 0;
   private nextSocketId = 1;
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly handledSockets = new WeakSet<RoomSocket>();
@@ -174,9 +176,12 @@ export class MultiplayerRoom {
   private async ensureRoom(roomCode: string): Promise<RoomState> {
     if (this.room) return this.room;
     const stored = await this.state.storage.get<RoomState>(ROOM_STORAGE_KEY);
-    this.room = stored && stored.roomCode === roomCode && stored.phase !== "ended"
-      ? stored
-      : createRoom({ roomCode, seed: roomCode });
+    if (stored && stored.roomCode === roomCode && stored.phase !== "ended") {
+      this.room = stored;
+    } else {
+      this.room = createRoom({ roomCode, seed: roomCode });
+      this.lastBroadcastEventId = 0;
+    }
     if (stored?.phase === "ended") await this.state.storage.delete(ROOM_STORAGE_KEY);
     return this.room;
   }
@@ -202,6 +207,14 @@ export class MultiplayerRoom {
     if (!this.room) return;
     this.broadcast(getRoomMessage(this.room));
     this.broadcast(getSnapshot(this.room));
+    this.broadcastPendingEvents();
+  }
+
+  private broadcastPendingEvents(room: RoomState | null = this.room): void {
+    if (!room) return;
+    const events = getEventMessages(room, this.lastBroadcastEventId);
+    for (const event of events) this.broadcast(event);
+    if (events.length > 0) this.lastBroadcastEventId = events.at(-1)?.eventId ?? this.lastBroadcastEventId;
   }
 
   private async receive(socket: RoomSocket, rawMessage: string): Promise<void> {
@@ -241,6 +254,7 @@ export class MultiplayerRoom {
     if (message.type === "resume") {
       this.send(socket, getRoomMessage(this.room));
       this.send(socket, getSnapshot(this.room));
+      for (const event of getEventMessages(this.room)) this.send(socket, event);
       return;
     }
 
@@ -371,9 +385,11 @@ export class MultiplayerRoom {
     for (const socket of sockets) this.handledSockets.add(socket);
     this.stopTick();
     this.broadcast(getSnapshot(endedRoom));
+    this.broadcastPendingEvents(endedRoom);
     this.broadcast(endedMessage);
     await this.cancelScheduledAlarm();
     this.room = null;
+    this.lastBroadcastEventId = 0;
     await this.state.storage.delete(ROOM_STORAGE_KEY);
     for (const socket of sockets) socket.close(1000, "ROOM_ENDED");
     this.sockets.clear();

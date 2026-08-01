@@ -156,7 +156,7 @@ function collectVisibleLoot(state) {
   const remaining = [];
   for (const loot of state.loot ?? []) {
     const collector = (state.players ?? []).find((player) =>
-      player.connected && canCollectLoot(player.operator, loot));
+      player.id && canCollectLoot(player.operator, loot));
     if (!collector) {
       remaining.push({ ...loot });
       continue;
@@ -177,23 +177,58 @@ function collectVisibleLoot(state) {
 function tickOperators(state, elapsedMs) {
   return (state.players ?? []).map((player) => {
     const operator = player.operator ?? {};
-    const input = player.connected ? player.input ?? {} : {};
     const distance = elapsedMs / 1_000 * 3;
-    const length = Math.hypot(finite(input.moveX), finite(input.moveY));
-    const scale = length > 1 ? 1 / length : 1;
+    const input = player.input ?? {};
+    const inputLength = Math.hypot(finite(input.moveX), finite(input.moveY));
+    const inputScale = inputLength > 1 ? 1 / inputLength : 1;
+    const originX = finite(operator.x);
+    const originY = finite(operator.y);
+    const coreDistance = Math.hypot(originX, originY);
+    const returnDistance = Math.min(coreDistance, distance);
+    const x = player.connected
+      ? originX + finite(input.moveX) * inputScale * distance
+      : originX - (coreDistance > 0 ? originX / coreDistance * returnDistance : 0);
+    const y = player.connected
+      ? originY + finite(input.moveY) * inputScale * distance
+      : originY - (coreDistance > 0 ? originY / coreDistance * returnDistance : 0);
+    const nearestThreat = player.connected ? null : [...(state.enemies ?? [])]
+      .sort((left, right) => Math.hypot(finite(left.x) - x, finite(left.y ?? left.z) - y)
+        - Math.hypot(finite(right.x) - x, finite(right.y ?? right.z) - y))[0];
+    const threatX = finite(nearestThreat?.x) - x;
+    const threatY = finite(nearestThreat?.y ?? nearestThreat?.z) - y;
+    const threatDistance = Math.hypot(threatX, threatY);
     return {
       ...player,
       shootCooldownLeftMs: Math.max(0, finite(player.shootCooldownLeftMs) - elapsedMs),
       emp: tickEmp(player.emp ?? createEmpState(), elapsedMs),
       operator: {
         ...operator,
-        x: finite(operator.x) + finite(input.moveX) * scale * distance,
-        y: finite(operator.y) + finite(input.moveY) * scale * distance,
-        aimX: finite(input.aimX, finite(operator.aimX)),
-        aimY: finite(input.aimY, finite(operator.aimY, 1)),
+        x,
+        y,
+        aimX: nearestThreat && threatDistance > 0 ? threatX / threatDistance : finite(input.aimX, finite(operator.aimX)),
+        aimY: nearestThreat && threatDistance > 0 ? threatY / threatDistance : finite(input.aimY, finite(operator.aimY, 1)),
       },
     };
   });
+}
+
+function tickDisconnectedDefense(state) {
+  let next = state;
+  for (const player of state.players ?? []) {
+    if (player.connected || !player.id || finite(player.operator?.health) <= 0 || finite(player.shootCooldownLeftMs) > 0) continue;
+    const target = [...(next.enemies ?? [])].sort((left, right) =>
+      Math.hypot(finite(left.x) - finite(player.operator?.x), finite(left.y ?? left.z) - finite(player.operator?.y))
+      - Math.hypot(finite(right.x) - finite(player.operator?.x), finite(right.y ?? right.z) - finite(player.operator?.y)))[0];
+    if (!target) continue;
+    next = damageEnemies(next, [target.id], SHOOT_DAMAGE, player.id);
+    next = {
+      ...next,
+      players: next.players.map((entry) => entry.id === player.id
+        ? { ...entry, shootCooldownLeftMs: SHOOT_COOLDOWN_MS }
+        : entry),
+    };
+  }
+  return next;
 }
 
 function tickEnemyPressure(state, elapsedMs) {
@@ -347,6 +382,7 @@ export function tickCoOpSimulation(state, elapsedMs) {
     if (remaining > 0) return { ...next, wave: { ...next.wave, elapsedMs: next.wave.elapsedMs + duration, intermissionRemainingMs: remaining } };
     return beginWave(next, next.wave.number + 1);
   }
+  next = tickDisconnectedDefense(next);
   next = tickEnemyPressure(next, duration);
   next = tickAutonomousNetwork(next, duration);
   next = tickBossState(next, duration);

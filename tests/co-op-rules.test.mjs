@@ -305,20 +305,104 @@ test("preserves a disconnected player for a thirty-second reconnect grace period
   assert.throws(() => reconnectPlayer(disconnected, "p1", 31_000), /RECONNECT_EXPIRED/);
 });
 
-test("a disconnected operator cannot keep moving from stale input", async () => {
+test("a disconnected operator returns to the Core, fights, and collects loot during grace", async () => {
   const { applyClientMessage, createRoom, disconnectPlayer, joinRoom, setPlayerReady, startRoom, tickRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({
+    roomCode: "ABC123",
+    seed: "test-seed",
+    enemies: [{ id: "enemy-guard", kind: "virus", health: 10, maxHealth: 10, x: 0, y: 0, loot: { type: "component", value: 2 } }],
+  });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+  room = {
+    ...room,
+    players: room.players.map((player) => player.id === "p1"
+      ? { ...player, operator: { ...player.operator, x: 3, y: 0 } }
+      : player),
+  };
+  room = applyClientMessage(room, "p1", { type: "input", sequence: 1, moveX: 1, moveY: 0, aimX: 1, aimY: 0 }).room;
+  room = disconnectPlayer(room, "p1", 1_000);
+  const ticked = tickRoom(room, 1_000);
+
+  assert.equal(ticked.players[0].operator.x, 0);
+  assert.equal(ticked.players[0].operator.y, 0);
+  assert.equal(ticked.enemies.length, 0);
+  assert.equal(ticked.resources.components, 2);
+  assert.equal(ticked.players[0].shootCooldownLeftMs, 250);
+  assert.equal(ticked.players[0].contribution.kills, 1);
+  assert.deepEqual(ticked.players[0].input, { moveX: 0, moveY: 0, aimX: 1, aimY: 0 });
+});
+
+test("keeps a bounded monotonic authoritative event queue", async () => {
+  const { ROOM_EVENT_LIMIT, appendRoomEvent, createRoom, getEventMessages } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
+  for (let index = 0; index < ROOM_EVENT_LIMIT + 6; index += 1) {
+    room = appendRoomEvent(room, "hit", { targetId: `enemy-${index}` });
+  }
+  const events = getEventMessages(room);
+
+  assert.equal(events.length, ROOM_EVENT_LIMIT);
+  assert.equal(events[0].eventId, 7);
+  assert.equal(events.at(-1).eventId, ROOM_EVENT_LIMIT + 6);
+  assert.equal(room.nextEventId, ROOM_EVENT_LIMIT + 7);
+  assert.deepEqual(getEventMessages(room, ROOM_EVENT_LIMIT + 4).map((event) => event.eventId), [ROOM_EVENT_LIMIT + 5, ROOM_EVENT_LIMIT + 6]);
+  assert.ok(Object.isFrozen(events));
+});
+
+test("emits compact hit, kill, loot, wave, and agent-task events from authoritative transitions", async () => {
+  const { applyClientMessage, createRoom, getEventMessages, joinRoom, setPlayerReady, startRoom, tickRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({
+    roomCode: "ABC123",
+    seed: "test-seed",
+    resources: { compute: 80 },
+    enemies: [
+      { id: "enemy-hit", kind: "virus", health: 20, maxHealth: 20, x: 3, y: 0 },
+      { id: "enemy-kill", kind: "virus", health: 10, maxHealth: 10, x: 0, y: 0, loot: { type: "component", value: 2 } },
+    ],
+  });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+  room = applyClientMessage(room, "p1", { type: "action", sequence: 1, action: "shoot", targetId: "enemy-hit" }).room;
+  room = tickRoom(room, 250);
+  room = applyClientMessage(room, "p1", { type: "action", sequence: 2, action: "shoot", targetId: "enemy-kill" }).room;
+  room = tickRoom(room, 1);
+  room = applyClientMessage(room, "p1", { type: "action", sequence: 3, action: "build-sentry" }).room;
+  const events = getEventMessages(room);
+  const kinds = events.map((event) => event.kind);
+
+  assert.ok(kinds.includes("wave"));
+  assert.ok(kinds.includes("hit"));
+  assert.ok(kinds.includes("kill"));
+  assert.ok(kinds.includes("loot"));
+  assert.ok(kinds.includes("agent-task"));
+  assert.deepEqual(events.map((event) => event.eventId), events.map((_, index) => index + 1));
+  assert.ok(events.every((event) => JSON.stringify(event).length < 320));
+});
+
+test("emits boss arrival and defeat events from authoritative transitions", async () => {
+  const { createRoom, getEventMessages, joinRoom, setPlayerReady, startRoom, tickRoom } = await import("../app/game/co-op-room.mjs");
   let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
   room = joinRoom(room, { id: "p1", name: "Host" });
   room = joinRoom(room, { id: "p2", name: "Guest" });
   room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
-  room = applyClientMessage(room, "p1", { type: "input", sequence: 1, moveX: 1, moveY: 0, aimX: 1, aimY: 0 }).room;
-  room = disconnectPlayer(room, "p1", 1_000);
-  const before = room.players[0].operator;
-  const ticked = tickRoom(room, 1_000);
+  room = {
+    ...room,
+    enemies: [],
+    wave: { ...room.wave, number: 2, status: "intermission", intermissionRemainingMs: 1 },
+  };
+  room = tickRoom(room, 1);
+  const arrived = getEventMessages(room).at(-1);
 
-  assert.equal(ticked.players[0].operator.x, before.x);
-  assert.equal(ticked.players[0].operator.y, before.y);
-  assert.deepEqual(ticked.players[0].input, { moveX: 0, moveY: 0, aimX: 1, aimY: 0 });
+  assert.equal(arrived.kind, "boss");
+  assert.deepEqual(arrived.payload, { bossId: room.boss.id, state: "arrived", wave: 3 });
+
+  room = tickRoom({ ...room, boss: { ...room.boss, hp: 0, rewardClaimed: false } }, 1);
+  const defeated = getEventMessages(room).at(-1);
+
+  assert.equal(defeated.kind, "boss");
+  assert.deepEqual(defeated.payload, { bossId: room.boss.id, state: "defeated", wave: 3 });
 });
 
 test("creates a valid abandoned match ending without mutating the active room", async () => {
