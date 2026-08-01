@@ -262,3 +262,20 @@ test("disables combat controls while the authoritative socket is reconnecting", 
 
   assert.match(combat, /const coOpCanAct = coOpActive && coOpConnectionState !== "reconnecting"/);
 });
+
+test("turns an active co-op leave into a local manual match summary", async () => {
+  const [page, combat, lobby] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/FreemanProtocol.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/CoOpLobby.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /summarizeCoOpSnapshot/);
+  assert.match(page, /setCoOpEndedResult\("manual"\)/);
+  assert.match(page, /const summary = summarizeCoOpSnapshot[\s\S]{0,160}setCoOpEndedSummary\(summary\)/);
+  assert.match(page, /onCoOpLeave=\{handleCoOpLeave\}/);
+  assert.match(combat, /onCoOpLeave\??:/);
+  assert.match(combat, /END CO-OP RUN/);
+  assert.match(combat, /onCoOpLeave\?\.\(\)/);
+  assert.match(lobby, /RESOURCES REMAINING/);
+});

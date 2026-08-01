@@ -12086,6 +12086,7 @@ type FreemanProtocolProps = {
   coOpConnectionState?: string;
   coOpClient?: CoOpInputClient | null;
   onCoOpAction?: (action: CoOpAction) => boolean;
+  onCoOpLeave?: () => void;
 };
 
 export default function FreemanProtocol({
@@ -12100,6 +12101,7 @@ export default function FreemanProtocol({
   coOpConnectionState = "idle",
   coOpClient = null,
   onCoOpAction,
+  onCoOpLeave,
 }: FreemanProtocolProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameController | null>(null);
@@ -12732,6 +12734,15 @@ export default function FreemanProtocol({
               onClick={() => engineRef.current?.endWatchRun()}
             >
               END RUN
+            </button>
+          )}
+          {coOpActive && onCoOpLeave && (
+            <button
+              type="button"
+              className="co-op-leave-button"
+              onClick={() => onCoOpLeave?.()}
+            >
+              END CO-OP RUN
             </button>
           )}
         </div>

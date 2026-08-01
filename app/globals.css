@@ -2667,6 +2667,11 @@ canvas:focus-visible {
   color: #ffb184 !important;
 }
 
+.co-op-leave-button {
+  border-color: rgba(220, 117, 64, 0.75) !important;
+  color: #ffb184 !important;
+}
+
 .watch-panel {
   position: absolute;
   top: 6.8rem;
@@ -3432,6 +3437,13 @@ canvas:focus-visible {
     padding: 0 7px;
     font-size: 6px;
     letter-spacing: 0.08em;
+  }
+
+  .hud-actions .co-op-leave-button {
+    display: grid;
+    min-height: 34px;
+    padding: 0 7px;
+    font-size: 7px;
   }
 
   .vitals-panel {

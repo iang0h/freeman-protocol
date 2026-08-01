@@ -356,7 +356,7 @@ export default function CoOpLobby({
                     </div>
                   </div>
                   <div className="co-op-lobby__summary-resources">
-                    <span>RESOURCES GATHERED</span>
+                    <span>RESOURCES REMAINING</span>
                     <strong>
                       {endedSummary.resourcesGathered.compute} C · {endedSummary.resourcesGathered.components} COMP · {endedSummary.resourcesGathered.shards} SHARDS
                     </strong>

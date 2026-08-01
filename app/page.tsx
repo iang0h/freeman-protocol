@@ -32,6 +32,27 @@ const formatResources = (
   ? `${resources.compute} C · ${resources.components} COMP · ${resources.shards} SHARDS`
   : "NONE";
 
+function summarizeCoOpSnapshot(snapshot: CoOpCombatSnapshot | null): MatchSummary {
+  const state = snapshot?.state;
+  return {
+    wavesSurvived: Math.max(0, (state?.wave.number ?? 1) - 1),
+    coreHealth: Math.max(0, Math.round(state?.core.health ?? 0)),
+    agentsRecruited: Math.min(8, state?.warband.agents.length ?? 0),
+    resourcesGathered: {
+      compute: Math.max(0, Math.round(state?.resources.compute ?? 0)),
+      components: Math.max(0, Math.round(state?.resources.components ?? 0)),
+      shards: Math.max(0, Math.round(state?.resources.shards ?? 0)),
+    },
+    players: (state?.players ?? [])
+      .filter((player): player is typeof player & { id: string } => Boolean(player.id))
+      .map((player) => ({
+        id: player.id,
+        name: player.name ?? "Defender",
+        contribution: {},
+      })),
+  };
+}
+
 type CoOpRoom = {
   roomCode: string;
   hostPlayerId?: string;
@@ -79,6 +100,16 @@ export default function Home() {
     if (!coOpSession || coOpConnectionState === "reconnecting") return false;
     return coOpClient.sendAction(action);
   }, [coOpClient, coOpConnectionState, coOpSession]);
+  const handleCoOpLeave = useCallback(() => {
+    const summary = summarizeCoOpSnapshot(coOpSnapshot);
+    coOpClient.disconnect();
+    setCoOpRoom(null);
+    setCoOpSession(null);
+    setCoOpSnapshot(null);
+    setCoOpEndedResult("manual");
+    setCoOpEndedSummary(summary);
+    setCoOpLobbyOpen(true);
+  }, [coOpClient, coOpSnapshot]);
   const recruitmentAdvice = advisorState?.recruitmentAdvice ?? null;
   const advisorAgentId =
     recruitmentAdvice?.state === "recruit"
@@ -200,6 +231,7 @@ export default function Home() {
       coOpConnectionState={coOpConnectionState}
       coOpClient={coOpSession ? coOpClient : null}
       onCoOpAction={handleCoOpAction}
+      onCoOpLeave={handleCoOpLeave}
     />
     </div>
   );
