@@ -184,3 +184,39 @@ test("co-op lobby CSS preserves a touch-safe single-column mobile screen", async
   assert.match(styles, /@media \(max-width: 820px\)/);
   assert.match(styles, /\.co-op-lobby[\s\S]{0,800}min-height: 48px/);
 });
+
+test("co-op combat projects server snapshots without replacing the local engines", async () => {
+  const [combat, page, styles] = await Promise.all([
+    readFile(new URL("../app/FreemanProtocol.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(combat, /coOpSnapshot\??:/);
+  assert.match(combat, /coOpPlayerId\??:/);
+  assert.match(combat, /coOpConnectionState\??:/);
+  assert.match(combat, /onCoOpAction\??:/);
+  assert.match(combat, /new FreemanEngine\(canvas, callbacks\)/);
+  assert.match(combat, /new FreemanCanvasEngine\(canvas, callbacks\)/);
+  assert.match(combat, /coOpSnapshot\?\.state\.players\.find/);
+  assert.match(combat, /REMOTE OPERATOR/);
+  assert.match(combat, /NETWORK STALE/);
+  assert.match(combat, /sendCoOpAction\(\{ action: "emp" \}\)/);
+  assert.match(combat, /sendCoOpAction\(\{ action: "shoot", targetId: coOpShootTarget \}\)/);
+  assert.match(combat, /sendCoOpAction\(\{ action: "repair", targetId: coOpRepairTarget \}\)/);
+  assert.match(combat, /if \(!coOpPlayerId\) \{[\s\S]{0,240}coOpStartRef\.current = null/);
+  assert.doesNotMatch(combat, /setHud\(coOpSnapshot/);
+  assert.doesNotMatch(combat, /applyCoOpSnapshot/);
+  assert.match(page, /onSnapshot:[\s\S]{0,240}setCoOpSnapshot/);
+  assert.match(page, /coOpSnapshot=\{coOpSnapshot\}/);
+  assert.match(page, /onCoOpAction=\{handleCoOpAction\}/);
+  assert.match(styles, /\.co-op-remote-status/);
+  assert.match(styles, /\.co-op-connection-strip/);
+});
+
+test("co-op starts with every mobile command tray collapsed", async () => {
+  const combat = await readFile(new URL("../app/FreemanProtocol.tsx", import.meta.url), "utf8");
+
+  assert.match(combat, /useState<MobilePanel \| "closed">\("closed"\)/);
+  assert.match(combat, /mobilePanel === panel \? "closed" : panel/);
+});

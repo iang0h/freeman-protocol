@@ -44,7 +44,7 @@ type CoOpLobbyProps = {
   room?: RoomMessage | null;
   connectionState?: string;
   endedResult?: string;
-  onStartSession: (session: { roomCode: string; client: CoOpLobbyClient }) => void;
+  onStartSession: (session: { roomCode: string; playerId: string; client: CoOpLobbyClient }) => void;
   onCreateNewRoom: () => void;
   onLeave: () => void;
 };
@@ -173,7 +173,7 @@ export default function CoOpLobby({
 
   function startRun() {
     if (startDisabled || !roomCode) return;
-    if (client.sendStart()) onStartSession({ roomCode, client });
+    if (client.sendStart()) onStartSession({ roomCode, playerId: localPlayerId, client });
   }
 
   function leaveRoom() {

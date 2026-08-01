@@ -298,6 +298,40 @@ export type RecruitmentAdvisorViewState = {
   watchPriority: "survive" | "farm" | "expand";
 };
 
+export type CoOpCombatSnapshot = {
+  snapshotId: number;
+  serverTick: number;
+  state: {
+    core: { health: number; maxHealth: number };
+    players: Array<{
+      id: string | null;
+      name: string | null;
+      connected: boolean;
+      operator: {
+        health: number;
+        maxHealth: number;
+        x: number;
+        y: number;
+        aimX: number;
+        aimY: number;
+      };
+    }>;
+    enemies: Array<{ id: string; x: number; y: number }>;
+    sentries: Array<{ id: string; health: number; maxHealth: number }>;
+    warband: { agents: string[] };
+  };
+};
+
+export type CoOpAction = {
+  action: "shoot" | "emp" | "repair" | "recruit" | "build-sentry" | "deploy-reserve";
+  agentId?: string;
+  targetId?: string;
+};
+
+type CoOpInputClient = {
+  sendInput: (input: { moveX: number; moveY: number; aimX: number; aimY: number }) => boolean;
+};
+
 type FirstWaveCheckpoint = {
   data: number;
   score: number;
@@ -12020,6 +12054,11 @@ type FreemanProtocolProps = {
   onRecruitmentAdvisorChange: (state: RecruitmentAdvisorViewState) => void;
   advisorAgentId: AgentId | null;
   advisorRequestKey: number;
+  coOpSnapshot?: CoOpCombatSnapshot | null;
+  coOpPlayerId?: string | null;
+  coOpConnectionState?: string;
+  coOpClient?: CoOpInputClient | null;
+  onCoOpAction?: (action: CoOpAction) => void;
 };
 
 export default function FreemanProtocol({
@@ -12029,6 +12068,11 @@ export default function FreemanProtocol({
   onRecruitmentAdvisorChange,
   advisorAgentId,
   advisorRequestKey,
+  coOpSnapshot = null,
+  coOpPlayerId = null,
+  coOpConnectionState = "idle",
+  coOpClient = null,
+  onCoOpAction,
 }: FreemanProtocolProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameController | null>(null);
@@ -12037,6 +12081,8 @@ export default function FreemanProtocol({
   const overlayPausedCampaignRef = useRef(false);
   const advisorRequestHandledRef = useRef(0);
   const recruitmentAdvisorChangeRef = useRef(onRecruitmentAdvisorChange);
+  const latestCoOpSnapshotRef = useRef<CoOpCombatSnapshot | null>(null);
+  const coOpStartRef = useRef<string | null>(null);
   const [mode, setMode] = useState<GameMode>("intro");
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -12045,14 +12091,122 @@ export default function FreemanProtocol({
   const [sfxVolume, setSfxVolume] = useState(0.72);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
-  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("command");
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel | "closed">("closed");
   const [cameraPresentation, setCameraPresentation] = useState<CameraPresentation>("macro");
   const [tutorialComplete, setTutorialComplete] = useState(false);
   const [watchActivityExpanded, setWatchActivityExpanded] = useState(false);
+  const [coOpClock, setCoOpClock] = useState(0);
+  const [previousCoOpSnapshot, setPreviousCoOpSnapshot] = useState<CoOpCombatSnapshot | null>(null);
+  const [coOpSnapshotReceivedAt, setCoOpSnapshotReceivedAt] = useState(0);
+
+  const coOpActive = Boolean(coOpPlayerId);
+  const remoteCoOpPlayer = coOpSnapshot?.state.players.find(
+    (player) => player.id && player.id !== coOpPlayerId,
+  ) ?? null;
+  const localCoOpPlayer = coOpSnapshot?.state.players.find(
+    (player) => player.id === coOpPlayerId,
+  ) ?? null;
+  const previousRemoteCoOpPlayer = previousCoOpSnapshot?.state.players.find(
+    (player) => player.id && player.id !== coOpPlayerId,
+  ) ?? null;
+  const interpolationProgress = Math.min(
+    1,
+    Math.max(0, (coOpClock - coOpSnapshotReceivedAt) / 150),
+  );
+  const remoteOperator = remoteCoOpPlayer
+    ? {
+        ...remoteCoOpPlayer.operator,
+        x: previousRemoteCoOpPlayer
+          ? previousRemoteCoOpPlayer.operator.x + (remoteCoOpPlayer.operator.x - previousRemoteCoOpPlayer.operator.x) * interpolationProgress
+          : remoteCoOpPlayer.operator.x,
+        y: previousRemoteCoOpPlayer
+          ? previousRemoteCoOpPlayer.operator.y + (remoteCoOpPlayer.operator.y - previousRemoteCoOpPlayer.operator.y) * interpolationProgress
+          : remoteCoOpPlayer.operator.y,
+      }
+    : null;
+  const coOpSnapshotAge = coOpSnapshotReceivedAt
+    ? coOpClock - coOpSnapshotReceivedAt
+    : 0;
+  const coOpSnapshotStale = coOpActive && (!coOpSnapshot || coOpSnapshotAge > 2_000);
+  const coOpShootTarget = coOpSnapshot?.state.enemies.reduce<string | null>((nearest, enemy) => {
+    if (!localCoOpPlayer || !nearest) return enemy.id;
+    const current = coOpSnapshot.state.enemies.find((entry) => entry.id === nearest);
+    if (!current) return enemy.id;
+    const origin = localCoOpPlayer.operator;
+    return Math.hypot(enemy.x - origin.x, enemy.y - origin.y) < Math.hypot(current.x - origin.x, current.y - origin.y)
+      ? enemy.id
+      : nearest;
+  }, null) ?? null;
+  const coOpCore = coOpSnapshot?.state.core ?? null;
+  const coOpRepairTarget = coOpCore && coOpCore.health < coOpCore.maxHealth
+    ? "core"
+    : coOpSnapshot?.state.sentries.find((sentry) => sentry.health < sentry.maxHealth)?.id ?? null;
+  const coOpReserveAgentId = coOpSnapshot?.state.warband.agents[0] ?? null;
+
+  const sendCoOpAction = useCallback((action: CoOpAction) => {
+    if (!coOpActive) return false;
+    onCoOpAction?.(action);
+    return true;
+  }, [coOpActive, onCoOpAction]);
 
   useEffect(() => {
     recruitmentAdvisorChangeRef.current = onRecruitmentAdvisorChange;
   }, [onRecruitmentAdvisorChange]);
+
+  useEffect(() => {
+    if (!coOpSnapshot) return;
+    if (latestCoOpSnapshotRef.current?.snapshotId === coOpSnapshot.snapshotId) return;
+    setPreviousCoOpSnapshot(latestCoOpSnapshotRef.current);
+    latestCoOpSnapshotRef.current = coOpSnapshot;
+    const receivedAt = Date.now();
+    setCoOpSnapshotReceivedAt(receivedAt);
+    setCoOpClock(receivedAt);
+    const interpolationTimer = window.setTimeout(() => setCoOpClock(Date.now()), 160);
+    const staleTimer = window.setTimeout(() => setCoOpClock(Date.now()), 2_010);
+    return () => {
+      window.clearTimeout(interpolationTimer);
+      window.clearTimeout(staleTimer);
+    };
+  }, [coOpSnapshot]);
+
+  useEffect(() => {
+    if (!coOpActive || !coOpClient) return;
+    const pressed = new Set<string>();
+    let aimX = 0;
+    let aimY = 1;
+    const sendInput = () => {
+      const moveX = Number(pressed.has("KeyD")) - Number(pressed.has("KeyA"));
+      const moveY = Number(pressed.has("KeyS")) - Number(pressed.has("KeyW"));
+      coOpClient.sendInput({ moveX, moveY, aimX, aimY });
+    };
+    const updateAim = (event: PointerEvent) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const bounds = canvas.getBoundingClientRect();
+      aimX = Math.max(-1, Math.min(1, (event.clientX - bounds.left) / bounds.width * 2 - 1));
+      aimY = Math.max(-1, Math.min(1, (event.clientY - bounds.top) / bounds.height * 2 - 1));
+      sendInput();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!/^(KeyW|KeyA|KeyS|KeyD)$/.test(event.code)) return;
+      pressed.add(event.code);
+      sendInput();
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (!/^(KeyW|KeyA|KeyS|KeyD)$/.test(event.code)) return;
+      pressed.delete(event.code);
+      sendInput();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    const canvas = canvasRef.current;
+    canvas?.addEventListener("pointermove", updateAim, { passive: true });
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      canvas?.removeEventListener("pointermove", updateAim);
+    };
+  }, [coOpActive, coOpClient]);
 
   useEffect(() => {
     if (readStoredValue(TUTORIAL_STORAGE_KEY) !== "1") return;
@@ -12114,6 +12268,17 @@ export default function FreemanProtocol({
       engineRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!coOpPlayerId) {
+      coOpStartRef.current = null;
+      latestCoOpSnapshotRef.current = null;
+      return;
+    }
+    if (coOpStartRef.current === coOpPlayerId || !engineRef.current) return;
+    coOpStartRef.current = coOpPlayerId;
+    engineRef.current.start({ tutorial: false });
+  }, [coOpPlayerId]);
 
   const toggleMute = () => {
     const next = !muted;
@@ -12324,6 +12489,40 @@ export default function FreemanProtocol({
           )}
         </div>
       </header>
+
+      {coOpActive && (
+        <aside className="co-op-remote-status" aria-label="Remote co-op operator">
+          <span>
+            <small>REMOTE OPERATOR</small>
+            <strong>{remoteCoOpPlayer?.name ?? "RECONNECTING"}</strong>
+          </span>
+          <span>
+            <small>STATUS</small>
+            <strong>
+              {remoteCoOpPlayer?.connected
+                ? `${Math.round(remoteOperator?.health ?? 0)}/${Math.round(remoteOperator?.maxHealth ?? 0)} HP`
+                : "RECONNECTING"}
+            </strong>
+          </span>
+          {remoteOperator && (
+            <span className="co-op-remote-status__position">
+              X {remoteOperator.x.toFixed(1)} · Y {remoteOperator.y.toFixed(1)}
+            </span>
+          )}
+        </aside>
+      )}
+
+      {coOpActive && (
+        <p
+          className={`co-op-connection-strip ${coOpSnapshotStale ? "is-stale" : ""}`}
+          role="status"
+          aria-live="polite"
+        >
+          {coOpSnapshotStale
+            ? "NETWORK STALE — HOLDING LAST SNAPSHOT"
+            : `CO-OP ${coOpConnectionState.toUpperCase()}`}
+        </p>
+      )}
 
       {mode !== "intro" && (
         <>
@@ -12570,7 +12769,9 @@ export default function FreemanProtocol({
             <button
               type="button"
               className={`base-builder ${hud.placingDefense ? "is-placing" : ""}`}
-              onClick={() => engineRef.current?.buildDefense()}
+              onClick={() => {
+                if (!sendCoOpAction({ action: "build-sentry" })) engineRef.current?.buildDefense();
+              }}
               disabled={mode !== "playing" || hud.defenses >= hud.maxDefenses}
             >
               <span>
@@ -12608,7 +12809,13 @@ export default function FreemanProtocol({
             <button
               type="button"
               className="base-builder base-builder--reserve"
-              onClick={() => engineRef.current?.deployReserve()}
+              onClick={() => {
+                if (coOpActive) {
+                  if (coOpReserveAgentId) sendCoOpAction({ action: "deploy-reserve", agentId: coOpReserveAgentId });
+                } else {
+                  engineRef.current?.deployReserve();
+                }
+              }}
               disabled={mode !== "playing" || hud.loot.components < 3 || hud.loot.shards < 3}
             >
               <span>
@@ -12691,7 +12898,7 @@ export default function FreemanProtocol({
                 key={panel}
                 aria-pressed={mobilePanel === panel}
                 onClick={() => {
-                  setMobilePanel(panel);
+                  setMobilePanel(mobilePanel === panel ? "closed" : panel);
                   setMobileSquadOpen(panel === "command");
                 }}
               >
@@ -12739,13 +12946,27 @@ export default function FreemanProtocol({
               <button type="button" onClick={() => setMobileSquadOpen(true)} disabled={!canRecruitAgent}>
                 RECRUIT AGENT
               </button>
-              <button type="button" onClick={() => engineRef.current?.buildDefense()} disabled={!canBuildSentry}>
+              <button type="button" onClick={() => {
+                if (!sendCoOpAction({ action: "build-sentry" })) engineRef.current?.buildDefense();
+              }} disabled={!canBuildSentry}>
                 BUILD SENTRY
               </button>
-              <button type="button" onClick={() => engineRef.current?.useFieldKit()} disabled={mode !== "playing" || hud.loot.repairs < 1}>
+              <button type="button" onClick={() => {
+                if (coOpActive) {
+                  if (coOpRepairTarget) sendCoOpAction({ action: "repair", targetId: coOpRepairTarget });
+                } else {
+                  engineRef.current?.useFieldKit();
+                }
+              }} disabled={mode !== "playing" || hud.loot.repairs < 1}>
                 REPAIR NETWORK
               </button>
-              <button type="button" onClick={() => engineRef.current?.deployReserve()} disabled={mode !== "playing" || hud.loot.components < 3 || hud.loot.shards < 3}>
+              <button type="button" onClick={() => {
+                if (coOpActive) {
+                  if (coOpReserveAgentId) sendCoOpAction({ action: "deploy-reserve", agentId: coOpReserveAgentId });
+                } else {
+                  engineRef.current?.deployReserve();
+                }
+              }} disabled={mode !== "playing" || hud.loot.components < 3 || hud.loot.shards < 3}>
                 DEPLOY RESERVE
               </button>
             </div>
@@ -12806,7 +13027,9 @@ export default function FreemanProtocol({
                     type="button"
                     key={agent.id}
                     className={`agent-card ${recruited ? "is-recruited" : ""} ${advisorAgentId === agent.id ? "is-advised" : ""}`}
-                    onClick={() => engineRef.current?.recruit(agent.id)}
+                    onClick={() => {
+                      if (!sendCoOpAction({ action: "recruit", agentId: agent.id })) engineRef.current?.recruit(agent.id);
+                    }}
                     disabled={recruited || !canRecruitWarband}
                     aria-current={advisorAgentId === agent.id ? "true" : undefined}
                     aria-label={
@@ -12928,7 +13151,13 @@ export default function FreemanProtocol({
             <button
               type="button"
               className={`ability ability--attack ${tutorial?.target === "attack" ? "tutorial-highlight" : ""}`}
-              onClick={() => engineRef.current?.attack()}
+              onClick={() => {
+                if (coOpActive) {
+                  if (coOpShootTarget) sendCoOpAction({ action: "shoot", targetId: coOpShootTarget });
+                } else {
+                  engineRef.current?.attack();
+                }
+              }}
               disabled={mode !== "playing"}
               aria-label="Shoot at the nearest enemy"
             >
@@ -12948,7 +13177,9 @@ export default function FreemanProtocol({
             <button
               type="button"
               className={`ability ability--emp ${hud.empCharge >= 1 && hud.empCooldownLeftMs === 0 ? "is-ready" : ""}`}
-              onClick={() => engineRef.current?.activateEmp()}
+              onClick={() => {
+                if (!sendCoOpAction({ action: "emp" })) engineRef.current?.activateEmp();
+              }}
               disabled={
                 mode !== "playing" ||
                 hud.empCharge < 1 ||
@@ -12969,7 +13200,13 @@ export default function FreemanProtocol({
           <button
             type="button"
             className={`repair-field-kit mobile-action-tray mobile-panel--defend ${mobilePanel === "defend" ? "mobile-panel--active" : "mobile-panel--inactive"}`}
-            onClick={() => engineRef.current?.useFieldKit()}
+            onClick={() => {
+              if (coOpActive) {
+                if (coOpRepairTarget) sendCoOpAction({ action: "repair", targetId: coOpRepairTarget });
+              } else {
+                engineRef.current?.useFieldKit();
+              }
+            }}
             disabled={mode !== "playing"}
             aria-label="Repair damaged agents with a field kit or sentries with Components"
           >

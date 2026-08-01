@@ -28,7 +28,7 @@ test("keeps mobile gameplay clear by collapsing secondary controls", () => {
 
 test("uses one active mobile command tray at a time", () => {
   assert.match(game, /type MobilePanel = "command" \| "defend" \| "skills"/);
-  assert.match(game, /const \[mobilePanel, setMobilePanel\] = useState<MobilePanel>\("command"\)/);
+  assert.match(game, /const \[mobilePanel, setMobilePanel\] = useState<MobilePanel \| "closed">\("closed"\)/);
   assert.match(game, /mobile-panel-switcher/);
   assert.match(game, /aria-pressed=\{mobilePanel === panel\}/);
   assert.match(game, /\["command", "COMMAND"\]/);
@@ -37,9 +37,9 @@ test("uses one active mobile command tray at a time", () => {
   assert.match(styles, /\.mobile-panel--inactive/);
 });
 
-test("makes commander mode the default mobile management surface", () => {
+test("keeps commander mode available without opening it by default", () => {
   assert.match(game, /type MobilePanel = "command" \| "defend" \| "skills"/);
-  assert.match(game, /const \[mobilePanel, setMobilePanel\] = useState<MobilePanel>\("command"\)/);
+  assert.match(game, /const \[mobilePanel, setMobilePanel\] = useState<MobilePanel \| "closed">\("closed"\)/);
   assert.match(game, /COMMAND/);
   assert.match(game, /RECRUIT|RECRUIT AGENT/);
   assert.match(game, /FIGHTING|GATHERING|REPAIRING|OFFLINE/);

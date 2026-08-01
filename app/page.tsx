@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import FreemanProtocol, {
+  type CoOpAction,
+  type CoOpCombatSnapshot,
   type RecruitmentAdvisorViewState,
 } from "./FreemanProtocol";
 import CoOpLobby from "./CoOpLobby";
@@ -36,9 +38,16 @@ type CoOpRoom = {
   players: Array<{ id: string; name: string; ready: boolean; connected: boolean }>;
 };
 
+type CoOpSession = {
+  roomCode: string;
+  playerId: string;
+};
+
 export default function Home() {
   const [coOpLobbyOpen, setCoOpLobbyOpen] = useState(false);
   const [coOpRoom, setCoOpRoom] = useState<CoOpRoom | null>(null);
+  const [coOpSession, setCoOpSession] = useState<CoOpSession | null>(null);
+  const [coOpSnapshot, setCoOpSnapshot] = useState<CoOpCombatSnapshot | null>(null);
   const [coOpConnectionState, setCoOpConnectionState] = useState("idle");
   const [coOpEndedResult, setCoOpEndedResult] = useState("");
   const [overlayState, setOverlayState] = useState(createOverlayState);
@@ -47,9 +56,13 @@ export default function Home() {
   const [advisorRequestKey, setAdvisorRequestKey] = useState(0);
   const [coOpClient] = useState(() => new CoOpClient({
     onRoom: (message: CoOpRoom) => setCoOpRoom(message),
+    onSnapshot: (message: CoOpCombatSnapshot) => setCoOpSnapshot(message),
     onEnded: (message: { result: string }) => {
       setCoOpRoom(null);
+      setCoOpSession(null);
+      setCoOpSnapshot(null);
       setCoOpEndedResult(message.result);
+      setCoOpLobbyOpen(true);
     },
     onConnectionChange: (state: string) => {
       setCoOpConnectionState(state);
@@ -59,6 +72,10 @@ export default function Home() {
       }
     },
   }));
+  const handleCoOpAction = useCallback((action: CoOpAction) => {
+    if (!coOpSession) return;
+    coOpClient.sendAction(action);
+  }, [coOpClient, coOpSession]);
   const recruitmentAdvice = advisorState?.recruitmentAdvice ?? null;
   const advisorAgentId =
     recruitmentAdvice?.state === "recruit"
@@ -129,16 +146,22 @@ export default function Home() {
         room={coOpRoom}
         connectionState={coOpConnectionState}
         endedResult={coOpEndedResult}
-        onStartSession={() => {
-          // Task 6 projects this authoritative session into the combat renderer.
+        onStartSession={({ roomCode, playerId }) => {
+          setCoOpSession({ roomCode, playerId });
+          setCoOpSnapshot(null);
+          setCoOpLobbyOpen(false);
         }}
         onCreateNewRoom={() => {
           setCoOpRoom(null);
+          setCoOpSession(null);
+          setCoOpSnapshot(null);
           setCoOpEndedResult("");
           setCoOpConnectionState("idle");
         }}
         onLeave={() => {
           setCoOpRoom(null);
+          setCoOpSession(null);
+          setCoOpSnapshot(null);
           setCoOpEndedResult("");
           setCoOpConnectionState("idle");
           setCoOpLobbyOpen(false);
@@ -166,6 +189,11 @@ export default function Home() {
       onRecruitmentAdvisorChange={setAdvisorState}
       advisorAgentId={advisorAgentId}
       advisorRequestKey={advisorRequestKey}
+      coOpSnapshot={coOpSnapshot}
+      coOpPlayerId={coOpSession?.playerId ?? null}
+      coOpConnectionState={coOpConnectionState}
+      coOpClient={coOpSession ? coOpClient : null}
+      onCoOpAction={handleCoOpAction}
     />
     </div>
   );
