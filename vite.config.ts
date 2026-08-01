@@ -8,6 +8,12 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 const { d1, r2 } = hostingConfig;
 
+// The co-op endpoint is public configuration, not a credential. Keep the
+// canonical deployment variable short, while accepting the framework-prefixed
+// name for existing Vercel/Vinext projects. This value is injected at build
+// time so the client does not depend on a runtime `process.env` object.
+const coOpWsUrl = process.env.CO_OP_WS_URL ?? process.env.NEXT_PUBLIC_CO_OP_WS_URL ?? "";
+
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
@@ -31,6 +37,20 @@ const localBindingConfig = {
         },
       ]
     : [],
+  durable_objects: {
+    bindings: [
+      {
+        name: "CO_OP_ROOMS",
+        class_name: "MultiplayerRoom",
+      },
+    ],
+  },
+  migrations: [
+    {
+      tag: "v1",
+      new_sqlite_classes: ["MultiplayerRoom"],
+    },
+  ],
 };
 
 export default defineConfig(async () => {
@@ -44,6 +64,9 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    define: {
+      "process.env.NEXT_PUBLIC_CO_OP_WS_URL": JSON.stringify(coOpWsUrl),
+    },
     server: {
       host: "0.0.0.0",
       allowedHosts: ["terminal.local"],

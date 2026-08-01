@@ -528,7 +528,7 @@ test("both engines retain workshop recruitment through wave seven before wave ei
     assert.doesNotMatch(engine, /canPerformTutorialAction\(this\.tutorialStep, "guard-core"\)/);
   }
   assert.match(game, /const canRecruitWarband = canRecruitPersistentWarband\(mode\);/);
-  assert.match(game, /disabled=\{recruited \|\| !canRecruitWarband\}/);
+  assert.match(game, /disabled=\{recruited \|\| \(coOpActive \? !coOpCanAct \|\| !affordable : !canRecruitWarband\)\}/);
   assert.match(
     game,
     /useAgentSkill\(id: EvolutionAgentId\) \{\s*if \(this\.mode !== "playing"\) return;/,
@@ -982,7 +982,7 @@ test("Repair Cache documents operator and field-kit recovery without restoring t
 test("the player-facing HUD preserves EMP, Core, roster, touch, and pooled-cleanup contracts", () => {
   assert.match(game, /EMP COOLDOWN/);
   assert.match(game, /CORE HEALTH · PROTECT-ONLY/);
-  assert.match(game, /WARBAND <b>\{hud\.warbandCount\}\/\{hud\.maxWarband\}<\/b>/);
+  assert.match(game, /WARBAND <b>\{displayWarbandCount\}\/\{coOpActive \? coOpWarbandLimit : hud\.maxWarband\}<\/b>/);
   assert.match(game, /className=\{`skill-actions mobile-action-tray mobile-panel--skills/);
   assert.match(game, /className=\{`repair-field-kit mobile-action-tray mobile-panel--defend/);
 
