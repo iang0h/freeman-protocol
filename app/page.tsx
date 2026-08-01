@@ -73,8 +73,8 @@ export default function Home() {
     },
   }));
   const handleCoOpAction = useCallback((action: CoOpAction) => {
-    if (!coOpSession) return;
-    coOpClient.sendAction(action);
+    if (!coOpSession) return false;
+    return coOpClient.sendAction(action);
   }, [coOpClient, coOpSession]);
   const recruitmentAdvice = advisorState?.recruitmentAdvice ?? null;
   const advisorAgentId =

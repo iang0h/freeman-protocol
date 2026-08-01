@@ -185,7 +185,7 @@ test("co-op lobby CSS preserves a touch-safe single-column mobile screen", async
   assert.match(styles, /\.co-op-lobby[\s\S]{0,800}min-height: 48px/);
 });
 
-test("co-op combat projects server snapshots without replacing the local engines", async () => {
+test("co-op combat renders the authoritative snapshot while local simulation is gated", async () => {
   const [combat, page, styles] = await Promise.all([
     readFile(new URL("../app/FreemanProtocol.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -205,13 +205,23 @@ test("co-op combat projects server snapshots without replacing the local engines
   assert.match(combat, /sendCoOpAction\(\{ action: "shoot", targetId: coOpShootTarget \}\)/);
   assert.match(combat, /sendCoOpAction\(\{ action: "repair", targetId: coOpRepairTarget \}\)/);
   assert.match(combat, /if \(!coOpPlayerId\) \{[\s\S]{0,240}coOpStartRef\.current = null/);
-  assert.doesNotMatch(combat, /setHud\(coOpSnapshot/);
-  assert.doesNotMatch(combat, /applyCoOpSnapshot/);
+  assert.match(combat, /setCoOpPresentation\(enabled: boolean\)/);
+  assert.match(combat, /!this\.coOpPresentation[\s\S]{0,160}this\.updateGame/);
+  assert.match(combat, /engineRef\.current\?\.setCoOpPresentation\(coOpActive\)/);
+  assert.match(combat, /co-op-world/);
+  assert.match(combat, /coOpSnapshot\.state\.enemies/);
+  assert.match(combat, /coOpSnapshot\.state\.sentries/);
+  assert.match(combat, /coOpSnapshot\.state\.loot/);
+  assert.match(combat, /coOpSnapshot\.state\.boss/);
+  assert.match(combat, /coOpSnapshot\.state\.warband\.agents/);
+  assert.match(combat, /interpolateCoOpPosition/);
+  assert.match(combat, /previousCoOpSnapshot\?\.state\.enemies/);
   assert.match(page, /onSnapshot:[\s\S]{0,240}setCoOpSnapshot/);
   assert.match(page, /coOpSnapshot=\{coOpSnapshot\}/);
   assert.match(page, /onCoOpAction=\{handleCoOpAction\}/);
   assert.match(styles, /\.co-op-remote-status/);
   assert.match(styles, /\.co-op-connection-strip/);
+  assert.match(styles, /\.co-op-world/);
 });
 
 test("co-op starts with every mobile command tray collapsed", async () => {

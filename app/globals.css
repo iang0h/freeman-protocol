@@ -518,6 +518,215 @@ canvas:focus-visible {
   filter: saturate(1.04) contrast(1.02);
 }
 
+.game-shell[data-co-op-authoritative] .game-canvas {
+  opacity: 0;
+}
+
+.co-op-world {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(218, 118, 58, 0.14), transparent 16%),
+    radial-gradient(circle at 50% 50%, rgba(70, 154, 168, 0.1), transparent 42%),
+    linear-gradient(145deg, #071015, #091419 62%, #060b0e);
+}
+
+.co-op-world__grid,
+.co-op-world__lane {
+  position: absolute;
+  inset: -24%;
+  transform: rotateX(57deg) rotateZ(45deg) scale(1.35);
+  transform-origin: center;
+}
+
+.co-op-world__grid {
+  background-image:
+    linear-gradient(rgba(77, 143, 157, 0.2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(77, 143, 157, 0.2) 1px, transparent 1px);
+  background-size: 46px 46px;
+  box-shadow: inset 0 0 190px rgba(0, 0, 0, 0.88);
+}
+
+.co-op-world__lane {
+  inset: 18% 36%;
+  border: 1px solid rgba(222, 118, 57, 0.3);
+  background: linear-gradient(90deg, transparent, rgba(222, 118, 57, 0.11), transparent);
+  transform: rotate(29deg) skewX(-22deg);
+}
+
+.co-op-world__lane--west { translate: -34% 14%; }
+.co-op-world__lane--east { translate: 34% -14%; }
+
+.co-op-world__core,
+.co-op-world__operator,
+.co-op-world__agent,
+.co-op-world__sub-agent,
+.co-op-world__enemy,
+.co-op-world__loot,
+.co-op-world__sentry,
+.co-op-world__boss {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+}
+
+.co-op-world__core {
+  z-index: 3;
+  width: 112px;
+  height: 112px;
+  border: 2px solid rgba(237, 172, 101, 0.84);
+  border-radius: 50%;
+  background: radial-gradient(circle, #f3e7ce 0 9%, #9f6332 11%, rgba(17, 31, 33, 0.95) 39%, transparent 42%);
+  box-shadow: 0 0 50px rgba(234, 139, 59, 0.38), inset 0 0 28px rgba(246, 205, 145, 0.24);
+}
+
+.co-op-world__core i {
+  width: 22px;
+  height: 22px;
+  rotate: 45deg;
+  background: #fff4dc;
+  box-shadow: 0 0 24px #f3a55a;
+}
+
+.co-op-world__core span,
+.co-op-world__operator small,
+.co-op-world__agent small,
+.co-op-world__loot small,
+.co-op-world__boss small {
+  position: absolute;
+  top: calc(100% + 7px);
+  color: var(--ivory);
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.13em;
+  text-shadow: 0 1px 5px #000;
+}
+
+.co-op-world__operator,
+.co-op-world__agent,
+.co-op-world__sub-agent,
+.co-op-world__enemy,
+.co-op-world__loot,
+.co-op-world__sentry,
+.co-op-world__boss { z-index: 4; }
+
+.co-op-world__operator {
+  width: 30px;
+  height: 30px;
+  border: 2px solid #a9e7ee;
+  border-radius: 50% 50% 44% 44%;
+  background: linear-gradient(135deg, #d8f6ee, #317d85);
+  box-shadow: 0 0 18px rgba(129, 235, 242, 0.78);
+}
+
+.co-op-world__operator.is-local { border-color: #f6b369; background: linear-gradient(135deg, #ffe6a3, #c96f35); }
+.co-op-world__operator.is-disconnected { opacity: 0.42; filter: grayscale(1); }
+.co-op-world__operator i { width: 15px; height: 15px; rotate: 45deg; border: 2px solid rgba(5, 11, 13, 0.8); }
+
+.co-op-world b {
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  height: 3px;
+  min-width: 7px;
+  max-width: 30px;
+  background: #89e1d9;
+  transform: translateX(-50%);
+  box-shadow: 0 0 3px #000;
+}
+
+.co-op-world__agent {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #a7d6d8;
+  background: #163d43;
+  rotate: 45deg;
+  box-shadow: 0 0 12px rgba(121, 222, 220, 0.55);
+}
+
+.co-op-world__agent i { width: 7px; height: 7px; background: #dbffff; }
+.co-op-world__agent small { top: calc(100% + 6px); rotate: -45deg; color: #b5f4ef; }
+
+.co-op-world__sub-agent {
+  width: 10px;
+  height: 10px;
+  border: 1px solid #dbb554;
+  border-radius: 50%;
+  background: #f8d977;
+  box-shadow: 0 0 13px #d8a33e;
+}
+
+.co-op-world__enemy {
+  width: 28px;
+  height: 28px;
+  border: 2px solid #ff6b4c;
+  background: linear-gradient(135deg, #dd5739, #681512);
+  clip-path: polygon(50% 0, 100% 28%, 84% 100%, 16% 100%, 0 28%);
+  box-shadow: 0 0 17px rgba(243, 65, 45, 0.7);
+}
+
+.co-op-world__enemy i { width: 7px; height: 7px; border-radius: 50%; background: #ffd0a8; }
+.co-op-world__enemy b, .co-op-world__boss b { background: #ff805e; }
+
+.co-op-world__loot {
+  width: 15px;
+  height: 15px;
+  rotate: 45deg;
+  border: 1px solid #d7f5e5;
+  background: #84c8c0;
+  box-shadow: 0 0 13px rgba(159, 243, 222, 0.72);
+}
+
+.co-op-world__loot--component { border-color: #ffd387; background: #d18b3b; }
+.co-op-world__loot--repair { border-color: #ffb6b6; background: #bf5858; }
+.co-op-world__loot small { top: calc(100% + 5px); rotate: -45deg; color: #c9f3eb; font-size: 8px; }
+
+.co-op-world__sentry {
+  width: 26px;
+  height: 26px;
+  border: 2px solid #f2b25d;
+  border-radius: 50%;
+  background: conic-gradient(from 45deg, #f4bb6f, #3c2417 25%, #b96832 26% 48%, #192a2f 49%);
+  box-shadow: 0 0 16px rgba(244, 161, 64, 0.64);
+}
+
+.co-op-world__sentry i { width: 3px; height: 25px; background: #fbddb1; rotate: 20deg; transform-origin: bottom; }
+
+.co-op-world__boss {
+  z-index: 5;
+  width: 64px;
+  height: 64px;
+  border: 3px solid #ff734d;
+  background: radial-gradient(circle, #ffb36d 0 12%, #c63b24 15%, #64120e 58%);
+  clip-path: polygon(50% 0, 91% 20%, 100% 67%, 65% 100%, 20% 94%, 0 51%, 20% 13%);
+  box-shadow: 0 0 30px rgba(244, 66, 34, 0.8);
+}
+
+.co-op-world__boss i { width: 18px; height: 18px; border-radius: 50%; background: #fff1d0; box-shadow: 0 0 13px #fff1d0; }
+
+.co-op-world__hud {
+  position: absolute;
+  top: 84px;
+  right: 34px;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(78px, auto));
+  gap: 1px;
+  border: 1px solid rgba(149, 204, 206, 0.3);
+  background: rgba(5, 13, 16, 0.84);
+  backdrop-filter: blur(10px);
+}
+
+.co-op-world__hud span { display: grid; gap: 4px; padding: 10px 12px; border-left: 1px solid rgba(149, 204, 206, 0.16); }
+.co-op-world__hud span:first-child { border-left: 0; }
+.co-op-world__hud small { color: #8eabad; font: 600 9px/1 var(--mono); letter-spacing: 0.13em; }
+.co-op-world__hud strong { color: var(--ivory); font: 600 14px/1 var(--mono); }
+
+.game-shell[data-co-op-authoritative] .vitals-panel { display: none; }
+
 @media (forced-colors: active) {
   .game-canvas {
     filter: contrast(1.12);
