@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [worker, room, roomRules, vite] = await Promise.all([
+const [worker, room, roomRules, vite, page, lobby, readme] = await Promise.all([
   readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
   readFile(new URL("../worker/multiplayer-room.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/game/co-op-room.mjs", import.meta.url), "utf8"),
   readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+  readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../app/CoOpLobby.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../README.md", import.meta.url), "utf8"),
 ]);
 
 test("Worker exposes a co-op room WebSocket upgrade route", () => {
@@ -68,6 +71,29 @@ test("local Worker preview declares the co-op Durable Object binding and migrati
   assert.match(vite, /MultiplayerRoom/);
   assert.match(vite, /durable_objects/);
   assert.match(vite, /migrations/);
+});
+
+test("production deployment gate keeps co-op disabled without a public endpoint", () => {
+  assert.match(page, /const CO_OP_WS_URL = process\.env\.NEXT_PUBLIC_CO_OP_WS_URL \?\? ""/);
+  assert.match(page, /featureEnabled=\{Boolean\(CO_OP_WS_URL\)\}/);
+  assert.match(lobby, /disabled=\{!featureEnabled\}/);
+  assert.match(lobby, /CO-OP COMING SOON/);
+  assert.match(vite, /const coOpWsUrl = process\.env\.CO_OP_WS_URL/);
+  assert.match(vite, /process\.env\.NEXT_PUBLIC_CO_OP_WS_URL/);
+  assert.match(vite, /JSON\.stringify\(coOpWsUrl\)/);
+  assert.match(worker, /if \(!env\.CO_OP_ROOMS\)/);
+  assert.match(worker, /Co-op multiplayer is not configured on this deployment/);
+  assert.match(worker, /status: 503/);
+  assert.match(worker, /Cache-Control/);
+  assert.match(worker, /no-store/);
+});
+
+test("production co-op setup documents the public endpoint and Durable Object binding", () => {
+  assert.match(readme, /CO_OP_WS_URL/);
+  assert.match(readme, /NEXT_PUBLIC_CO_OP_WS_URL/);
+  assert.match(readme, /CO_OP_ROOMS/);
+  assert.match(readme, /CO-OP COMING SOON/);
+  assert.match(readme, /do not commit/i);
 });
 
 test("expired reconnect grace broadcasts an abandoned ending and terminal closes cannot recreate the room", async () => {

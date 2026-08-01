@@ -20,6 +20,42 @@ A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
 Drizzle support.
 
+## Optional co-op multiplayer deployment
+
+Co-op is intentionally feature-flagged. The browser only enables the room
+lobby when a public WebSocket endpoint is injected at build time. Set the
+canonical `CO_OP_WS_URL` environment variable to the `wss://` origin of the
+Worker that serves `/api/co-op/rooms/:roomCode` (for example,
+`wss://freeman-rooms.example.workers.dev`). The Vite config also accepts
+`NEXT_PUBLIC_CO_OP_WS_URL` for deployments that only expose framework-prefixed
+client variables. Never put a token or credential in either value, and do not
+commit `.env*` files or secret values.
+
+The room Worker needs a Cloudflare Durable Object namespace binding named
+`CO_OP_ROOMS` pointing to the `MultiplayerRoom` class, plus the first Durable
+Object migration for that class. The local preview binding and migration are
+declared in `vite.config.ts`; provision the equivalent binding and migration in
+the production Worker before pointing the frontend at it. Keep
+`.openai/hosting.json` unchanged until the real production binding has been
+provisioned by the hosting platform.
+
+If `CO_OP_WS_URL` (or its `NEXT_PUBLIC_` compatibility name) is absent, the
+lobby remains safely disabled and displays **CO-OP COMING SOON**. If a Worker
+is reached without `CO_OP_ROOMS`, its WebSocket room route returns `503` rather
+than attempting a broken upgrade. Campaign and Watch Mode continue to run
+without a network endpoint.
+
+### Production checklist
+
+1. Deploy `worker/index.ts` and `worker/multiplayer-room.ts` with the
+   `CO_OP_ROOMS` Durable Object binding and migration.
+2. Confirm the Worker responds to `GET /api/co-op/rooms/ABC123` with a WebSocket
+   upgrade only after the binding is present.
+3. Set `CO_OP_WS_URL` in the frontend build environment, redeploy, and verify
+   that the lobby no longer shows **CO-OP COMING SOON**.
+4. Keep all credentials in the hosting provider's secret store; do not commit
+   them to Git or place them in source code.
+
 ## Prerequisites
 
 - Node.js `>=22.13.0`

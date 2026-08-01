@@ -3,7 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 export { MultiplayerRoom } from "./multiplayer-room";
 
-interface DurableObjectId {}
+type DurableObjectId = object;
 
 interface DurableObjectStub {
   fetch(request: Request): Promise<Response>;
@@ -51,7 +51,10 @@ const worker = {
         return new Response("Upgrade Required", { status: 426, headers: { Upgrade: "websocket" } });
       }
       if (!env.CO_OP_ROOMS) {
-        return new Response("Co-op multiplayer is not configured on this deployment.", { status: 503 });
+        return new Response("Co-op multiplayer is not configured on this deployment.", {
+          status: 503,
+          headers: { "Cache-Control": "no-store" },
+        });
       }
       const roomCode = coOpRoom[1].toUpperCase();
       const headers = new Headers(request.headers);
