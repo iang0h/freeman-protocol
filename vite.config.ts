@@ -31,6 +31,20 @@ const localBindingConfig = {
         },
       ]
     : [],
+  durable_objects: {
+    bindings: [
+      {
+        name: "CO_OP_ROOMS",
+        class_name: "MultiplayerRoom",
+      },
+    ],
+  },
+  migrations: [
+    {
+      tag: "v1",
+      new_sqlite_classes: ["MultiplayerRoom"],
+    },
+  ],
 };
 
 export default defineConfig(async () => {
