@@ -89,9 +89,20 @@ test("rejects unsafe client action identifiers at the protocol boundary", async 
 });
 
 test("parses all defined server messages and rejects malformed variants", async () => {
-  const { isServerMessage, parseServerMessage } = await import("../app/game/co-op-protocol.mjs");
-  const state = { core: { health: 180 } };
-  const summary = { wavesSurvived: 3 };
+  const {
+    createEmptyCoOpSnapshot,
+    createMatchSummary,
+    isServerMessage,
+    parseServerMessage,
+  } = await import("../app/game/co-op-protocol.mjs");
+  const state = createEmptyCoOpSnapshot("test-seed");
+  const summary = createMatchSummary({
+    wave: { number: 4 },
+    core: { health: 91 },
+    warband: { agents: ["ion", "cipher"] },
+    resourcesGathered: { compute: 12, components: 3, shards: 1 },
+    players: [{ id: "p1", name: "Ian", contribution: { kills: 7 } }],
+  });
 
   assert.deepEqual(parseServerMessage({
     type: "room",
@@ -126,7 +137,9 @@ test("parses all defined server messages and rejects malformed variants", async 
   });
   assert.equal(parseServerMessage({ type: "event", eventId: 1, kind: "hack", payload: {} }), null);
   assert.equal(parseServerMessage({ type: "room", roomCode: "bad", players: [] }), null);
-  assert.equal(isServerMessage({ type: "ended", result: "abandoned", summary: {} }), true);
+  assert.equal(parseServerMessage({ type: "snapshot", snapshotId: 1, serverTick: 2, state: {} }), null);
+  assert.equal(parseServerMessage({ type: "ended", result: "abandoned", summary: {} }), null);
+  assert.equal(isServerMessage({ type: "ended", result: "abandoned", summary }), true);
 });
 
 test("creates an immutable empty shared co-op snapshot and match summary", async () => {

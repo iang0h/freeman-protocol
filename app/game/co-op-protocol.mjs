@@ -15,6 +15,7 @@ const CLIENT_ACTIONS = new Set([
 const PRIORITIES = new Set(["follow", "guard", "focus"]);
 const SERVER_EVENT_KINDS = new Set(["hit", "critical", "kill", "loot", "agent-task", "wave", "boss"]);
 const MATCH_RESULTS = new Set(["victory", "defeat", "abandoned"]);
+const WAVE_STATUSES = new Set(["waiting", "playing", "intermission", "ended"]);
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
@@ -51,6 +52,85 @@ function deepFreeze(value) {
   Object.freeze(value);
   for (const item of Object.values(value)) deepFreeze(item);
   return value;
+}
+
+function boundedNumber(value, minimum, maximum) {
+  return isFiniteNumber(value) && value >= minimum && value <= maximum ? value : null;
+}
+
+function canonicalizeResources(resources) {
+  if (!resources || typeof resources !== "object" || Array.isArray(resources)) return null;
+  const values = ["compute", "components", "shards", "repairKits", "modules"];
+  const result = Object.fromEntries(values.map((key) => [key, boundedNumber(resources[key], 0, Number.MAX_SAFE_INTEGER)]));
+  return Object.values(result).every((value) => value !== null) ? result : null;
+}
+
+function canonicalizeContribution(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length > 16 || entries.some(([key, amount]) => !/^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(key) || boundedNumber(amount, 0, Number.MAX_SAFE_INTEGER) === null)) return null;
+  return Object.fromEntries(entries);
+}
+
+function canonicalizeSnapshot(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state) || typeof state.seed !== "string" || state.seed.length > CO_OP_IDENTIFIER_MAX_LENGTH) return null;
+  if (!Array.isArray(state.players) || state.players.length !== ROOM_MAX_PLAYERS) return null;
+  const players = state.players.map((player, slot) => {
+    if (!player || typeof player !== "object" || Array.isArray(player) || player.slot !== slot || !(player.id === null || typeof player.id === "string") || !(player.name === null || typeof player.name === "string") || typeof player.connected !== "boolean" || typeof player.ready !== "boolean") return null;
+    if ((player.id !== null && !optionalIdentifier(player.id)) || (player.name !== null && normalizeDisplayName(player.name) !== player.name)) return null;
+    const operator = player.operator;
+    if (!operator || typeof operator !== "object" || Array.isArray(operator)) return null;
+    const maxHealth = boundedNumber(operator.maxHealth, 1, 1000);
+    if (maxHealth === null || boundedNumber(operator.health, 0, maxHealth) === null || [operator.x, operator.y].some((value) => boundedNumber(value, -10000, 10000) === null) || [operator.aimX, operator.aimY].some((value) => boundedNumber(value, -1, 1) === null)) return null;
+    return {
+      slot,
+      id: player.id,
+      name: player.name,
+      connected: player.connected,
+      ready: player.ready,
+      operator: {
+        health: operator.health,
+        maxHealth,
+        x: operator.x,
+        y: operator.y,
+        aimX: operator.aimX,
+        aimY: operator.aimY,
+      },
+    };
+  });
+  const core = state.core;
+  const resources = canonicalizeResources(state.resources);
+  const warband = state.warband;
+  const wave = state.wave;
+  if (!players.every(Boolean) || !core || typeof core !== "object" || Array.isArray(core) || !resources || !warband || typeof warband !== "object" || Array.isArray(warband) || !wave || typeof wave !== "object" || Array.isArray(wave)) return null;
+  const maxCore = boundedNumber(core.maxHealth, 1, 10000);
+  if (maxCore === null || boundedNumber(core.health, 0, maxCore) === null || !Array.isArray(warband.agents) || warband.agents.length > 8 || warband.agents.some((agent) => !optionalIdentifier(agent)) || !Number.isSafeInteger(warband.maxAgents) || warband.maxAgents < 0 || warband.maxAgents > 8 || !PRIORITIES.has(warband.priority) || !Number.isSafeInteger(wave.number) || wave.number < 1 || !WAVE_STATUSES.has(wave.status) || boundedNumber(wave.elapsedMs, 0, Number.MAX_SAFE_INTEGER) === null) return null;
+  return {
+    seed: state.seed,
+    players,
+    core: { health: core.health, maxHealth: maxCore },
+    resources,
+    warband: { agents: [...warband.agents], maxAgents: warband.maxAgents, priority: warband.priority },
+    wave: { number: wave.number, status: wave.status, elapsedMs: wave.elapsedMs },
+  };
+}
+
+function canonicalizeMatchSummary(summary) {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary) || !Number.isSafeInteger(summary.wavesSurvived) || summary.wavesSurvived < 0 || boundedNumber(summary.coreHealth, 0, 10000) === null || !Number.isSafeInteger(summary.agentsRecruited) || summary.agentsRecruited < 0 || summary.agentsRecruited > 8 || !Array.isArray(summary.players) || summary.players.length > ROOM_MAX_PLAYERS) return null;
+  const resources = summary.resourcesGathered;
+  if (!resources || typeof resources !== "object" || Array.isArray(resources) || ["compute", "components", "shards"].some((key) => boundedNumber(resources[key], 0, Number.MAX_SAFE_INTEGER) === null)) return null;
+  const players = summary.players.map((player) => {
+    if (!player || typeof player !== "object" || Array.isArray(player) || !optionalIdentifier(player.id) || typeof player.name !== "string" || normalizeDisplayName(player.name) !== player.name) return null;
+    const contribution = canonicalizeContribution(player.contribution);
+    return contribution === null ? null : { id: player.id, name: player.name, contribution };
+  });
+  return players.every(Boolean) ? {
+    wavesSurvived: summary.wavesSurvived,
+    coreHealth: summary.coreHealth,
+    agentsRecruited: summary.agentsRecruited,
+    resourcesGathered: { compute: resources.compute, components: resources.components, shards: resources.shards },
+    players,
+  } : null;
 }
 
 export function createRoomCode(random = Math.random) {
@@ -150,8 +230,9 @@ export function parseServerMessage(value) {
       return players.every(Boolean) ? deepFreeze({ type: "room", roomCode: message.roomCode, players }) : null;
     }
     case "snapshot":
-      return isSequence(message.snapshotId) && isSequence(message.serverTick) && message.state && typeof message.state === "object" && !Array.isArray(message.state)
-        ? deepFreeze({ type: "snapshot", snapshotId: message.snapshotId, serverTick: message.serverTick, state: cloneValue(message.state) })
+      const state = canonicalizeSnapshot(message.state);
+      return isSequence(message.snapshotId) && isSequence(message.serverTick) && state
+        ? deepFreeze({ type: "snapshot", snapshotId: message.snapshotId, serverTick: message.serverTick, state })
         : null;
     case "event":
       return isSequence(message.eventId) && SERVER_EVENT_KINDS.has(message.kind) && message.payload && typeof message.payload === "object" && !Array.isArray(message.payload)
@@ -162,8 +243,9 @@ export function parseServerMessage(value) {
         ? deepFreeze({ type: "error", code: message.code.trim(), message: message.message.trim() })
         : null;
     case "ended":
-      return MATCH_RESULTS.has(message.result) && message.summary && typeof message.summary === "object" && !Array.isArray(message.summary)
-        ? deepFreeze({ type: "ended", result: message.result, summary: cloneValue(message.summary) })
+      const summary = canonicalizeMatchSummary(message.summary);
+      return MATCH_RESULTS.has(message.result) && summary
+        ? deepFreeze({ type: "ended", result: message.result, summary })
         : null;
     default:
       return null;
