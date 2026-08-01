@@ -256,3 +256,9 @@ test("blocks duplicate co-op intents while reconnecting without persisting match
   assert.match(lobby, /client\.disconnect\(\)/);
   assert.doesNotMatch(page, /localStorage\.(setItem|getItem)\([^)]*economy/i);
 });
+
+test("disables combat controls while the authoritative socket is reconnecting", async () => {
+  const combat = await readFile(new URL("../app/FreemanProtocol.tsx", import.meta.url), "utf8");
+
+  assert.match(combat, /const coOpCanAct = coOpActive && coOpConnectionState !== "reconnecting"/);
+});

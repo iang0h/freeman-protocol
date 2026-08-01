@@ -12187,7 +12187,7 @@ export default function FreemanProtocol({
     top: `${Math.max(8, Math.min(92, 50 + y * 3.9))}%`,
   });
   const coOpRecruited = new Set(coOpSnapshot?.state.warband.agents ?? []);
-  const coOpCanAct = coOpActive && coOpSnapshot?.state.wave.status === "playing";
+  const coOpCanAct = coOpActive && coOpConnectionState !== "reconnecting" && coOpSnapshot?.state.wave.status === "playing";
   const coOpWarbandLimit = coOpSnapshot?.state.warband.maxAgents ?? 8;
   const toCoOpPriority = (command: SquadCommand): "follow" | "guard" | "focus" =>
     command === "defend" || command === "auto" ? "guard" : command;
