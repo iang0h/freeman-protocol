@@ -211,3 +211,101 @@ test("canonicalizes nested identifiers and keeps constructor output server-valid
   assert.equal(summary.agentsRecruited, 8);
   assert.equal(isServerMessage({ type: "ended", result: "victory", summary }), true);
 });
+
+test("starts only a two-player ready room without mutating earlier states", async () => {
+  const { createRoom, joinRoom, setPlayerReady, startRoom } = await import("../app/game/co-op-room.mjs");
+  const created = createRoom({ roomCode: "ABC123", seed: "test-seed" });
+  const withHost = joinRoom(created, { id: "p1", name: "Host" });
+  const withGuest = joinRoom(withHost, { id: "p2", name: "Guest" });
+  const ready = setPlayerReady(setPlayerReady(withGuest, "p1", true), "p2", true);
+  const started = startRoom(ready);
+
+  assert.equal(created.phase, "waiting");
+  assert.equal(withHost.players.filter((player) => player.id).length, 1);
+  assert.equal(started.phase, "playing");
+  assert.equal(started.wave.status, "playing");
+});
+
+test("caps rooms at two players and reports lifecycle validation errors", async () => {
+  const { createRoom, joinRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+
+  assert.throws(() => joinRoom(room, { id: "p3", name: "Extra" }), /ROOM_FULL/);
+  assert.equal(room.players.filter((player) => player.id).length, 2);
+});
+
+test("applies shared spending atomically and rejects duplicate action sequences", async () => {
+  const { applyClientMessage, createRoom, joinRoom, setPlayerReady, startRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed", resources: { compute: 80 } });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+
+  const first = applyClientMessage(room, "p1", { type: "action", sequence: 1, action: "build-sentry" });
+  assert.equal(first.error, null);
+  assert.equal(first.room.resources.compute, 0);
+  assert.equal(first.room.sentries.length, 1);
+
+  const duplicate = applyClientMessage(first.room, "p1", { type: "action", sequence: 1, action: "build-sentry" });
+  assert.equal(duplicate.error.code, "DUPLICATE_SEQUENCE");
+  assert.strictEqual(duplicate.room, first.room);
+
+  const unaffordable = applyClientMessage(first.room, "p2", { type: "action", sequence: 2, action: "build-sentry" });
+  assert.equal(unaffordable.error.code, "INSUFFICIENT_RESOURCES");
+  assert.equal(unaffordable.room.resources.compute, 0);
+  assert.equal(unaffordable.room.sentries.length, 1);
+});
+
+test("produces monotonically numbered immutable snapshots", async () => {
+  const { createRoom, getSnapshot, joinRoom, setPlayerReady, startRoom, tickRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+  const before = getSnapshot(room);
+  const ticked = tickRoom(room, 50);
+  const after = getSnapshot(ticked);
+
+  assert.equal(before.snapshotId, 0);
+  assert.equal(after.snapshotId, 1);
+  assert.ok(Object.isFrozen(after));
+  assert.equal(room.snapshotId, 0);
+});
+
+test("preserves a disconnected player for a thirty-second reconnect grace period", async () => {
+  const { createRoom, disconnectPlayer, joinRoom, reconnectPlayer } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  const disconnected = disconnectPlayer(room, "p1", 1_000);
+
+  assert.equal(disconnected.players[0].connected, false);
+  assert.equal(disconnected.disconnectDeadlines.p1, 31_000);
+  assert.equal(reconnectPlayer(disconnected, "p1", 31_000).players[0].connected, true);
+  assert.throws(() => reconnectPlayer(disconnected, "p1", 31_001), /RECONNECT_EXPIRED/);
+});
+
+test("keeps enemy defeat, loot, wave transitions, and shared resources authoritative", async () => {
+  const { applyClientMessage, createRoom, getSnapshot, joinRoom, setPlayerReady, startRoom, tickRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({
+    roomCode: "ABC123",
+    seed: "test-seed",
+    enemies: [{ id: "enemy-1", kind: "virus", health: 10, maxHealth: 10, x: 0, y: 0, loot: { type: "component", value: 2 } }],
+  });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+  const shot = applyClientMessage(room, "p1", { type: "action", sequence: 1, action: "shoot", targetId: "enemy-1" });
+  const afterLoot = tickRoom(shot.room, 1);
+  const snapshot = getSnapshot(afterLoot);
+
+  assert.equal(shot.room.enemies.length, 0);
+  assert.equal(afterLoot.resources.components, 2);
+  assert.equal(snapshot.state.resources.components, 2);
+  assert.equal(afterLoot.wave.status, "intermission");
+
+  const nextWave = tickRoom(afterLoot, 3_000);
+  assert.equal(nextWave.wave.number, 2);
+  assert.equal(nextWave.wave.status, "playing");
+});
