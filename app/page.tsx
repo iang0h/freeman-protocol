@@ -47,7 +47,10 @@ export default function Home() {
   const [advisorRequestKey, setAdvisorRequestKey] = useState(0);
   const [coOpClient] = useState(() => new CoOpClient({
     onRoom: (message: CoOpRoom) => setCoOpRoom(message),
-    onEnded: (message: { result: string }) => setCoOpEndedResult(message.result),
+    onEnded: (message: { result: string }) => {
+      setCoOpRoom(null);
+      setCoOpEndedResult(message.result);
+    },
     onConnectionChange: (state: string) => {
       setCoOpConnectionState(state);
       if (state === "connecting") {
@@ -128,6 +131,11 @@ export default function Home() {
         endedResult={coOpEndedResult}
         onStartSession={() => {
           // Task 6 projects this authoritative session into the combat renderer.
+        }}
+        onCreateNewRoom={() => {
+          setCoOpRoom(null);
+          setCoOpEndedResult("");
+          setCoOpConnectionState("idle");
         }}
         onLeave={() => {
           setCoOpRoom(null);

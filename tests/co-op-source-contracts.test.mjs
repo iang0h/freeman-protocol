@@ -158,6 +158,8 @@ test("the focused co-op lobby provides an accessible room-code flow", async () =
   assert.match(page, /CoOpLobby/);
   assert.match(page, /CO_OP_WS_URL/);
   assert.match(page, /onLeave=\{\(\) => \{[\s\S]{0,240}setCoOpRoom\(null\)/);
+  assert.match(page, /onEnded:[\s\S]{0,240}setCoOpRoom\(null\)/);
+  assert.match(page, /onCreateNewRoom=\{\(\) => \{[\s\S]{0,240}setCoOpEndedResult\(""\)/);
   assert.match(lobby, /CREATE ROOM/);
   assert.match(lobby, /JOIN ROOM/);
   assert.match(lobby, /ROOM CODE/);
@@ -168,6 +170,11 @@ test("the focused co-op lobby provides an accessible room-code flow", async () =
   assert.match(lobby, /aria-live="polite"/);
   assert.match(lobby, /navigator\.clipboard/);
   assert.match(lobby, /CO-OP COMING SOON/);
+  assert.match(lobby, /CREATE NEW ROOM/);
+  assert.match(lobby, /onCreateNewRoom/);
+  assert.match(lobby, /const localPlayerId = createdRoom \? "p1" : "p2"/);
+  assert.match(lobby, /player\.id === localPlayerId/);
+  assert.doesNotMatch(lobby, /player\.name === normalizeDisplayName\(displayName\)/);
 });
 
 test("co-op lobby CSS preserves a touch-safe single-column mobile screen", async () => {

@@ -45,6 +45,7 @@ type CoOpLobbyProps = {
   connectionState?: string;
   endedResult?: string;
   onStartSession: (session: { roomCode: string; client: CoOpLobbyClient }) => void;
+  onCreateNewRoom: () => void;
   onLeave: () => void;
 };
 
@@ -92,6 +93,7 @@ export default function CoOpLobby({
   connectionState = "idle",
   endedResult = "",
   onStartSession,
+  onCreateNewRoom,
   onLeave,
 }: CoOpLobbyProps) {
   const [view, setView] = useState<LobbyState>("landing");
@@ -112,6 +114,9 @@ export default function CoOpLobby({
 
   const allReady = Boolean(room && room.players.length === 2 && room.players.every((player) => player.ready));
   const isHost = createdRoom;
+  // The authoritative room assigns p1 to the creator and p2 to the joiner.
+  // Names are intentionally not identities: both defenders may choose "Defender".
+  const localPlayerId = createdRoom ? "p1" : "p2";
   const joinDisabled = !featureEnabled || roomCode.length !== 6;
   const startDisabled = !isHost || !allReady || lobbyState === "reconnecting";
   const startReason = !isHost
@@ -162,7 +167,7 @@ export default function CoOpLobby({
   }
 
   function toggleReady() {
-    const localPlayer = room?.players.find((player) => player.name === normalizeDisplayName(displayName));
+    const localPlayer = room?.players.find((player) => player.id === localPlayerId);
     client.sendReady(!localPlayer?.ready);
   }
 
@@ -174,6 +179,13 @@ export default function CoOpLobby({
   function leaveRoom() {
     client.disconnect();
     onLeave();
+  }
+
+  function createFreshRoom() {
+    onCreateNewRoom();
+    setRoomCode("");
+    setCopyHint("");
+    createRoom();
   }
 
   return (
@@ -282,7 +294,12 @@ export default function CoOpLobby({
         )}
 
         {lobbyState === "ended" && (
-          <p className="co-op-lobby__end-note">{endedResult.toUpperCase()} · Create a fresh room to begin another run.</p>
+          <div className="co-op-lobby__ended-actions">
+            <p className="co-op-lobby__end-note">{endedResult.toUpperCase()} · Create a fresh room to begin another run.</p>
+            <button type="button" className="co-op-lobby__primary" disabled={!featureEnabled} onClick={createFreshRoom}>
+              CREATE NEW ROOM
+            </button>
+          </div>
         )}
       </section>
     </main>
