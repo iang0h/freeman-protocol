@@ -42,6 +42,10 @@ const empRules = await readFile(
   new URL("../app/game/emp-rules.mjs", import.meta.url),
   "utf8",
 ).catch(() => "");
+const watchDirectorRules = await readFile(
+  new URL("../app/game/watch-director-rules.mjs", import.meta.url),
+  "utf8",
+).catch(() => "");
 const webglGame = game.slice(
   game.indexOf("class FreemanEngine"),
   game.indexOf("type FlatEnemy"),
@@ -1117,6 +1121,18 @@ test("Watch Mode activity defaults to a compact accessible disclosure", () => {
     styles,
     /@media \(max-width: 820px\)[\s\S]*\.watch-panel__activity-toggle\s*\{[\s\S]*min-height:\s*44px/,
   );
+});
+
+test("both renderers use the watch director to keep autonomous runs moving", () => {
+  assert.match(watchDirectorRules, /export function tickWatchDirector/);
+  assert.match(game, /watch-director-rules\.mjs/);
+
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private watchDirectorState = createWatchDirectorState\(\)/);
+    assert.match(engine, /tickWatchDirector\(/);
+    assert.match(engine, /WATCH DIRECTOR/);
+    assert.match(engine, /intent\.reset/);
+  }
 });
 
 test("watch mode pilots the player in both renderers", () => {

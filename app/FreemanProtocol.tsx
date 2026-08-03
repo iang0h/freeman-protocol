@@ -147,6 +147,10 @@ import {
 } from "./game/watch-mode-rules.mjs";
 import { getRecruitmentAdvice } from "./game/recruitment-advisor-rules.mjs";
 import { shouldShowRecruitPrompt } from "./game/recruitment-advisor-rules.mjs";
+import {
+  createWatchDirectorState,
+  tickWatchDirector,
+} from "./game/watch-director-rules.mjs";
 
 type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
@@ -1354,6 +1358,7 @@ class FreemanEngine {
   private coOpPresentation = false;
   private combatOverlayOpen = false;
   private watchState = createWatchState();
+  private watchDirectorState = createWatchDirectorState();
   private watchRecoveryClock = 0;
   private wave = 1;
   private waveActive = false;
@@ -1505,6 +1510,7 @@ class FreemanEngine {
     this.audio.unlock();
     this.sessionMode = options.mode ?? "campaign";
     this.watchState = createWatchState();
+    this.watchDirectorState = createWatchDirectorState();
     this.resetMissionState();
     if (options.tutorial) {
       this.tutorialStep = "move";
@@ -1572,6 +1578,7 @@ class FreemanEngine {
     this.previousEmpReady = false;
     this.dismissedEmpPrompt = false;
     this.empReadyPrompt = false;
+    this.watchDirectorState = createWatchDirectorState();
     this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
@@ -4578,9 +4585,16 @@ class FreemanEngine {
 
   private updateWatchOperator(delta: number) {
     if (!isWatchMode(this.sessionMode) || this.mode !== "playing") return;
-    const threat = this.getNearestEnemy(this.core.group.position, 12) ??
+    const threatRuntime = this.getNearestEnemy(this.core.group.position, 12) ??
       this.getNearestEnemy(this.player.group.position, 10);
-    const pickup = !threat
+    const threat = threatRuntime
+      ? {
+          x: threatRuntime.group.position.x,
+          z: threatRuntime.group.position.z,
+          distance: threatRuntime.group.position.distanceTo(this.player.group.position),
+        }
+      : null;
+    const pickupRuntime = !threatRuntime
       ? [...this.pickups]
           .filter((candidate) => candidate.type !== "repair" || this.player.hp < this.player.maxHp)
           .sort((left, right) =>
@@ -4588,23 +4602,56 @@ class FreemanEngine {
             this.player.group.position.distanceTo(new THREE.Vector3(right.x, 0, right.y)),
           )[0]
       : null;
-    const target = threat
-      ? threat.group.position
-      : pickup
-        ? new THREE.Vector3(pickup.x, 0, pickup.y)
-        : this.core.group.position.clone().add(
-            new THREE.Vector3(Math.cos(this.elapsed * 0.55) * 3.2, 0, Math.sin(this.elapsed * 0.55) * 3.2),
-          );
+    const directorResult = tickWatchDirector(
+      this.watchDirectorState,
+      {
+        operator: {
+          x: this.player.group.position.x,
+          z: this.player.group.position.z,
+          hpRatio: this.player.hp / this.player.maxHp,
+        },
+        core: {
+          x: this.core.group.position.x,
+          z: this.core.group.position.z,
+          hpRatio: this.core.hp / this.core.maxHp,
+        },
+        threat,
+        pickup: pickupRuntime
+          ? {
+              x: pickupRuntime.x,
+              z: pickupRuntime.y,
+              useful: pickupRuntime.type !== "repair" || this.player.hp < this.player.maxHp,
+            }
+          : null,
+        zones: ARENA_ZONE_MARKERS.map(({ x, z }) => ({ x, z })),
+        priority: this.watchState.priority,
+      },
+      delta * 1_000,
+    );
+    this.watchDirectorState = directorResult.state;
+    if (directorResult.intent.reset) {
+      this.recordWatchEvent(`WATCH DIRECTOR: ${directorResult.intent.reason}`);
+      this.releaseQueuedEnemies();
+    }
+    const target = new THREE.Vector3(
+      directorResult.intent.target.x,
+      0,
+      directorResult.intent.target.z,
+    );
     const direction = target.clone().sub(this.player.group.position).setY(0);
     const distance = direction.length();
-    if (distance > (threat ? 4.4 : 0.55)) {
+    const engaging = directorResult.intent.state === "engage" && threatRuntime !== null;
+    if (distance > (engaging ? 4.4 : 0.55)) {
       direction.normalize();
       this.player.group.position.add(direction.multiplyScalar(delta * 3.2));
       this.clampToArena(this.player.group.position, ARENA_RADIUS - 0.5);
       this.faceDirection(this.player.group, direction);
       this.playerMoving = true;
-    } else if (threat) {
-      this.faceDirection(this.player.group, threat.group.position.clone().sub(this.player.group.position).setY(0));
+    } else if (engaging && threatRuntime) {
+      this.faceDirection(
+        this.player.group,
+        threatRuntime.group.position.clone().sub(this.player.group.position).setY(0),
+      );
       if (distance <= 2.5) this.melee();
       this.attack();
     }
@@ -7295,6 +7342,7 @@ class FreemanCanvasEngine implements GameController {
   private coOpPresentation = false;
   private combatOverlayOpen = false;
   private watchState = createWatchState();
+  private watchDirectorState = createWatchDirectorState();
   private watchRecoveryClock = 0;
   private wave = 1;
   private waveActive = false;
@@ -7386,6 +7434,7 @@ class FreemanCanvasEngine implements GameController {
     this.audio.unlock();
     this.sessionMode = options.mode ?? "campaign";
     this.watchState = createWatchState();
+    this.watchDirectorState = createWatchDirectorState();
     this.resetMissionState();
     if (options.tutorial) {
       this.tutorialStep = "move";
@@ -7457,6 +7506,7 @@ class FreemanCanvasEngine implements GameController {
     this.previousEmpReady = false;
     this.dismissedEmpPrompt = false;
     this.empReadyPrompt = false;
+    this.watchDirectorState = createWatchDirectorState();
     this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
@@ -8698,9 +8748,16 @@ class FreemanCanvasEngine implements GameController {
 
   private updateWatchOperator(delta: number) {
     if (!isWatchMode(this.sessionMode) || this.mode !== "playing") return;
-    const threat = this.getNearestEnemy(this.core.x, this.core.z, 12) ??
+    const threatRuntime = this.getNearestEnemy(this.core.x, this.core.z, 12) ??
       this.getNearestEnemy(this.player.x, this.player.z, 10);
-    const pickup = !threat
+    const threat = threatRuntime
+      ? {
+          x: threatRuntime.x,
+          z: threatRuntime.z,
+          distance: this.distance(this.player.x, this.player.z, threatRuntime.x, threatRuntime.z),
+        }
+      : null;
+    const pickupRuntime = !threatRuntime
       ? [...this.pickups]
           .filter((candidate) => candidate.type !== "repair" || this.player.hp < this.player.maxHp)
           .sort((left, right) =>
@@ -8708,18 +8765,50 @@ class FreemanCanvasEngine implements GameController {
             this.distance(this.player.x, this.player.z, right.x, right.y),
           )[0]
       : null;
-    const targetX = threat?.x ?? pickup?.x ?? this.core.x + Math.cos(this.elapsed * 0.55) * 3.2;
-    const targetZ = threat?.z ?? pickup?.y ?? this.core.z + Math.sin(this.elapsed * 0.55) * 3.2;
+    const directorResult = tickWatchDirector(
+      this.watchDirectorState,
+      {
+        operator: {
+          x: this.player.x,
+          z: this.player.z,
+          hpRatio: this.player.hp / this.player.maxHp,
+        },
+        core: {
+          x: this.core.x,
+          z: this.core.z,
+          hpRatio: this.core.hp / this.core.maxHp,
+        },
+        threat,
+        pickup: pickupRuntime
+          ? {
+              x: pickupRuntime.x,
+              z: pickupRuntime.y,
+              useful: pickupRuntime.type !== "repair" || this.player.hp < this.player.maxHp,
+            }
+          : null,
+        zones: ARENA_ZONE_MARKERS.map(({ x, z }) => ({ x, z })),
+        priority: this.watchState.priority,
+      },
+      delta * 1_000,
+    );
+    this.watchDirectorState = directorResult.state;
+    if (directorResult.intent.reset) {
+      this.recordWatchEvent(`WATCH DIRECTOR: ${directorResult.intent.reason}`);
+      this.releaseQueuedEnemies();
+    }
+    const targetX = directorResult.intent.target.x;
+    const targetZ = directorResult.intent.target.z;
     let dx = targetX - this.player.x;
     let dz = targetZ - this.player.z;
     const distance = Math.hypot(dx, dz);
-    if (distance > (threat ? 4.4 : 0.55)) {
+    const engaging = directorResult.intent.state === "engage" && threatRuntime !== null;
+    if (distance > (engaging ? 4.4 : 0.55)) {
       dx /= distance || 1;
       dz /= distance || 1;
       this.player.x += dx * delta * 3.2;
       this.player.z += dz * delta * 3.2;
       this.clampToArena(this.player, ARENA_RADIUS - 0.5);
-    } else if (threat) {
+    } else if (engaging && threatRuntime) {
       if (distance <= 2.5) this.melee();
       this.attack();
     }
