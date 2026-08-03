@@ -76,6 +76,14 @@ export function canFireEmp(state) {
   return current.cooldownLeftMs === 0 && current.maxCharge > 0 && current.charge >= current.maxCharge;
 }
 
+export function shouldShowEmpReadyPrompt(
+  previousReady,
+  nextReady,
+  dismissed = false,
+) {
+  return !dismissed && previousReady !== true && nextReady === true;
+}
+
 export function fireEmp(state, {
   baseDamage = EMP_BASE_DAMAGE,
 } = {}) {

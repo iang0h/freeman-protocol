@@ -130,3 +130,19 @@ export function getRecruitmentAdvice(input = {}) {
     missing,
   });
 }
+
+export function shouldShowRecruitPrompt(
+  previousAdvice,
+  nextAdvice,
+  dismissedAgentId = null,
+) {
+  const nextAgentId = typeof nextAdvice?.agentId === "string"
+    ? nextAdvice.agentId
+    : null;
+  if (nextAdvice?.state !== "recruit" || !nextAgentId) return false;
+  if (dismissedAgentId === nextAgentId) return false;
+  return !(
+    previousAdvice?.state === "recruit" &&
+    previousAdvice?.agentId === nextAgentId
+  );
+}

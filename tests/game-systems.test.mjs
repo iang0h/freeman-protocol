@@ -90,7 +90,16 @@ import {
   recruitWarbandSlot,
   tickAgentGathering,
 } from "../app/game/warband-rules.mjs";
-import { getRecruitmentAdvice } from "../app/game/recruitment-advisor-rules.mjs";
+import {
+  getRecruitmentAdvice,
+  shouldShowRecruitPrompt,
+} from "../app/game/recruitment-advisor-rules.mjs";
+import { shouldShowEmpReadyPrompt } from "../app/game/emp-rules.mjs";
+import {
+  createWatchDirectorState,
+  getWatchDirectorIntent,
+  tickWatchDirector,
+} from "../app/game/watch-director-rules.mjs";
 import {
   AGENT_SKILLS,
   canUseSkill,
@@ -645,6 +654,46 @@ test("recruitment advisor saves Compute when no recruitment need remains", () =>
       missing: null,
     },
   );
+});
+
+test("watch director selects loot before patrolling when a safe pickup exists", () => {
+  const result = getWatchDirectorIntent({
+    operator: { x: 0, z: 0, hpRatio: 1 },
+    core: { x: 0, z: 0, hpRatio: 1 },
+    threat: null,
+    pickup: { x: 3, z: -2, useful: true },
+    zones: [{ x: 0, z: 0 }, { x: 6, z: 0 }],
+    priority: "farm",
+  }, createWatchDirectorState());
+  assert.equal(result.state, "collect");
+  assert.deepEqual(result.target, { x: 3, z: -2 });
+});
+
+test("watch director forces an unstick route after two seconds of no movement", () => {
+  const state = { ...createWatchDirectorState(), mode: "engage", idleMs: 1_950, lastX: 0, lastZ: 0 };
+  const result = tickWatchDirector(state, {
+    operator: { x: 0, z: 0, hpRatio: 1 },
+    core: { x: 0, z: 0, hpRatio: 1 },
+    threat: { x: 0, z: 0, distance: 0.2 },
+    pickup: null,
+    zones: [{ x: 0, z: 0 }, { x: 6, z: 0 }],
+    priority: "survive",
+  }, 100);
+  assert.equal(result.intent.state, "unstick");
+  assert.equal(result.intent.reset, true);
+});
+
+test("recruit prompt only appears when the affordable candidate changes into recruit-ready", () => {
+  const affordable = { state: "recruit", agentId: "kairos" };
+  assert.equal(shouldShowRecruitPrompt({ state: "save", agentId: "kairos" }, affordable, null), true);
+  assert.equal(shouldShowRecruitPrompt(affordable, affordable, null), false);
+  assert.equal(shouldShowRecruitPrompt({ state: "save", agentId: "kairos" }, affordable, "kairos"), false);
+});
+
+test("EMP prompt only appears on a fresh ready transition", () => {
+  assert.equal(shouldShowEmpReadyPrompt(false, true, false), true);
+  assert.equal(shouldShowEmpReadyPrompt(true, true, false), false);
+  assert.equal(shouldShowEmpReadyPrompt(false, true, true), false);
 });
 
 test("warband recruitment keeps starter costs and escalates material costs after slot four", () => {
