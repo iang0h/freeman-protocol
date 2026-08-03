@@ -21,6 +21,21 @@ import {
   getArenaZone,
 } from "./game/combat-presentation-rules.mjs";
 import {
+  createQualityMonitor,
+  getQualitySettings,
+  selectQualityPreset,
+  tickQualityMonitor,
+} from "./game/quality-rules.mjs";
+import { getBattlegroundForWave } from "./game/battleground-rules.mjs";
+import { createSimulationView } from "./game/simulation-view.mjs";
+import {
+  createCinemaState,
+  setCinemaSpeed as setCinemaPresentationSpeed,
+  tickCinemaState,
+  toggleCinemaCleanView,
+  toggleCinemaPaused,
+} from "./game/cinema-rules.mjs";
+import {
   EMP_BASE_DAMAGE,
   canFireEmp,
   createEmpState,
@@ -377,6 +392,17 @@ const TOUCH_SAFE_PICKUP_RADIUS = 0.75;
 const MAX_COMBAT_EFFECTS = 96;
 const MAX_COMBAT_COMBO = 99;
 const COMBAT_COMBO_WINDOW_SECONDS = 1.4;
+
+const getRuntimeQualityHints = () => {
+  const touch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  const deviceMemory = typeof navigator !== "undefined" && "deviceMemory" in navigator
+    ? Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory) || 4
+    : 4;
+  const hardwareConcurrency = typeof navigator !== "undefined"
+    ? Number(navigator.hardwareConcurrency) || 4
+    : 4;
+  return { touch, deviceMemory, hardwareConcurrency };
+};
 const ARENA_ZONE_MARKERS = [
   { x: 0, z: 0, radius: 2.2, color: 0xf08a4b, kind: "core" },
   { x: 0, z: -4.75, radius: 1.35, color: 0xe17a57, kind: "breach" },
@@ -409,6 +435,11 @@ type HudState = {
   watchPaused: boolean;
   watchSpeed: number;
   watchPriority: "survive" | "farm" | "expand";
+  cinemaPaused: boolean;
+  cinemaSpeed: number;
+  cinemaCleanView: boolean;
+  battlegroundId: string;
+  qualityPreset: "low" | "medium" | "high";
   survivalMs: number;
   sessionIncome: { compute: number; components: number; shards: number };
   lastAutonomyEvent: string;
@@ -480,6 +511,9 @@ interface GameController {
   setCoOpPresentation(enabled: boolean): void;
   setWatchSpeed(speed: number): void;
   setWatchPriority(priority: "survive" | "farm" | "expand"): void;
+  setCinemaSpeed(speed: number): void;
+  toggleCinemaPause(): void;
+  toggleCinemaCleanView(): void;
   endWatchRun(): void;
   setVisibilityPaused(hidden: boolean): void;
   skipTutorial(): void;
@@ -954,6 +988,11 @@ const INITIAL_HUD: HudState = {
   watchPaused: false,
   watchSpeed: 1,
   watchPriority: "survive",
+  cinemaPaused: false,
+  cinemaSpeed: 1,
+  cinemaCleanView: false,
+  battlegroundId: "clear-grid",
+  qualityPreset: "medium",
   survivalMs: 0,
   sessionIncome: { compute: 0, components: 0, shards: 0 },
   lastAutonomyEvent: "NETWORK STANDING BY",
@@ -1342,6 +1381,9 @@ class FreemanEngine {
   private readonly cameraTarget = new THREE.Vector3();
   private readonly desiredCameraTarget = new THREE.Vector3();
   private cameraPresentation: CameraPresentation = "tactical";
+  private qualityMonitor = createQualityMonitor("medium");
+  private qualityPreset: "low" | "medium" | "high" = "medium";
+  private battleground = getBattlegroundForWave(1);
   private readonly player: {
     group: THREE.Group;
     weapon: THREE.Group;
@@ -1379,6 +1421,7 @@ class FreemanEngine {
   private coOpPresentation = false;
   private combatOverlayOpen = false;
   private watchState = createWatchState();
+  private cinemaState = createCinemaState();
   private watchDirectorState = createWatchDirectorState();
   private watchRecoveryClock = 0;
   private wave = 1;
@@ -1420,6 +1463,7 @@ class FreemanEngine {
   private scheduledReinforcementThreats = 0;
   private readonly activeEnemyLimit = getActiveEnemyLimit("webgl");
   private reducedMotion = false;
+  private contextLost = false;
   private hasPointerAim = false;
   private touchAimActive = false;
   private touchMovePointer: number | null = null;
@@ -1451,6 +1495,8 @@ class FreemanEngine {
     this.reducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
+    this.qualityPreset = selectQualityPreset(getRuntimeQualityHints());
+    this.qualityMonitor = createQualityMonitor(this.qualityPreset);
     this.best = readStoredNumber("freeman-protocol-best");
 
     const graphicsContext = canvas.getContext("webgl2", {
@@ -1466,7 +1512,9 @@ class FreemanEngine {
       antialias: true,
       powerPreference: "high-performance",
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
+    this.renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio, getQualitySettings(this.qualityPreset).pixelRatioCap),
+    );
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
@@ -1477,6 +1525,7 @@ class FreemanEngine {
     this.scene.fog = new THREE.FogExp2(0x091015, 0.018);
 
     this.buildWorld();
+    this.applyBattlegroundTheme();
     this.core = this.buildCore();
     this.repairBay = this.buildRepairBay();
     this.player = this.buildOperator();
@@ -1486,6 +1535,8 @@ class FreemanEngine {
     void this.attachOperatorRig();
     this.applyToonMaterialPass();
     this.bindEvents();
+    this.canvas.addEventListener("webglcontextlost", this.onWebglContextLost, false);
+    this.canvas.addEventListener("webglcontextrestored", this.onWebglContextRestored, false);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.canvas.parentElement ?? this.canvas);
@@ -1534,6 +1585,7 @@ class FreemanEngine {
     this.audio.unlock();
     this.sessionMode = options.mode ?? "campaign";
     this.watchState = createWatchState();
+    this.cinemaState = createCinemaState();
     this.watchDirectorState = createWatchDirectorState();
     this.resetMissionState();
     if (options.tutorial) {
@@ -1554,6 +1606,21 @@ class FreemanEngine {
 
   setWatchSpeed(speed: number) {
     this.watchState = setWatchSpeed(this.watchState, speed);
+    this.emitHud(true);
+  }
+
+  setCinemaSpeed(speed: number) {
+    this.cinemaState = setCinemaPresentationSpeed(this.cinemaState, speed);
+    this.emitHud(true);
+  }
+
+  toggleCinemaPause() {
+    this.cinemaState = toggleCinemaPaused(this.cinemaState);
+    this.emitHud(true);
+  }
+
+  toggleCinemaCleanView() {
+    this.cinemaState = toggleCinemaCleanView(this.cinemaState);
     this.emitHud(true);
   }
 
@@ -1590,6 +1657,8 @@ class FreemanEngine {
     this.loot = { repairs: 0, components: 0, shards: 0 };
     this.clearTutorialMarker();
     this.wave = 1;
+    this.battleground = getBattlegroundForWave(this.wave);
+    this.applyBattlegroundTheme();
     this.score = 0;
     this.data = 55;
     this.attackMultiplier = 1;
@@ -2550,6 +2619,8 @@ class FreemanEngine {
     cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
     this.unbindEvents();
+    this.canvas.removeEventListener("webglcontextlost", this.onWebglContextLost);
+    this.canvas.removeEventListener("webglcontextrestored", this.onWebglContextRestored);
     this.resetInput();
     this.clearTemporarySubAgents();
     this.audio.dispose();
@@ -2679,6 +2750,7 @@ class FreemanEngine {
     this.scene.add(floor);
 
     const grid = new THREE.GridHelper(60, 60, 0xb0633d, 0x294b54);
+    grid.name = "arena-grid";
     grid.position.y = -0.08;
     const gridMaterial = grid.material as THREE.LineBasicMaterial;
     gridMaterial.transparent = true;
@@ -2794,6 +2866,19 @@ class FreemanEngine {
     this.scene.add(particles);
 
     this.buildArenaZoneMarkers();
+  }
+
+  private applyBattlegroundTheme() {
+    const palette = this.battleground.palette;
+    this.scene.background = new THREE.Color(palette.background);
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.color.set(palette.fog);
+    }
+    const grid = this.scene.getObjectByName("arena-grid");
+    if (!grid) return;
+    const material = grid.material as THREE.LineBasicMaterial | THREE.LineBasicMaterial[];
+    const materials = Array.isArray(material) ? material : [material];
+    materials.forEach((entry) => entry.color.set(palette.grid));
   }
 
   private buildArenaZoneMarkers() {
@@ -3989,6 +4074,8 @@ class FreemanEngine {
   private spawnWave(wave: number) {
     this.encounterModifiers = getWaveModifiers(wave);
     this.terrain = getTerrainModifier(wave);
+    this.battleground = getBattlegroundForWave(wave);
+    this.applyBattlegroundTheme();
     this.updateTerrainOverlay();
     this.waveActive = true;
     this.waveEndClock = 0;
@@ -4293,13 +4380,36 @@ class FreemanEngine {
     }
   }
 
+  private onWebglContextLost = (event: Event) => {
+    event.preventDefault();
+    this.contextLost = true;
+    this.callbacks.onToast({
+      eyebrow: "RENDERER RECOVERY",
+      title: "DISPLAY PAUSED",
+      detail: "The battlefield state is safe. Waiting for the graphics device to recover.",
+    });
+  };
+
+  private onWebglContextRestored = () => {
+    this.contextLost = false;
+    this.applyBattlegroundTheme();
+    this.callbacks.onToast({
+      eyebrow: "RENDERER RECOVERY",
+      title: "DISPLAY RESTORED",
+      detail: "Combat resumed without changing your campaign state.",
+    });
+    this.emitHud(true);
+  };
+
   private animate = () => {
     this.animationFrame = requestAnimationFrame(this.animate);
     const rawDelta = Math.min(this.clock.getDelta(), 0.05);
+    this.updateQuality(rawDelta * 1_000);
     const delta = this.hitStop > 0 ? rawDelta * 0.06 : rawDelta;
     this.hitStop = Math.max(0, this.hitStop - rawDelta);
     this.elapsed += rawDelta;
     if (isWatchMode(this.sessionMode)) {
+      this.cinemaState = tickCinemaState(this.cinemaState, rawDelta * 1_000);
       this.watchState = tickWatchState(
         this.watchState,
         rawDelta * 1_000,
@@ -4307,14 +4417,29 @@ class FreemanEngine {
       );
     }
     this.updateAmbient(rawDelta);
-    if (!this.coOpPresentation && this.mode === "playing" && (!isWatchMode(this.sessionMode) || !this.watchState.paused)) {
-      this.updateGame(isWatchMode(this.sessionMode) ? delta * this.watchState.speed : delta);
+    if (!this.coOpPresentation && this.mode === "playing" && (!isWatchMode(this.sessionMode) || (!this.watchState.paused && !this.cinemaState.paused))) {
+      this.updateGame(isWatchMode(this.sessionMode) ? delta * this.watchState.speed * this.cinemaState.speed : delta);
     }
     this.updateEffects(rawDelta);
     this.updateCamera(rawDelta);
     this.updateTargetingPresentation();
-    this.renderer.render(this.scene, this.camera);
+    if (!this.contextLost) this.renderer.render(this.scene, this.camera);
   };
+
+  private updateQuality(frameMs: number) {
+    const next = tickQualityMonitor(this.qualityMonitor, frameMs);
+    this.qualityMonitor = next;
+    if (next.profile === this.qualityPreset) return;
+    this.qualityPreset = next.profile;
+    const settings = getQualitySettings(next.profile);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, settings.pixelRatioCap));
+    this.renderer.shadowMap.enabled = settings.shadowMapSize > 0;
+    while (this.effects.length > settings.maxCombatEffects) {
+      const effect = this.effects.shift();
+      if (effect) this.releaseEffect(effect);
+    }
+    this.emitHud(true);
+  }
 
   private updateAmbient(delta: number) {
     this.core.crystal.rotation.y += delta * 0.65;
@@ -5282,12 +5407,14 @@ class FreemanEngine {
       }
     }
 
-    enemy.robotAnimate(
-      this.elapsed,
-      delta,
-      result.boss.telegraphLeftMs === 0,
-      this.reducedMotion,
-    );
+    if (Math.floor(this.elapsed * 60) % getQualitySettings(this.qualityPreset).robotAnimationStride === 0) {
+      enemy.robotAnimate(
+        this.elapsed,
+        delta,
+        result.boss.telegraphLeftMs === 0,
+        this.reducedMotion,
+      );
+    }
     enemy.healthBar.quaternion.copy(this.camera.quaternion);
     const pendingTarget = getPendingBossTarget(result.boss, bossTargets);
     const movementTarget =
@@ -5401,12 +5528,14 @@ class FreemanEngine {
         direction.set(routed.x, 0, routed.z);
       }
 
-      enemy.robotAnimate(
-        this.elapsed,
-        delta,
-        distance > enemy.range * 0.72,
-        this.reducedMotion,
-      );
+      if (Math.floor(this.elapsed * 60) % getQualitySettings(this.qualityPreset).robotAnimationStride === 0) {
+        enemy.robotAnimate(
+          this.elapsed,
+          delta,
+          distance > enemy.range * 0.72,
+          this.reducedMotion,
+        );
+      }
       enemy.healthBar.quaternion.copy(this.camera.quaternion);
 
       if (
@@ -7027,11 +7156,87 @@ class FreemanEngine {
       });
     }
     this.previousEmpReady = empReady;
+    const bossEntity = this.enemies.find((enemy) => enemy.bossState) ?? null;
+    const simulationView = createSimulationView({
+      wave: this.wave,
+      resources: {
+        compute: this.data,
+        components: this.loot.components,
+        shards: this.loot.shards,
+      },
+      core: {
+        hp: this.core.hp,
+        maxHp: this.core.maxHp,
+        x: this.core.group.position.x,
+        z: this.core.group.position.z,
+      },
+      operator: {
+        hp: this.player.hp,
+        maxHp: this.player.maxHp,
+        x: this.player.group.position.x,
+        z: this.player.group.position.z,
+      },
+      agents: this.agents.map((agent) => ({
+        id: agent.id,
+        hp: agent.hp,
+        maxHp: agent.maxHp,
+        x: agent.group.position.x,
+        z: agent.group.position.z,
+        state: agent.repairDecision,
+      })),
+      enemies: this.enemies.map((enemy) => ({
+        id: enemy.id,
+        kind: enemy.type,
+        hp: enemy.hp,
+        maxHp: enemy.maxHp,
+        x: enemy.group.position.x,
+        z: enemy.group.position.z,
+        state: enemy.hp > 0 ? "alive" : "destroyed",
+      })),
+      pickups: this.pickups.map((pickup) => ({
+        id: pickup.id,
+        type: pickup.type,
+        value: pickup.value,
+        x: pickup.x,
+        z: pickup.y,
+      })),
+      sentries: this.defenses.map((defense) => ({
+        id: `sentry-${defense.index}`,
+        hp: defense.hp,
+        maxHp: defense.maxHp,
+        x: defense.group.position.x,
+        z: defense.group.position.z,
+      })),
+      subAgents: this.temporarySubAgents.map((subAgent) => ({
+        id: subAgent.id,
+        parentId: subAgent.parentId,
+        role: subAgent.role,
+        remainingMs: subAgent.remainingMs,
+        x: subAgent.marker.position.x,
+        z: subAgent.marker.position.z,
+      })),
+      boss: bossEntity
+        ? {
+            id: bossEntity.id,
+            kind: bossEntity.type,
+            hp: bossEntity.hp,
+            maxHp: bossEntity.maxHp,
+            x: bossEntity.group.position.x,
+            z: bossEntity.group.position.z,
+          }
+        : null,
+    });
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
       watchSpeed: this.watchState.speed,
       watchPriority: this.watchState.priority as "survive" | "farm" | "expand",
+      cinemaPaused: this.cinemaState.paused,
+      cinemaSpeed: this.cinemaState.speed,
+      cinemaCleanView: this.cinemaState.cleanView,
+      cinemaPaused: this.cinemaState.paused,
+      cinemaSpeed: this.cinemaState.speed,
+      cinemaCleanView: this.cinemaState.cleanView,
       survivalMs: this.watchState.survivalMs,
       sessionIncome: { ...this.watchState.sessionIncome },
       lastAutonomyEvent: this.watchState.lastEvent,
@@ -7081,7 +7286,7 @@ class FreemanEngine {
         warden: recruited("warden"),
         nova: recruited("nova"),
       },
-      warbandCount: this.agents.length,
+      warbandCount: simulationView.agents.length,
       maxWarband: WARBAND_SLOTS.length,
       nextRecruitCost: getRecruitCost(WARBAND_SLOTS[this.agents.length]),
       upgradeStacks: { ...this.upgradeStacks },
@@ -7091,6 +7296,8 @@ class FreemanEngine {
       componentUpgradeRanks: { ...this.componentUpgradeRanks },
       temporarySubAgents: this.temporarySubAgents.length,
       terrainLabel: this.terrain.label,
+      battlegroundId: this.battleground.id,
+      qualityPreset: this.qualityPreset,
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       recruitmentAdvice,
@@ -7317,6 +7524,7 @@ class FreemanCanvasEngine implements GameController {
   private coOpPresentation = false;
   private combatOverlayOpen = false;
   private watchState = createWatchState();
+  private cinemaState = createCinemaState();
   private watchDirectorState = createWatchDirectorState();
   private watchRecoveryClock = 0;
   private wave = 1;
@@ -7330,6 +7538,9 @@ class FreemanCanvasEngine implements GameController {
   private yaw = Math.PI / 4;
   private zoom = 1;
   private cameraPresentation: CameraPresentation = "tactical";
+  private qualityMonitor = createQualityMonitor("medium");
+  private qualityPreset: "low" | "medium" | "high" = "medium";
+  private battleground = getBattlegroundForWave(1);
   private cameraX = 0;
   private cameraZ = 0;
   private width = 1;
@@ -7395,6 +7606,8 @@ class FreemanCanvasEngine implements GameController {
     this.reducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
+    this.qualityPreset = selectQualityPreset(getRuntimeQualityHints());
+    this.qualityMonitor = createQualityMonitor(this.qualityPreset);
     this.buildings = this.createBuildings();
     this.bindEvents();
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -7409,6 +7622,7 @@ class FreemanCanvasEngine implements GameController {
     this.audio.unlock();
     this.sessionMode = options.mode ?? "campaign";
     this.watchState = createWatchState();
+    this.cinemaState = createCinemaState();
     this.watchDirectorState = createWatchDirectorState();
     this.resetMissionState();
     if (options.tutorial) {
@@ -7429,6 +7643,21 @@ class FreemanCanvasEngine implements GameController {
 
   setWatchSpeed(speed: number) {
     this.watchState = setWatchSpeed(this.watchState, speed);
+    this.emitHud(true);
+  }
+
+  setCinemaSpeed(speed: number) {
+    this.cinemaState = setCinemaPresentationSpeed(this.cinemaState, speed);
+    this.emitHud(true);
+  }
+
+  toggleCinemaPause() {
+    this.cinemaState = toggleCinemaPaused(this.cinemaState);
+    this.emitHud(true);
+  }
+
+  toggleCinemaCleanView() {
+    this.cinemaState = toggleCinemaCleanView(this.cinemaState);
     this.emitHud(true);
   }
 
@@ -7469,6 +7698,7 @@ class FreemanCanvasEngine implements GameController {
     this.clearLootPickups();
     this.loot = { repairs: 0, components: 0, shards: 0 };
     this.wave = 1;
+    this.battleground = getBattlegroundForWave(this.wave);
     this.score = 0;
     this.data = 55;
     this.attackMultiplier = 1;
@@ -8538,21 +8768,38 @@ class FreemanCanvasEngine implements GameController {
     this.animationFrame = requestAnimationFrame(this.animate);
     const delta = Math.min((time - this.lastFrame) / 1000, 0.05);
     this.lastFrame = time;
+    this.updateQuality(delta * 1_000);
     this.elapsed += delta;
     if (isWatchMode(this.sessionMode)) {
+      this.cinemaState = tickCinemaState(this.cinemaState, delta * 1_000);
       this.watchState = tickWatchState(
         this.watchState,
         delta * 1_000,
         { visible: !document.hidden },
       );
     }
-    if (!this.coOpPresentation && this.mode === "playing" && (!isWatchMode(this.sessionMode) || !this.watchState.paused)) {
-      this.updateGame(isWatchMode(this.sessionMode) ? delta * this.watchState.speed : delta);
+    if (!this.coOpPresentation && this.mode === "playing" && (!isWatchMode(this.sessionMode) || (!this.watchState.paused && !this.cinemaState.paused))) {
+      this.updateGame(isWatchMode(this.sessionMode) ? delta * this.watchState.speed * this.cinemaState.speed : delta);
     }
     this.updateEffects(delta);
     this.updateCamera(delta);
     this.draw();
   };
+
+  private updateQuality(frameMs: number) {
+    const next = tickQualityMonitor(this.qualityMonitor, frameMs);
+    this.qualityMonitor = next;
+    if (next.profile === this.qualityPreset) return;
+    this.qualityPreset = next.profile;
+    const settings = getQualitySettings(next.profile);
+    this.pixelRatio = Math.min(window.devicePixelRatio, settings.pixelRatioCap);
+    while (this.effects.length > settings.maxCombatEffects) {
+      const effect = this.effects.shift();
+      if (effect) this.releaseFlatEffect(effect);
+    }
+    this.resize();
+    this.emitHud(true);
+  }
 
   private updateGame(delta: number) {
     this.empState = tickEmp(this.empState, delta * 1_000) as EmpState;
@@ -9742,6 +9989,7 @@ class FreemanCanvasEngine implements GameController {
   private spawnWave(wave: number) {
     this.encounterModifiers = getWaveModifiers(wave);
     this.terrain = getTerrainModifier(wave);
+    this.battleground = getBattlegroundForWave(wave);
     this.waveActive = true;
     this.waveEndClock = 0;
     if (wave === 1) {
@@ -10810,7 +11058,10 @@ class FreemanCanvasEngine implements GameController {
     if (!parent) return;
     this.width = Math.max(1, parent.clientWidth);
     this.height = Math.max(1, parent.clientHeight);
-    this.pixelRatio = Math.min(window.devicePixelRatio, 1.7);
+    this.pixelRatio = Math.min(
+      window.devicePixelRatio,
+      getQualitySettings(this.qualityPreset).pixelRatioCap,
+    );
     this.canvas.width = Math.round(this.width * this.pixelRatio);
     this.canvas.height = Math.round(this.height * this.pixelRatio);
     this.context.imageSmoothingEnabled = true;
@@ -10866,8 +11117,8 @@ class FreemanCanvasEngine implements GameController {
       this.height * 0.46,
       Math.max(this.width, this.height) * 0.72,
     );
-    background.addColorStop(0, "#1b2b31");
-    background.addColorStop(0.44, "#0d171d");
+    background.addColorStop(0, this.battleground.palette.fog);
+    background.addColorStop(0.44, this.battleground.palette.background);
     background.addColorStop(1, "#060b0f");
     context.fillStyle = background;
     context.fillRect(0, 0, this.width, this.height);
@@ -10991,8 +11242,9 @@ class FreemanCanvasEngine implements GameController {
       context.beginPath();
       context.moveTo(horizontalStart.x, horizontalStart.y);
       context.lineTo(horizontalEnd.x, horizontalEnd.y);
-      context.strokeStyle =
-        value === 0 ? "rgba(240,138,75,.42)" : "rgba(120,190,202,.16)";
+      context.strokeStyle = value === 0
+        ? `${this.battleground.palette.accent}aa`
+        : `${this.battleground.palette.grid}2e`;
       context.stroke();
 
       const verticalStart = this.project(value, -28);
@@ -12320,6 +12572,60 @@ class FreemanCanvasEngine implements GameController {
       });
     }
     this.previousEmpReady = empReady;
+    const bossEntity = this.enemies.find((enemy) => enemy.bossState) ?? null;
+    const simulationView = createSimulationView({
+      wave: this.wave,
+      resources: {
+        compute: this.data,
+        components: this.loot.components,
+        shards: this.loot.shards,
+      },
+      core: { ...this.core },
+      operator: { ...this.player },
+      agents: this.agents.map((agent) => ({
+        id: agent.id,
+        hp: agent.hp,
+        maxHp: agent.maxHp,
+        x: agent.x,
+        z: agent.z,
+        state: agent.repairDecision,
+      })),
+      enemies: this.enemies.map((enemy) => ({
+        id: enemy.id,
+        kind: enemy.type,
+        hp: enemy.hp,
+        maxHp: enemy.maxHp,
+        x: enemy.x,
+        z: enemy.z,
+        state: enemy.hp > 0 ? "alive" : "destroyed",
+      })),
+      pickups: this.pickups.map((pickup) => ({ ...pickup })),
+      sentries: this.defenses.map((defense, index) => ({
+        id: `sentry-${index}`,
+        hp: defense.hp,
+        maxHp: defense.maxHp,
+        x: defense.x,
+        z: defense.z,
+      })),
+      subAgents: this.temporarySubAgents.map((subAgent) => ({
+        id: subAgent.id,
+        parentId: subAgent.parentId,
+        role: subAgent.role,
+        remainingMs: subAgent.remainingMs,
+        x: subAgent.x,
+        z: subAgent.z,
+      })),
+      boss: bossEntity
+        ? {
+            id: bossEntity.id,
+            kind: bossEntity.type,
+            hp: bossEntity.hp,
+            maxHp: bossEntity.maxHp,
+            x: bossEntity.x,
+            z: bossEntity.z,
+          }
+        : null,
+    });
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
@@ -12374,7 +12680,7 @@ class FreemanCanvasEngine implements GameController {
         warden: recruited("warden"),
         nova: recruited("nova"),
       },
-      warbandCount: this.agents.length,
+      warbandCount: simulationView.agents.length,
       maxWarband: WARBAND_SLOTS.length,
       nextRecruitCost: getRecruitCost(WARBAND_SLOTS[this.agents.length]),
       upgradeStacks: { ...this.upgradeStacks },
@@ -12384,6 +12690,8 @@ class FreemanCanvasEngine implements GameController {
       componentUpgradeRanks: { ...this.componentUpgradeRanks },
       temporarySubAgents: this.temporarySubAgents.length,
       terrainLabel: this.terrain.label,
+      battlegroundId: this.battleground.id,
+      qualityPreset: this.qualityPreset,
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       recruitmentAdvice,

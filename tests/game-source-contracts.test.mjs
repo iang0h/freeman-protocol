@@ -55,6 +55,14 @@ const canvasGame = game.slice(
   game.indexOf("export default function FreemanProtocol"),
 );
 
+test("both renderers consume the shared quality, battleground, and snapshot helpers", () => {
+  for (const helper of ["quality-rules.mjs", "battleground-rules.mjs", "simulation-view.mjs"]) {
+    assert.match(game, new RegExp(`\\.\\/game\\/${helper}`));
+  }
+  assert.ok((game.match(/createSimulationView\(/g) ?? []).length >= 2);
+  assert.match(game, /setCinemaSpeed/);
+});
+
 test("combat presentation rules stay renderer-independent", () => {
   assert.match(combatPresentationRules, /export const OVERLAYS/);
   assert.match(combatPresentationRules, /export function createOverlayState/);
