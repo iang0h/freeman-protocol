@@ -139,6 +139,31 @@ import {
   getArenaZone,
   toggleOverlay,
 } from "../app/game/combat-presentation-rules.mjs";
+import {
+  QUALITY_PRESETS,
+  QUALITY_ORDER,
+  createQualityMonitor,
+  getQualitySettings,
+  selectQualityPreset,
+  tickQualityMonitor,
+} from "../app/game/quality-rules.mjs";
+import {
+  createCinemaState,
+  setCinemaSpeed,
+  tickCinemaState,
+  toggleCinemaCleanView,
+  toggleCinemaPaused,
+} from "../app/game/cinema-rules.mjs";
+import {
+  BATTLEGROUNDS,
+  getBattlegroundForWave,
+} from "../app/game/battleground-rules.mjs";
+import { createSimulationView } from "../app/game/simulation-view.mjs";
+import {
+  canSpawnCombatEffect,
+  getCommandMapMarkers,
+  getCombatEffectBudget,
+} from "../app/game/combat-presentation-rules.mjs";
 
 async function loadRepairRules() {
   return import("../app/game/repair-rules.mjs");
@@ -155,6 +180,71 @@ test("combat presentation keeps one management overlay active at a time", () => 
   assert.deepEqual(toggleOverlay(intel, "warband"), { active: "warband" });
   assert.deepEqual(toggleOverlay(intel, "intel"), { active: "closed" });
   assert.deepEqual(toggleOverlay(intel, "invalid"), { active: "closed" });
+});
+
+test("quality selection favors touch devices and never raises quality during combat", () => {
+  assert.equal(selectQualityPreset({ touch: true, deviceMemory: 2, hardwareConcurrency: 2 }), "low");
+  assert.equal(selectQualityPreset({ touch: false, deviceMemory: 16, hardwareConcurrency: 12 }), "high");
+  let monitor = createQualityMonitor("high");
+  for (let frame = 0; frame < 30; frame += 1) {
+    monitor = tickQualityMonitor(monitor, 45);
+  }
+  assert.equal(monitor.profile, "medium");
+  assert.equal(tickQualityMonitor(monitor, 8).profile, "medium");
+  assert.equal(QUALITY_ORDER.includes("low"), true);
+  assert.equal(QUALITY_PRESETS.high.pixelRatioCap > QUALITY_PRESETS.low.pixelRatioCap, true);
+});
+
+test("quality settings expose bounded presentation budgets", () => {
+  const settings = getQualitySettings("low");
+  assert.equal(settings.maxCombatEffects < getQualitySettings("high").maxCombatEffects, true);
+  assert.equal(settings.pixelRatioCap >= 0.75, true);
+  assert.equal(settings.simulationScale, 1);
+});
+
+test("cinema watch clamps speeds, pauses time, and exposes clean capture state", () => {
+  const initial = createCinemaState();
+  assert.equal(setCinemaSpeed(initial, 3).speed, 2);
+  assert.equal(toggleCinemaPaused(initial).paused, true);
+  assert.equal(toggleCinemaCleanView(initial).cleanView, true);
+  assert.equal(tickCinemaState(initial, 1_000).elapsedMs, 1_000);
+  assert.equal(tickCinemaState(toggleCinemaPaused(initial), 1_000).elapsedMs, 0);
+});
+
+test("battleground theme selection is deterministic and reuses the terrain id", () => {
+  assert.equal(getBattlegroundForWave(1).id, "clear-grid");
+  assert.equal(getBattlegroundForWave(2).id, "relay-storm");
+  assert.equal(getBattlegroundForWave(4).terrainId, "data-fog");
+  assert.equal(getBattlegroundForWave(8).id, getBattlegroundForWave(4).id);
+  assert.equal(BATTLEGROUNDS.length, 3);
+});
+
+test("simulation view normalizes render-neutral state and projects command markers", () => {
+  const view = createSimulationView({
+    wave: 3,
+    resources: { compute: 55, components: 2, shards: 1 },
+    core: { hp: 100, maxHp: 180, x: 0, z: 0 },
+    operator: { hp: 80, maxHp: 100, x: 1, z: -1 },
+    agents: [{ id: "kairos", hp: 40, maxHp: 50, x: 2, z: 2, state: "gathering" }],
+    enemies: [{ id: "virus-1", kind: "virus", hp: 10, maxHp: 20, x: -2, z: 1, state: "alive" }],
+    pickups: [{ id: "loot-1", type: "component", value: 1, x: 3, z: 0 }],
+    sentries: [],
+    subAgents: [],
+    boss: null,
+  });
+  assert.deepEqual(view.resources, { compute: 55, components: 2, shards: 1 });
+  assert.equal(view.agents[0].state, "gathering");
+  const markers = getCommandMapMarkers(view);
+  assert.equal(markers.some((marker) => marker.kind === "loot"), true);
+  assert.equal(markers.some((marker) => marker.kind === "agent" && marker.status === "gathering"), true);
+  assert.equal(getCombatEffectBudget("low", true).hitStopMs, 0);
+});
+
+test("combat feedback keeps critical and kill cues when the low-quality pool is full", () => {
+  const budget = getCombatEffectBudget("low", false);
+  assert.equal(budget.maxEffects, 36);
+  assert.equal(canSpawnCombatEffect(36, budget, "ambient"), false);
+  assert.equal(canSpawnCombatEffect(36, budget, "critical"), true);
 });
 
 test("combat presentation returns immutable state and feedback contracts", () => {

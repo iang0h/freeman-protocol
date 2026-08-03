@@ -1,5 +1,7 @@
 export const OVERLAYS = Object.freeze(["closed", "intel", "warband", "actions"]);
 
+import { getQualitySettings } from "./quality-rules.mjs";
+
 const ARENA_ZONES = Object.freeze({
   core: Object.freeze({
     id: "core",
@@ -107,4 +109,60 @@ export function classifyCombatFeedback(event = {}) {
     return Object.freeze({ kind: "critical", emphasis: "strong", label: `CRITICAL ${label}` });
   }
   return Object.freeze({ kind: "hit", emphasis: "standard", label });
+}
+
+const COMMAND_MAP_FIXED_MARKERS = Object.freeze([
+  Object.freeze({ id: "core", kind: "core", label: "CORE", x: 0, z: 0, status: "protected", priority: 4 }),
+  Object.freeze({ id: "repair-bay", kind: "repair", label: "REPAIR", x: -3.1, z: 1.15, status: "available", priority: 3 }),
+  Object.freeze({ id: "compute-node", kind: "compute", label: "COMPUTE", x: 3.1, z: 1.15, status: "available", priority: 2 }),
+  Object.freeze({ id: "boss-portal", kind: "portal", label: "PORTAL", x: 0, z: -6.45, status: "dormant", priority: 1 }),
+]);
+
+const markerForEntity = (entity, index, kind, label, priority) =>
+  Object.freeze({
+    id: `${kind}-${entity.id ?? index}`,
+    kind,
+    label,
+    x: Number(entity.x) || 0,
+    z: Number(entity.z) || 0,
+    status: entity.state ?? "active",
+    priority,
+  });
+
+export function getCommandMapMarkers(snapshot = {}) {
+  const markers = [...COMMAND_MAP_FIXED_MARKERS];
+  for (const [index, agent] of (snapshot.agents ?? []).entries()) {
+    markers.push(markerForEntity(agent, index, "agent", String(agent.id ?? "AGENT").toUpperCase(), 3));
+  }
+  for (const [index, subAgent] of (snapshot.subAgents ?? []).entries()) {
+    markers.push(markerForEntity(subAgent, index, "sub-agent", "SUB-AGENT", 2));
+  }
+  for (const [index, enemy] of (snapshot.enemies ?? []).entries()) {
+    markers.push(markerForEntity(enemy, index, "threat", String(enemy.kind ?? "THREAT").toUpperCase(), 1));
+  }
+  for (const [index, pickup] of (snapshot.pickups ?? []).entries()) {
+    markers.push(markerForEntity(pickup, index, "loot", String(pickup.type ?? "LOOT").toUpperCase(), 3));
+  }
+  for (const [index, sentry] of (snapshot.sentries ?? []).entries()) {
+    markers.push(markerForEntity(sentry, index, "sentry", "SENTRY", 2));
+  }
+  if (snapshot.boss) {
+    markers.push(markerForEntity(snapshot.boss, 0, "boss", "BOSS", 5));
+  }
+  return Object.freeze(markers);
+}
+
+export function getCombatEffectBudget(profile = "medium", reducedMotion = false) {
+  const settings = getQualitySettings(profile);
+  return Object.freeze({
+    maxEffects: settings.maxCombatEffects,
+    hitStopMs: reducedMotion ? 0 : settings.grade === "cinematic" ? 90 : 55,
+    cameraPunch: reducedMotion ? 0 : settings.grade === "cinematic" ? 0.16 : 0.08,
+    orbitDrift: reducedMotion ? 0 : settings.grade === "cinematic" ? 0.12 : 0.04,
+  });
+}
+
+export function canSpawnCombatEffect(effectCount, budget, priority = "standard") {
+  if (Number(effectCount) < Number(budget?.maxEffects)) return true;
+  return ["critical", "urgent", "boss"].includes(priority);
 }
