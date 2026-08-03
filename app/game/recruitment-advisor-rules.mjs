@@ -131,6 +131,11 @@ export function getRecruitmentAdvice(input = {}) {
   });
 }
 
+/**
+ * @param {any} previousAdvice
+ * @param {any} nextAdvice
+ * @param {string | null | undefined} dismissedAgentId
+ */
 export function shouldShowRecruitPrompt(
   previousAdvice,
   nextAdvice,

@@ -100,6 +100,190 @@ export class BoundedPool<T> {
   }
 }
 
+export type LowPolyWarRobotType = "virus" | "phisher" | "trojan" | "rootkit";
+
+export type LowPolyWarRobot = {
+  group: THREE.Group;
+  body: THREE.Mesh;
+  animate: (elapsed: number, delta: number, moving?: boolean) => void;
+};
+
+/**
+ * Robot geometry is immutable and shared across threats. Materials stay
+ * per-instance so hit flashes, decoys, and boss tinting never leak between
+ * enemies. The renderer passes this set to its disposer to keep pooled
+ * enemies from tearing down geometry still used by another threat.
+ */
+export const LOW_POLY_ROBOT_GEOMETRIES = new Set<THREE.BufferGeometry>();
+
+const lowPolyRobotGeometry = <T extends THREE.BufferGeometry>(
+  key: string,
+  create: () => T,
+) => {
+  const cached = (lowPolyRobotGeometry as typeof lowPolyRobotGeometry & {
+    cache?: Map<string, THREE.BufferGeometry>;
+  }).cache ??= new Map();
+  const existing = cached.get(key) as T | undefined;
+  if (existing) return existing;
+  const geometry = create();
+  cached.set(key, geometry);
+  LOW_POLY_ROBOT_GEOMETRIES.add(geometry);
+  return geometry;
+};
+
+function robotMaterial(color: number, emissive: number, intensity: number) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    emissive,
+    emissiveIntensity: intensity,
+    roughness: 0.34,
+    metalness: 0.68,
+    flatShading: true,
+  });
+}
+
+function robotAccentMaterial(color: number) {
+  return new THREE.MeshBasicMaterial({ color });
+}
+
+export function createLowPolyWarRobot(
+  type: LowPolyWarRobotType,
+  color: number,
+  scale = 1,
+): LowPolyWarRobot {
+  const group = new THREE.Group();
+  group.name = `enemy-robot-${type}`;
+  group.scale.setScalar(scale);
+
+  const dark = new THREE.Color(color).multiplyScalar(0.34).getHex();
+  const hot = type === "phisher" ? 0xffc57c : type === "rootkit" ? 0xff6b54 : 0xff9c63;
+  const torso = new THREE.Mesh(
+    lowPolyRobotGeometry("torso", () => new THREE.BoxGeometry(0.82, 0.72, 0.52)),
+    robotMaterial(color, dark, type === "rootkit" ? 1.35 : 0.8),
+  );
+  torso.name = "enemy-robot-body";
+  torso.position.y = 0.9;
+  group.add(torso);
+
+  const chest = new THREE.Mesh(
+    lowPolyRobotGeometry("chest", () => new THREE.OctahedronGeometry(0.29, 0)),
+    robotAccentMaterial(hot),
+  );
+  chest.name = "robot-sensor";
+  chest.position.set(0, 0.91, -0.31);
+  chest.scale.set(1, 0.8, 0.45);
+  group.add(chest);
+
+  const head = new THREE.Mesh(
+    lowPolyRobotGeometry("head", () => new THREE.BoxGeometry(0.42, 0.34, 0.38)),
+    robotMaterial(dark, color, type === "rootkit" ? 1.5 : 0.65),
+  );
+  head.name = "robot-head";
+  head.position.set(0, 1.48, -0.02);
+  group.add(head);
+
+  const visor = new THREE.Mesh(
+    lowPolyRobotGeometry("visor", () => new THREE.BoxGeometry(0.27, 0.07, 0.04)),
+    robotAccentMaterial(hot),
+  );
+  visor.name = "robot-visor";
+  visor.position.set(0, 1.5, -0.22);
+  group.add(visor);
+
+  const leftShoulder = new THREE.Mesh(
+    lowPolyRobotGeometry("shoulder", () => new THREE.BoxGeometry(0.24, 0.3, 0.3)),
+    robotMaterial(dark, color, 0.45),
+  );
+  leftShoulder.name = "robot-shoulder-left";
+  leftShoulder.position.set(-0.55, 1.02, 0);
+  const rightShoulder = leftShoulder.clone();
+  rightShoulder.name = "robot-shoulder-right";
+  rightShoulder.position.x = 0.55;
+  group.add(leftShoulder, rightShoulder);
+
+  const leftLeg = new THREE.Mesh(
+    lowPolyRobotGeometry("leg", () => new THREE.BoxGeometry(0.2, 0.52, 0.22)),
+    robotMaterial(dark, color, 0.35),
+  );
+  leftLeg.name = "robot-leg-left";
+  leftLeg.position.set(-0.22, 0.36, 0);
+  const rightLeg = leftLeg.clone();
+  rightLeg.name = "robot-leg-right";
+  rightLeg.position.x = 0.22;
+  group.add(leftLeg, rightLeg);
+
+  const weapon = new THREE.Mesh(
+    lowPolyRobotGeometry("weapon", () => new THREE.BoxGeometry(0.13, 0.56, 0.13)),
+    robotMaterial(color, color, 0.65),
+  );
+  weapon.name = "robot-weapon";
+  weapon.position.set(0.66, 0.86, -0.08);
+  weapon.rotation.z = -0.34;
+  group.add(weapon);
+
+  const muzzle = new THREE.Mesh(
+    lowPolyRobotGeometry("muzzle", () => new THREE.ConeGeometry(0.08, 0.22, 5)),
+    robotAccentMaterial(hot),
+  );
+  muzzle.name = "robot-muzzle";
+  muzzle.position.set(0.74, 0.58, -0.1);
+  muzzle.rotation.z = -Math.PI / 2;
+  group.add(muzzle);
+
+  if (type === "trojan" || type === "rootkit") {
+    const hornGeometry = lowPolyRobotGeometry(
+      "horn",
+      () => new THREE.ConeGeometry(type === "rootkit" ? 0.15 : 0.1, type === "rootkit" ? 0.5 : 0.34, 5),
+    );
+    for (const side of [-1, 1]) {
+      const horn = new THREE.Mesh(hornGeometry, robotAccentMaterial(color));
+      horn.name = `robot-horn-${side < 0 ? "left" : "right"}`;
+      horn.position.set(side * 0.2, 1.77, 0);
+      horn.rotation.z = side * -0.22;
+      group.add(horn);
+    }
+  }
+
+  if (type === "phisher") {
+    const antenna = new THREE.Mesh(
+      lowPolyRobotGeometry("antenna", () => new THREE.CylinderGeometry(0.035, 0.035, 0.4, 5)),
+      robotAccentMaterial(hot),
+    );
+    antenna.name = "robot-antenna";
+    antenna.position.set(0, 1.85, 0);
+    group.add(antenna);
+  }
+
+  if (type === "rootkit") {
+    const shield = new THREE.Mesh(
+      lowPolyRobotGeometry("rootkit-shield", () => new THREE.TorusGeometry(0.75, 0.035, 5, 18)),
+      new THREE.MeshBasicMaterial({ color: hot, transparent: true, opacity: 0.72 }),
+    );
+    shield.name = "robot-boss-shield";
+    shield.rotation.x = Math.PI / 2;
+    shield.position.y = 0.8;
+    group.add(shield);
+  }
+
+  const animate = (elapsed: number, delta: number, moving = true) => {
+    const stride = moving ? Math.sin(elapsed * (type === "rootkit" ? 4.4 : 8.5)) * 0.34 : 0;
+    leftLeg.rotation.x = stride;
+    rightLeg.rotation.x = -stride;
+    torso.position.y = 0.9 + (moving ? Math.abs(Math.sin(elapsed * 8.5)) * 0.035 : Math.sin(elapsed * 2) * 0.012);
+    weapon.rotation.x = Math.sin(elapsed * 5.2) * 0.025;
+    const bossShield = group.getObjectByName("robot-boss-shield");
+    if (bossShield) bossShield.rotation.z += delta * 0.75;
+  };
+
+  group.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    object.castShadow = true;
+    object.receiveShadow = true;
+  });
+  animate(0, 0, false);
+  return { group, body: torso, animate };
+}
+
 export function createTemporarySubAgentMarker(color: number) {
   const marker = new THREE.Group();
   marker.name = "temporary-sub-agent";

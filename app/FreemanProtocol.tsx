@@ -122,6 +122,8 @@ import { readStoredNumber, readStoredValue, writeStoredValue } from "./game/stor
 import { SpatialGrid } from "./game/spatial-grid";
 import {
   BoundedPool,
+  LOW_POLY_ROBOT_GEOMETRIES,
+  createLowPolyWarRobot,
   createLootPickupMesh,
   createTemporarySubAgentMarker,
   disposeObject3D,
@@ -610,6 +612,7 @@ type EnemyRuntime = {
   armorBreakReduction: number;
   bossState: BossState | null;
   bossVisual: THREE.Group | null;
+  robotAnimate: (elapsed: number, delta: number, moving?: boolean) => void;
 };
 
 type ProjectileRuntime = {
@@ -3617,41 +3620,15 @@ class FreemanEngine {
     if (bossState && !resistanceFlags.includes("armor")) {
       resistanceFlags.push("armor");
     }
-    const group = new THREE.Group();
+    const robotVisual = createLowPolyWarRobot(type, definition.color, definition.scale);
+    const group = robotVisual.group;
+    const body = robotVisual.body;
     group.position.copy(position);
     group.name = bossState
       ? "pooled-warboss"
       : options.decoyOwnerId
         ? "enemy-decoy-target"
         : "enemy-threat";
-
-    const material = new THREE.MeshStandardMaterial({
-      color: definition.color,
-      emissive:
-        type === "rootkit" ? 0x7a1e17 : type === "trojan" ? 0x511713 : 0x3d1110,
-      emissiveIntensity: type === "rootkit" ? 1.4 : 0.8,
-      roughness: 0.42,
-      metalness: 0.34,
-    });
-    let geometry: THREE.BufferGeometry;
-    if (type === "phisher") geometry = new THREE.TetrahedronGeometry(0.66, 0);
-    else if (type === "trojan") geometry = new THREE.BoxGeometry(1, 1, 1);
-    else if (type === "rootkit")
-      geometry = new THREE.IcosahedronGeometry(0.88, 1);
-    else geometry = new THREE.IcosahedronGeometry(0.52, 0);
-
-    const body = new THREE.Mesh(geometry, material);
-    body.position.y = definition.radius;
-    body.scale.setScalar(definition.scale);
-    body.castShadow = type === "rootkit";
-    group.add(body);
-
-    const enemyCore = new THREE.Mesh(
-      new THREE.SphereGeometry(type === "rootkit" ? 0.24 : 0.15, 10, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffc4a0 }),
-    );
-    enemyCore.position.set(0, definition.radius, -definition.radius * 0.62);
-    group.add(enemyCore);
 
     const threatRing = new THREE.Mesh(
       new THREE.RingGeometry(
@@ -3669,53 +3646,6 @@ class FreemanEngine {
     threatRing.rotation.x = -Math.PI / 2;
     threatRing.position.y = 0.02;
     group.add(threatRing);
-
-    if (type === "virus" || type === "rootkit") {
-      const spikeGeometry = new THREE.ConeGeometry(
-        type === "rootkit" ? 0.16 : 0.08,
-        type === "rootkit" ? 0.7 : 0.38,
-        5,
-      );
-      const spikeMaterial = new THREE.MeshBasicMaterial({
-        color: definition.color,
-      });
-      const spikeCount = type === "rootkit" ? 8 : 5;
-      for (let index = 0; index < spikeCount; index += 1) {
-        const angle = (index / spikeCount) * Math.PI * 2;
-        const spike = new THREE.Mesh(spikeGeometry, spikeMaterial);
-        spike.position.set(
-          Math.cos(angle) * definition.radius * 0.78,
-          definition.radius,
-          Math.sin(angle) * definition.radius * 0.78,
-        );
-        spike.rotation.z = Math.PI / 2;
-        spike.rotation.y = -angle;
-        group.add(spike);
-      }
-    }
-
-    if (type === "phisher") {
-      const halo = new THREE.Mesh(
-        new THREE.TorusGeometry(0.72, 0.045, 6, 24),
-        new THREE.MeshBasicMaterial({
-          color: definition.color,
-          transparent: true,
-          opacity: 0.78,
-        }),
-      );
-      halo.position.y = 0.75;
-      halo.rotation.x = Math.PI / 2;
-      halo.name = "enemy-halo";
-      group.add(halo);
-
-      const antenna = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.035, 0.035, 0.75, 6),
-        new THREE.MeshBasicMaterial({ color: 0xffb078 }),
-      );
-      antenna.position.y = 1.16;
-      antenna.rotation.z = 0.38;
-      group.add(antenna);
-    }
 
     if (resistanceFlags.includes("jammer")) {
       const jammerZone = new THREE.Mesh(
@@ -3739,22 +3669,17 @@ class FreemanEngine {
     }
 
     if (options.decoyOwnerId) {
-      group.scale.setScalar(0.72);
-      material.transparent = true;
-      material.opacity = 0.46;
-    }
-
-    if (type === "trojan") {
-      const hornGeometry = new THREE.ConeGeometry(0.12, 0.55, 5);
-      const hornMaterial = new THREE.MeshBasicMaterial({
-        color: definition.color,
+      group.scale.multiplyScalar(0.72);
+      group.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(object.material)
+          ? object.material
+          : [object.material];
+        materials.forEach((material) => {
+          material.transparent = true;
+          material.opacity = 0.46;
+        });
       });
-      for (const side of [-1, 1]) {
-        const horn = new THREE.Mesh(hornGeometry, hornMaterial);
-        horn.position.set(side * 0.38, 1.45, -0.12);
-        horn.rotation.z = side * -0.22;
-        group.add(horn);
-      }
     }
 
     const healthBar = new THREE.Group();
@@ -3874,6 +3799,7 @@ class FreemanEngine {
       armorBreakReduction: 0,
       bossState,
       bossVisual,
+      robotAnimate: robotVisual.animate,
     };
     this.toonifyObject(enemy.group);
     this.enemies.push(enemy);
@@ -5304,9 +5230,7 @@ class FreemanEngine {
       }
     }
 
-    enemy.body.rotation.y += delta * 0.32;
-    enemy.body.position.y =
-      enemy.radius + Math.sin(this.elapsed * 1.25 + enemy.id) * 0.04;
+    enemy.robotAnimate(this.elapsed, delta, result.boss.telegraphLeftMs === 0);
     enemy.healthBar.quaternion.copy(this.camera.quaternion);
     const pendingTarget = getPendingBossTarget(result.boss, bossTargets);
     const movementTarget =
@@ -5420,13 +5344,11 @@ class FreemanEngine {
         direction.set(routed.x, 0, routed.z);
       }
 
-      enemy.body.rotation.y += delta * (enemy.type === "rootkit" ? 0.45 : 1.2);
-      enemy.body.position.y =
-        enemy.radius +
-        Math.sin(this.elapsed * 2.4 + enemy.id) *
-          (enemy.type === "trojan" ? 0.02 : 0.08);
-      const halo = enemy.group.getObjectByName("enemy-halo");
-      if (halo) halo.rotation.z += delta;
+      enemy.robotAnimate(
+        this.elapsed,
+        delta,
+        distance > enemy.range * 0.72,
+      );
       enemy.healthBar.quaternion.copy(this.camera.quaternion);
 
       if (
@@ -6871,7 +6793,10 @@ class FreemanEngine {
   }
 
   private disposeDynamicObject(object: THREE.Object3D) {
-    disposeObject3D(object, { disposed: this.disposedResources });
+    disposeObject3D(object, {
+      disposed: this.disposedResources,
+      sharedGeometries: LOW_POLY_ROBOT_GEOMETRIES,
+    });
   }
 
   private clearDynamic() {
@@ -11879,96 +11804,10 @@ class FreemanCanvasEngine implements GameController {
     const pulse =
       enemy.telegraphLeft > 0 ? 1 + Math.sin(this.elapsed * 18) * 0.09 : 1;
     const size = baseSize * pulse;
+    this.drawRobotEnemy(enemy, point, floor, size, color);
+
     context.save();
     if (enemy.decoyOwnerId !== null) context.globalAlpha = 0.48;
-    context.fillStyle = "rgba(0,0,0,.48)";
-    context.beginPath();
-    context.ellipse(
-      floor.x,
-      floor.y + 4,
-      size * 0.9,
-      size * 0.28,
-      0,
-      0,
-      Math.PI * 2,
-    );
-    context.fill();
-    context.shadowColor = color;
-    context.shadowBlur = enemy.type === "rootkit" ? 36 : 22;
-    context.fillStyle =
-      enemy.hitFlash > 0
-        ? "#ffe3c7"
-        : enemy.type === "trojan"
-        ? "#8f3a2e"
-        : enemy.type === "rootkit"
-          ? "#9b2f25"
-          : enemy.type === "phisher"
-            ? "#9b4b2c"
-            : "#843027";
-    context.strokeStyle = color;
-    context.lineWidth = enemy.type === "rootkit" ? 3 : 2;
-    context.beginPath();
-    if (enemy.type === "phisher") {
-      context.moveTo(point.x, point.y - size);
-      context.lineTo(point.x + size * 0.88, point.y + size * 0.7);
-      context.lineTo(point.x - size * 0.88, point.y + size * 0.7);
-    } else if (enemy.type === "trojan") {
-      context.rect(
-        point.x - size * 0.75,
-        point.y - size * 0.75,
-        size * 1.5,
-        size * 1.5,
-      );
-    } else {
-      const sides = enemy.type === "rootkit" ? 10 : 7;
-      for (let index = 0; index < sides; index += 1) {
-        const angle = (index / sides) * Math.PI * 2 - Math.PI / 2;
-        const radius = index % 2 === 0 ? size : size * 0.72;
-        const x = point.x + Math.cos(angle) * radius;
-        const y = point.y + Math.sin(angle) * radius;
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      }
-    }
-    context.closePath();
-    context.fill();
-    context.stroke();
-
-    const highlight = context.createLinearGradient(
-      point.x - size,
-      point.y - size,
-      point.x + size,
-      point.y + size,
-    );
-    highlight.addColorStop(0, "rgba(255,205,168,.34)");
-    highlight.addColorStop(0.48, "rgba(255,128,82,.06)");
-    highlight.addColorStop(1, "rgba(25,3,2,.42)");
-    context.fillStyle = highlight;
-    context.fill();
-
-    context.shadowColor = "#ffd5ba";
-    context.shadowBlur = 14;
-    context.fillStyle = "#ffd5ba";
-    context.beginPath();
-    context.arc(
-      point.x,
-      point.y,
-      Math.max(2.2, size * (enemy.type === "rootkit" ? 0.16 : 0.2)),
-      0,
-      Math.PI * 2,
-    );
-    context.fill();
-
-    context.shadowBlur = 0;
-    context.strokeStyle = "rgba(255,201,167,.62)";
-    context.lineWidth = 1;
-    context.beginPath();
-    context.moveTo(point.x - size * 0.5, point.y);
-    context.lineTo(point.x - size * 0.2, point.y);
-    context.moveTo(point.x + size * 0.2, point.y);
-    context.lineTo(point.x + size * 0.5, point.y);
-    context.stroke();
-
     context.shadowBlur = 0;
     const healthWidth = enemy.bossState
       ? Math.max(140, size * 2.4)
@@ -12004,6 +11843,152 @@ class FreemanCanvasEngine implements GameController {
       point.y - size - 15,
     );
     this.drawResistanceCues(enemy, point.x, point.y - size - 28);
+    context.restore();
+  }
+
+  private drawRobotEnemy(
+    enemy: FlatEnemy,
+    point: { x: number; y: number; scale: number },
+    floor: { x: number; y: number },
+    size: number,
+    color: string,
+  ) {
+    const context = this.context;
+    const robotColor = enemy.hitFlash > 0 ? "#fff0df" : color;
+    const armorColor = enemy.type === "rootkit" ? "#5e1718" : "#2b1519";
+    const highlight = enemy.type === "phisher" ? "#ffc57c" : "#ff9f6d";
+    const pulse = enemy.telegraphLeft > 0
+      ? 1 + Math.sin(this.elapsed * 18) * 0.08
+      : 1;
+    const bodyW = size * (enemy.type === "rootkit" ? 0.92 : 0.72) * pulse;
+    const bodyH = size * (enemy.type === "rootkit" ? 0.92 : 0.8) * pulse;
+    const legW = Math.max(3, size * 0.17);
+    const legH = size * 0.62;
+    const drawPolygon = (points: Array<{ x: number; y: number }>) => {
+      context.beginPath();
+      points.forEach((entry, index) => {
+        if (index === 0) context.moveTo(entry.x, entry.y);
+        else context.lineTo(entry.x, entry.y);
+      });
+      context.closePath();
+      context.fill();
+      context.stroke();
+    };
+
+    context.save();
+    if (enemy.decoyOwnerId !== null) context.globalAlpha = 0.48;
+    context.fillStyle = "rgba(0,0,0,.52)";
+    context.beginPath();
+    context.ellipse(
+      floor.x,
+      floor.y + 4,
+      bodyW * 1.08,
+      Math.max(3, bodyW * 0.3),
+      0,
+      0,
+      Math.PI * 2,
+    );
+    context.fill();
+
+    context.shadowColor = color;
+    context.shadowBlur = enemy.type === "rootkit" ? 34 : 18;
+    context.strokeStyle = color;
+    context.lineWidth = enemy.type === "rootkit" ? 2.5 : 1.6;
+
+    // Legs and feet make the threat read as a moving war machine instead of
+    // another floating gem. Their alternating stride mirrors the WebGL rig.
+    const stride = Math.sin(this.elapsed * (enemy.type === "rootkit" ? 4.4 : 8.5) + enemy.id) * size * 0.09;
+    context.fillStyle = armorColor;
+    drawPolygon([
+      { x: point.x - bodyW * 0.38 + stride, y: point.y + bodyH * 0.35 },
+      { x: point.x - bodyW * 0.08 + stride, y: point.y + bodyH * 0.35 },
+      { x: point.x - bodyW * 0.12 + stride, y: point.y + bodyH * 0.35 + legH },
+      { x: point.x - bodyW * 0.42 + stride, y: point.y + bodyH * 0.35 + legH },
+    ]);
+    drawPolygon([
+      { x: point.x + bodyW * 0.08 - stride, y: point.y + bodyH * 0.35 },
+      { x: point.x + bodyW * 0.38 - stride, y: point.y + bodyH * 0.35 },
+      { x: point.x + bodyW * 0.42 - stride, y: point.y + bodyH * 0.35 + legH },
+      { x: point.x + bodyW * 0.12 - stride, y: point.y + bodyH * 0.35 + legH },
+    ]);
+
+    context.fillStyle = robotColor;
+    drawPolygon([
+      { x: point.x - bodyW, y: point.y - bodyH * 0.34 },
+      { x: point.x - bodyW * 0.62, y: point.y - bodyH * 0.72 },
+      { x: point.x + bodyW * 0.62, y: point.y - bodyH * 0.72 },
+      { x: point.x + bodyW, y: point.y - bodyH * 0.34 },
+      { x: point.x + bodyW * 0.76, y: point.y + bodyH * 0.42 },
+      { x: point.x - bodyW * 0.76, y: point.y + bodyH * 0.42 },
+    ]);
+
+    // Shoulder plates and a raised weapon give the silhouettes a readable
+    // military profile at both macro and tactical camera distances.
+    context.fillStyle = armorColor;
+    drawPolygon([
+      { x: point.x - bodyW * 1.22, y: point.y - bodyH * 0.28 },
+      { x: point.x - bodyW * 0.86, y: point.y - bodyH * 0.5 },
+      { x: point.x - bodyW * 0.82, y: point.y - bodyH * 0.02 },
+      { x: point.x - bodyW * 1.18, y: point.y + bodyH * 0.12 },
+    ]);
+    drawPolygon([
+      { x: point.x + bodyW * 0.82, y: point.y - bodyH * 0.5 },
+      { x: point.x + bodyW * 1.22, y: point.y - bodyH * 0.28 },
+      { x: point.x + bodyW * 1.18, y: point.y + bodyH * 0.12 },
+      { x: point.x + bodyW * 0.82, y: point.y - bodyH * 0.02 },
+    ]);
+
+    const headSize = size * (enemy.type === "rootkit" ? 0.42 : 0.32) * pulse;
+    context.fillStyle = robotColor;
+    drawPolygon([
+      { x: point.x - headSize, y: point.y - bodyH * 0.7 },
+      { x: point.x - headSize * 0.72, y: point.y - bodyH * 1.08 },
+      { x: point.x + headSize * 0.72, y: point.y - bodyH * 1.08 },
+      { x: point.x + headSize, y: point.y - bodyH * 0.7 },
+      { x: point.x + headSize * 0.74, y: point.y - bodyH * 0.48 },
+      { x: point.x - headSize * 0.74, y: point.y - bodyH * 0.48 },
+    ]);
+    context.shadowBlur = 10;
+    context.fillStyle = highlight;
+    context.fillRect(
+      point.x - headSize * 0.58,
+      point.y - bodyH * 0.81,
+      headSize * 1.16,
+      Math.max(2, headSize * 0.16),
+    );
+    context.fillStyle = enemy.hitFlash > 0 ? "#fff4e6" : "#ffc9a4";
+    context.beginPath();
+    context.arc(
+      point.x,
+      point.y - bodyH * 0.12,
+      Math.max(2, size * (enemy.type === "rootkit" ? 0.14 : 0.11)),
+      0,
+      Math.PI * 2,
+    );
+    context.fill();
+
+    context.shadowBlur = 12;
+    context.strokeStyle = highlight;
+    context.lineWidth = Math.max(2, size * 0.08);
+    context.beginPath();
+    context.moveTo(point.x + bodyW * 0.9, point.y - bodyH * 0.22);
+    context.lineTo(point.x + bodyW * 1.45, point.y - bodyH * 0.98);
+    context.stroke();
+    context.fillStyle = highlight;
+    context.beginPath();
+    context.arc(point.x + bodyW * 1.48, point.y - bodyH, Math.max(2, size * 0.1), 0, Math.PI * 2);
+    context.fill();
+
+    if (enemy.type === "rootkit") {
+      context.globalAlpha *= 0.7;
+      context.strokeStyle = "#ff6f61";
+      context.lineWidth = 2;
+      context.setLineDash([5, 4]);
+      context.beginPath();
+      context.ellipse(floor.x, floor.y - size * 0.12, bodyW * 1.7, bodyW * 0.58, 0, 0, Math.PI * 2);
+      context.stroke();
+      context.setLineDash([]);
+    }
     context.restore();
   }
 

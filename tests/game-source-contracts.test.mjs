@@ -205,7 +205,23 @@ test("enemy rendering does not allocate a point light per enemy", () => {
     game.indexOf("private spawnWave("),
   );
   assert.doesNotMatch(createEnemy, /new THREE\.PointLight/);
-  assert.match(createEnemy, /body\.castShadow = type === "rootkit"/);
+  assert.match(createEnemy, /createLowPolyWarRobot\(/);
+});
+
+test("war threats use readable low-poly robot silhouettes in both renderers", () => {
+  assert.match(threeResources, /export function createLowPolyWarRobot/);
+  for (const part of [
+    "robot-head",
+    "robot-leg-left",
+    "robot-leg-right",
+    "robot-weapon",
+  ]) {
+    assert.match(threeResources, new RegExp(part));
+  }
+  assert.match(webglGame, /createLowPolyWarRobot\(/);
+  assert.match(webglGame, /robotVisual|robotAnimate|robot\.animate/);
+  assert.match(canvasGame, /drawRobotEnemy\(/);
+  assert.match(canvasGame, /drawRobotEnemy|robot-head|enemy-robot/);
 });
 
 test("dynamic WebGL objects use centralized cleanup and pooling", () => {
