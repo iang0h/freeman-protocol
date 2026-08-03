@@ -38,6 +38,10 @@ const recruitmentAdvisorRules = await readFile(
   new URL("../app/game/recruitment-advisor-rules.mjs", import.meta.url),
   "utf8",
 ).catch(() => "");
+const empRules = await readFile(
+  new URL("../app/game/emp-rules.mjs", import.meta.url),
+  "utf8",
+).catch(() => "");
 const webglGame = game.slice(
   game.indexOf("class FreemanEngine"),
   game.indexOf("type FlatEnemy"),
@@ -116,6 +120,19 @@ test("compact recruitment advisor explains the decision and only recruits throug
   assert.match(game, /advisorAgentId === agent\.id \? "is-advised" : ""/);
   assert.match(game, /aria-current=\{advisorAgentId === agent\.id \? "true" : undefined\}/);
   assert.match(game, /toggleCombatOverlay\("warband"\)/);
+});
+
+test("combat prompts expose one-tap recruit and EMP actions", () => {
+  assert.match(game, /recruitPrompt/);
+  assert.match(game, /empReadyPrompt/);
+  assert.match(game, /role="status"/);
+  assert.match(game, /RECRUIT NOW/);
+  assert.match(game, /EMP READY/);
+  assert.match(game, /aria-label="Dismiss recruit prompt"/);
+  assert.match(game, /aria-label="Dismiss EMP ready prompt"/);
+  assert.match(game, /sendCoOpAction\(\{ action: "emp" \}\)/);
+  assert.match(game, /engineRef\.current\?\.activateEmp\(\)/);
+  assert.match(empRules, /export function shouldShowEmpReadyPrompt/);
 });
 
 test("both renderers mark the shared arena zones and throttle the live zone HUD", () => {

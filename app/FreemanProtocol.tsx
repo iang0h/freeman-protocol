@@ -26,6 +26,7 @@ import {
   createEmpState,
   fireEmp,
   getEmpRuntimeProfile,
+  shouldShowEmpReadyPrompt,
   tickEmp,
   updateEmpCooldown,
 } from "./game/emp-rules.mjs";
@@ -145,6 +146,7 @@ import {
   WATCH_STARTER_AGENT_COUNT,
 } from "./game/watch-mode-rules.mjs";
 import { getRecruitmentAdvice } from "./game/recruitment-advisor-rules.mjs";
+import { shouldShowRecruitPrompt } from "./game/recruitment-advisor-rules.mjs";
 
 type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
@@ -412,6 +414,7 @@ type HudState = {
   empCharge: number;
   empCooldownLeftMs: number;
   empCooldownMs: number;
+  empReadyPrompt: boolean;
   defenses: number;
   maxDefenses: number;
   defenseCost: number;
@@ -435,6 +438,7 @@ type HudState = {
   canRetryWave: boolean;
   loot: LootCounters;
   recruitmentAdvice: RecruitmentAdvice;
+  recruitPrompt: RecruitmentAdvice | null;
   skills: Record<EvolutionAgentId, AgentSkillHud>;
   boss: {
     label: string;
@@ -483,6 +487,8 @@ interface GameController {
   melee(): void;
   dash(): void;
   activateEmp(): void;
+  dismissRecruitPrompt(): void;
+  dismissEmpPrompt(): void;
   applyUpgrade(id: UpgradeId): void;
   purchaseComponentUpgrade(target: "player" | AgentId, upgradeId: string): void;
   evolveAgent(agentId: EvolutionAgentId, evolutionId: EvolutionId): void;
@@ -941,6 +947,7 @@ const INITIAL_HUD: HudState = {
   empCharge: 1,
   empCooldownLeftMs: 0,
   empCooldownMs: 16_000,
+  empReadyPrompt: false,
   defenses: 0,
   maxDefenses: 3,
   defenseCost: 80,
@@ -985,6 +992,7 @@ const INITIAL_HUD: HudState = {
     shards: 0,
     candidates: [],
   }) as RecruitmentAdvice,
+  recruitPrompt: null,
   skills: createInitialSkillHud(),
   boss: null,
 };
@@ -1363,6 +1371,12 @@ class FreemanEngine {
   private agentRateMultiplier = 1;
   private agentDamageMultiplier = 1;
   private empState: EmpState = createEmpState();
+  private previousRecruitmentAdvice: RecruitmentAdvice | null = null;
+  private dismissedRecruitAgentId: AgentId | null = null;
+  private recruitPrompt: RecruitmentAdvice | null = null;
+  private previousEmpReady = false;
+  private dismissedEmpPrompt = false;
+  private empReadyPrompt = false;
   private playerAttackCooldownMultiplier = 1;
   private upgradeStacks: UpgradeStacks = { ...EMPTY_UPGRADE_STACKS };
   private evolutions: Evolutions = { ...EMPTY_EVOLUTIONS };
@@ -1552,6 +1566,12 @@ class FreemanEngine {
     this.agentRateMultiplier = 1;
     this.agentDamageMultiplier = 1;
     this.empState = createEmpState();
+    this.previousRecruitmentAdvice = null;
+    this.dismissedRecruitAgentId = null;
+    this.recruitPrompt = null;
+    this.previousEmpReady = false;
+    this.dismissedEmpPrompt = false;
+    this.empReadyPrompt = false;
     this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
@@ -2239,6 +2259,8 @@ class FreemanEngine {
     if (this.mode !== "playing" || !canFireEmp(this.empState)) return;
     const pulse = fireEmp(this.empState, { baseDamage: EMP_BASE_DAMAGE });
     this.empState = pulse.state as EmpState;
+    this.empReadyPrompt = false;
+    this.dismissedEmpPrompt = false;
     const profile = getEmpRuntimeProfile({
       voltageRank: this.upgradeStacks.voltage,
       radiusMultiplier:
@@ -2303,6 +2325,18 @@ class FreemanEngine {
       title: "THE BREACH HAS BEEN DISRUPTED",
       detail: `${pulse.damage} base disruption · ${profile.radius.toFixed(1)} range · ${Math.round(profile.resistanceBypass * 100)}% resistance bypass.`,
     });
+    this.emitHud(true);
+  }
+
+  dismissRecruitPrompt() {
+    this.dismissedRecruitAgentId = this.recruitPrompt?.agentId ?? null;
+    this.recruitPrompt = null;
+    this.emitHud(true);
+  }
+
+  dismissEmpPrompt() {
+    this.dismissedEmpPrompt = true;
+    this.empReadyPrompt = false;
     this.emitHud(true);
   }
 
@@ -6934,6 +6968,43 @@ class FreemanEngine {
         recruitmentNeed,
       ),
     }) as RecruitmentAdvice;
+    if (recruitmentAdvice.state !== "recruit") {
+      this.dismissedRecruitAgentId = null;
+      this.recruitPrompt = null;
+    } else if (
+      shouldShowRecruitPrompt(
+        this.previousRecruitmentAdvice,
+        recruitmentAdvice,
+        this.dismissedRecruitAgentId,
+      )
+    ) {
+      this.recruitPrompt = recruitmentAdvice;
+      this.callbacks.onToast({
+        eyebrow: "WARband RESOURCE THRESHOLD",
+        title: `RECRUIT ${recruitmentAdvice.agentId?.toUpperCase() ?? "AGENT"}`,
+        detail: `${recruitmentAdvice.role ?? "SPECIALIST"} online. Your Warband can afford this recruit now.`,
+      });
+    }
+    this.previousRecruitmentAdvice = recruitmentAdvice;
+    const empReady = canFireEmp(this.empState);
+    if (!empReady) {
+      this.empReadyPrompt = false;
+      this.dismissedEmpPrompt = false;
+    } else if (
+      shouldShowEmpReadyPrompt(
+        this.previousEmpReady,
+        empReady,
+        this.dismissedEmpPrompt,
+      )
+    ) {
+      this.empReadyPrompt = true;
+      this.callbacks.onToast({
+        eyebrow: "EMP SYSTEM CHARGED",
+        title: "EMP READY",
+        detail: "Tap EMP PULSE or press R to disrupt nearby threats.",
+      });
+    }
+    this.previousEmpReady = empReady;
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
@@ -6961,6 +7032,7 @@ class FreemanEngine {
       empCharge: this.empState.charge / this.empState.maxCharge,
       empCooldownLeftMs: this.empState.cooldownLeftMs,
       empCooldownMs: this.empState.cooldownMs,
+      empReadyPrompt: this.empReadyPrompt,
       defenses: this.defenses.length,
       maxDefenses: 3,
       defenseCost: 80 + this.defenses.length * 35,
@@ -7000,6 +7072,7 @@ class FreemanEngine {
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       recruitmentAdvice,
+      recruitPrompt: this.recruitPrompt,
       skills,
       boss: boss
         ? {
@@ -7251,6 +7324,12 @@ class FreemanCanvasEngine implements GameController {
   private agentRateMultiplier = 1;
   private agentDamageMultiplier = 1;
   private empState: EmpState = createEmpState();
+  private previousRecruitmentAdvice: RecruitmentAdvice | null = null;
+  private dismissedRecruitAgentId: AgentId | null = null;
+  private recruitPrompt: RecruitmentAdvice | null = null;
+  private previousEmpReady = false;
+  private dismissedEmpPrompt = false;
+  private empReadyPrompt = false;
   private playerAttackCooldownMultiplier = 1;
   private upgradeStacks: UpgradeStacks = { ...EMPTY_UPGRADE_STACKS };
   private evolutions: Evolutions = { ...EMPTY_EVOLUTIONS };
@@ -7372,6 +7451,12 @@ class FreemanCanvasEngine implements GameController {
     this.agentRateMultiplier = 1;
     this.agentDamageMultiplier = 1;
     this.empState = createEmpState();
+    this.previousRecruitmentAdvice = null;
+    this.dismissedRecruitAgentId = null;
+    this.recruitPrompt = null;
+    this.previousEmpReady = false;
+    this.dismissedEmpPrompt = false;
+    this.empReadyPrompt = false;
     this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
@@ -7958,6 +8043,8 @@ class FreemanCanvasEngine implements GameController {
     if (this.mode !== "playing" || !canFireEmp(this.empState)) return;
     const pulse = fireEmp(this.empState, { baseDamage: EMP_BASE_DAMAGE });
     this.empState = pulse.state as EmpState;
+    this.empReadyPrompt = false;
+    this.dismissedEmpPrompt = false;
     const profile = getEmpRuntimeProfile({
       voltageRank: this.upgradeStacks.voltage,
       radiusMultiplier:
@@ -8026,6 +8113,18 @@ class FreemanCanvasEngine implements GameController {
       title: "THE BREACH HAS BEEN DISRUPTED",
       detail: `${pulse.damage} base disruption · ${profile.radius.toFixed(1)} range · ${Math.round(profile.resistanceBypass * 100)}% resistance bypass.`,
     });
+    this.emitHud(true);
+  }
+
+  dismissRecruitPrompt() {
+    this.dismissedRecruitAgentId = this.recruitPrompt?.agentId ?? null;
+    this.recruitPrompt = null;
+    this.emitHud(true);
+  }
+
+  dismissEmpPrompt() {
+    this.dismissedEmpPrompt = true;
+    this.empReadyPrompt = false;
     this.emitHud(true);
   }
 
@@ -11988,6 +12087,43 @@ class FreemanCanvasEngine implements GameController {
         recruitmentNeed,
       ),
     }) as RecruitmentAdvice;
+    if (recruitmentAdvice.state !== "recruit") {
+      this.dismissedRecruitAgentId = null;
+      this.recruitPrompt = null;
+    } else if (
+      shouldShowRecruitPrompt(
+        this.previousRecruitmentAdvice,
+        recruitmentAdvice,
+        this.dismissedRecruitAgentId,
+      )
+    ) {
+      this.recruitPrompt = recruitmentAdvice;
+      this.callbacks.onToast({
+        eyebrow: "WARBAND RESOURCE THRESHOLD",
+        title: `RECRUIT ${recruitmentAdvice.agentId?.toUpperCase() ?? "AGENT"}`,
+        detail: `${recruitmentAdvice.role ?? "SPECIALIST"} online. Your Warband can afford this recruit now.`,
+      });
+    }
+    this.previousRecruitmentAdvice = recruitmentAdvice;
+    const empReady = canFireEmp(this.empState);
+    if (!empReady) {
+      this.empReadyPrompt = false;
+      this.dismissedEmpPrompt = false;
+    } else if (
+      shouldShowEmpReadyPrompt(
+        this.previousEmpReady,
+        empReady,
+        this.dismissedEmpPrompt,
+      )
+    ) {
+      this.empReadyPrompt = true;
+      this.callbacks.onToast({
+        eyebrow: "EMP SYSTEM CHARGED",
+        title: "EMP READY",
+        detail: "Tap EMP PULSE or press R to disrupt nearby threats.",
+      });
+    }
+    this.previousEmpReady = empReady;
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
@@ -12015,6 +12151,7 @@ class FreemanCanvasEngine implements GameController {
       empCharge: this.empState.charge / this.empState.maxCharge,
       empCooldownLeftMs: this.empState.cooldownLeftMs,
       empCooldownMs: this.empState.cooldownMs,
+      empReadyPrompt: this.empReadyPrompt,
       defenses: this.defenses.length,
       maxDefenses: 3,
       defenseCost: 80 + this.defenses.length * 35,
@@ -12054,6 +12191,7 @@ class FreemanCanvasEngine implements GameController {
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       recruitmentAdvice,
+      recruitPrompt: this.recruitPrompt,
       skills,
       boss: boss
         ? {
@@ -12780,6 +12918,73 @@ export default function FreemanProtocol({
             ? "NETWORK STALE — HOLDING LAST SNAPSHOT"
             : `CO-OP ${coOpConnectionState.toUpperCase()}`}
         </p>
+      )}
+
+      {mode === "playing" && !coOpActive && hud.recruitPrompt && (
+        <aside
+          className="combat-prompt combat-prompt--recruit"
+          role="status"
+          aria-live="polite"
+          aria-label="AI recruit ready"
+        >
+          <div className="combat-prompt__copy">
+            <small>AI RECRUIT READY</small>
+            <strong>{hud.recruitPrompt.title}</strong>
+            <span>{hud.recruitPrompt.detail}</span>
+          </div>
+          <button
+            type="button"
+            className="combat-prompt__action"
+            onClick={() => {
+              const agentId = hud.recruitPrompt?.agentId;
+              if (agentId) engineRef.current?.recruit(agentId);
+              engineRef.current?.dismissRecruitPrompt();
+            }}
+          >
+            RECRUIT NOW
+          </button>
+          <button
+            type="button"
+            className="combat-prompt__dismiss"
+            aria-label="Dismiss recruit prompt"
+            onClick={() => engineRef.current?.dismissRecruitPrompt()}
+          >
+            ×
+          </button>
+        </aside>
+      )}
+
+      {mode === "playing" && hud.empReadyPrompt && (
+        <aside
+          className="combat-prompt combat-prompt--emp"
+          role="status"
+          aria-live="polite"
+          aria-label="EMP ready"
+        >
+          <div className="combat-prompt__copy">
+            <small>EMP SYSTEM CHARGED</small>
+            <strong>EMP READY</strong>
+            <span>Disrupt nearby threats with a tap, click, or press R.</span>
+          </div>
+          <button
+            type="button"
+            className="combat-prompt__action"
+            onClick={() => {
+              if (coOpActive) sendCoOpAction({ action: "emp" });
+              else engineRef.current?.activateEmp();
+            }}
+          >
+            EMP PULSE
+          </button>
+          <button
+            type="button"
+            className="combat-prompt__dismiss"
+            aria-label="Dismiss EMP ready prompt"
+            onClick={() => engineRef.current?.dismissEmpPrompt()}
+          >
+            ×
+          </button>
+        </aside>
       )}
 
       {mode !== "intro" && (

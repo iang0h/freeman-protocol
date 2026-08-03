@@ -131,6 +131,20 @@ test("keeps recruitment advice readable and touch-safe beside Warband", () => {
   );
 });
 
+test("keeps contextual combat prompts touch-safe and safe-area aware", () => {
+  assert.match(game, /className="combat-prompt combat-prompt--recruit"/);
+  assert.match(game, /className="combat-prompt combat-prompt--emp"/);
+  assert.match(game, /aria-live="polite"/);
+  assert.match(
+    styles,
+    /\.combat-prompt__action\s*\{[\s\S]*?min-height:\s*44px[\s\S]*?touch-action:\s*manipulation/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.combat-prompt\s*\{[\s\S]*?bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 14px\)/,
+  );
+});
+
 test("limits live mobile status to combat vitals, zone, and one alert", () => {
   const status = game.match(
     /<aside className="mobile-status-strip"[\s\S]*?<\/aside>/,
