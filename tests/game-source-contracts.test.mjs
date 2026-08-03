@@ -744,8 +744,8 @@ test("Canvas fallback owns the same repair-bay, retreat, and hostile-target cont
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /repairBay/);
     assert.match(engine, /getRepairDecision/);
+    assert.match(engine, /shouldWithdrawToRepairBay/);
     assert.match(engine, /tickRepairBay/);
-    assert.match(engine, /repairDecision === "repair" \|\| agent\.repairDecision === "retreat"/);
     assert.match(engine, /damageAgent/);
     assert.match(engine, /damageDefense/);
     assert.match(engine, /damageRepairBay/);
@@ -786,10 +786,11 @@ test("withdrawing agents converge on the repair bay before repair ticks in both 
     );
     assert.match(
       updateAgents,
-      /const withdrawing\s*=\s*agent\.repairDecision === "repair" \|\| agent\.repairDecision === "retreat"/,
+      /const withdrawing\s*=\s*shouldWithdrawToRepairBay\(\s*agent\.repairDecision,\s*repairBay,\s*\)/,
     );
     assert.match(updateAgents, /const radius = withdrawing \|\| gatheringPickup\s*\? 0/);
     assert.match(updateAgents, /atRepairBay[\s\S]*?<= 1\.35/);
+    assert.match(updateAgents, /getAgentActionState\([\s\S]*?\}, \{ repairBay \}\)/);
   }
 });
 
@@ -818,7 +819,7 @@ test("Forge armor break uses magnitude, skills honor action state, and loot labe
   assert.match(game, /resolveArmoredDamage/);
   assert.match(game, /armorBreakReduction/);
   for (const engine of [webglGame, canvasGame]) {
-    assert.match(engine, /useAgentSkill\(id: EvolutionAgentId\) \{[\s\S]*const actionState = getAgentActionState\(agent\);[\s\S]*if \(!actionState\.canAct\) return;/);
+    assert.match(engine, /useAgentSkill\(id: EvolutionAgentId\) \{[\s\S]*const actionState = getAgentActionState\(agent,[\s\S]*?if \(!actionState\.canAct\) return;/);
     assert.match(engine, /getLootPresentation\(pickup\.type, pickup\.value\)/);
     assert.match(engine, /armorBreakReduction: 0/);
     assert.match(engine, /armorBreakReduction = effect\.armorReduction/);

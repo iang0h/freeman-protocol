@@ -424,6 +424,31 @@ test("field-kit inventory cannot manufacture a repair decision", async () => {
   );
 });
 
+test("offline repair bays release surviving agents back to autonomous combat", async () => {
+  const { getAgentActionState, shouldWithdrawToRepairBay } = await loadRepairRules();
+  const offlineBay = {
+    hp: 0,
+    maxHp: 70,
+    isSeparate: true,
+    repairPerSecond: 20,
+  };
+  const survivingAgent = {
+    hp: 45,
+    maxHp: 100,
+    disabledLeftMs: 0,
+    repairDecision: "retreat",
+  };
+
+  assert.equal(
+    shouldWithdrawToRepairBay(survivingAgent.repairDecision, offlineBay),
+    false,
+  );
+  assert.deepEqual(
+    getAgentActionState(survivingAgent, { repairBay: offlineBay }),
+    { withdrawing: false, canAct: true },
+  );
+});
+
 test("unit damage and repair timers clamp without mutating Core health", async () => {
   const { applyUnitDamage, tickRepairBay } = await loadRepairRules();
   const damaged = applyUnitDamage(

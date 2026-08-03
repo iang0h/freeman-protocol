@@ -61,10 +61,27 @@ export function getRepairDecision(unit, context = {}) {
   return "retreat";
 }
 
-export function getAgentActionState(unit) {
+// A destroyed repair bay still produces a truthful "retreat" decision, but it
+// cannot be a useful movement destination. Callers that know the bay state can
+// use this helper to release a surviving agent back to its normal role target.
+// Omitting the bay preserves the original action-gate semantics for callers
+// that only need to evaluate a unit in isolation.
+export function shouldWithdrawToRepairBay(repairDecision, repairBay) {
+  const bayOnline = repairBay === undefined
+    ? true
+    : functioningSeparateBay(repairBay);
+  return (
+    (repairDecision === "repair" || repairDecision === "retreat") &&
+    bayOnline
+  );
+}
+
+export function getAgentActionState(unit, context = {}) {
   const repairDecision = unit?.repairDecision ?? "fight";
-  const withdrawing =
-    repairDecision === "repair" || repairDecision === "retreat";
+  const withdrawing = shouldWithdrawToRepairBay(
+    repairDecision,
+    context.repairBay,
+  );
   return {
     withdrawing,
     canAct:

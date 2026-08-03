@@ -58,6 +58,7 @@ import {
   getAgentActionState,
   getRepairDecision,
   repairTurret,
+  shouldWithdrawToRepairBay,
   tickRepairBay,
   resolveAgentDamage,
 } from "./game/repair-rules.mjs";
@@ -853,11 +854,18 @@ const EMPTY_EVOLUTIONS: Evolutions = {
 const EMPTY_COMPONENT_UPGRADE_RANKS: ComponentUpgradeRanks = {};
 const getAgentSkillAvailability = (
   agent: Pick<AgentRuntime, "hp" | "disabledLeft" | "repairDecision"> | null,
+  repairBay?: { hp: number; maxHp: number; isSeparate: boolean; repairPerSecond?: number },
 ): AgentSkillAvailability => {
   if (!agent) return "offline";
   if (agent.disabledLeft > 0 || agent.hp <= 0) return "disabled";
-  if (agent.repairDecision === "repair") return "repair";
-  if (agent.repairDecision === "retreat") return "retreat";
+  if (
+    agent.repairDecision === "repair" &&
+    shouldWithdrawToRepairBay("repair", repairBay)
+  ) return "repair";
+  if (
+    agent.repairDecision === "retreat" &&
+    shouldWithdrawToRepairBay("retreat", repairBay)
+  ) return "retreat";
   return "ready";
 };
 const createInitialSkillHud = (): Record<EvolutionAgentId, AgentSkillHud> => ({
@@ -1937,7 +1945,14 @@ class FreemanEngine {
     const agent = this.agents.find((candidate) => candidate.id === id);
     const skill = AGENT_SKILLS[id];
     if (!agent || !skill) return;
-    const actionState = getAgentActionState(agent);
+    const actionState = getAgentActionState(agent, {
+      repairBay: {
+        hp: this.repairBay.hp,
+        maxHp: this.repairBay.maxHp,
+        isSeparate: true,
+        repairPerSecond: 18,
+      },
+    });
     if (!actionState.canAct) return;
     const enemyTarget = id === "covenant" ? null : this.getPriorityEnemy();
     const supportTarget = id === "covenant"
@@ -4628,6 +4643,12 @@ class FreemanEngine {
   }
 
   private updateTemporarySubAgents(delta: number) {
+    const repairBay = {
+      hp: this.repairBay.hp,
+      maxHp: this.repairBay.maxHp,
+      isSeparate: true,
+      repairPerSecond: 18,
+    };
     const active: WebglTemporarySubAgent[] = [];
     this.temporarySubAgents.forEach((subAgent, index) => {
       const parent = this.agents.find((agent) => agent.id === subAgent.parentId);
@@ -4642,7 +4663,7 @@ class FreemanEngine {
       const { canAct: parentCanAct } = getAgentActionState({
         ...parent,
         disabledLeftMs: parent.disabledLeft * 1_000,
-      });
+      }, { repairBay });
       const angle = this.elapsed * 1.8 + index * 2.1;
       subAgent.marker.position
         .copy(parent.group.position)
@@ -4777,6 +4798,12 @@ class FreemanEngine {
   private updateAgents(delta: number) {
     const count = this.agents.length;
     const priority = this.getPriorityEnemy();
+    const repairBay = {
+      hp: this.repairBay.hp,
+      maxHp: this.repairBay.maxHp,
+      isSeparate: true,
+      repairPerSecond: 18,
+    };
     this.agents.forEach((agent, index) => {
       const roleIntent = decideAgentIntent(
         { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
@@ -4798,12 +4825,7 @@ class FreemanEngine {
             ? "defend"
             : roleIntent;
       agent.repairDecision = getRepairDecision(agent, {
-        repairBay: {
-          hp: this.repairBay.hp,
-          maxHp: this.repairBay.maxHp,
-          isSeparate: true,
-          repairPerSecond: 18,
-        },
+        repairBay,
       });
       const gathering = tickAgentGathering(
         {
@@ -4816,7 +4838,9 @@ class FreemanEngine {
           hostileTargetInRange: Boolean(
             this.getNearestEnemy(agent.group.position, agent.range),
           ),
-          retreating: agent.disabledLeft > 0 || agent.repairDecision === "repair" || agent.repairDecision === "retreat",
+          retreating:
+            agent.disabledLeft > 0 ||
+            shouldWithdrawToRepairBay(agent.repairDecision, repairBay),
           nearbyLoot: this.pickups,
         },
         delta * 1000,
@@ -4829,8 +4853,10 @@ class FreemanEngine {
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
         (intent === "support" ? this.elapsed * 0.18 : 0);
-      const withdrawing =
-        agent.repairDecision === "repair" || agent.repairDecision === "retreat";
+      const withdrawing = shouldWithdrawToRepairBay(
+        agent.repairDecision,
+        repairBay,
+      );
       const anchor =
         withdrawing
         ? this.repairBay.group.position
@@ -4880,12 +4906,7 @@ class FreemanEngine {
       const atRepairBay =
         agent.group.position.distanceTo(this.repairBay.group.position) <= 1.35;
       const repaired = tickRepairBay(
-        {
-          hp: this.repairBay.hp,
-          maxHp: this.repairBay.maxHp,
-          isSeparate: true,
-          repairPerSecond: 18,
-        },
+        repairBay,
         [{
           ...agent,
           disabledLeftMs: agent.disabledLeft * 1_000,
@@ -4950,7 +4971,7 @@ class FreemanEngine {
       const actionState = getAgentActionState({
         ...agent,
         disabledLeftMs: agent.disabledLeft * 1_000,
-      });
+      }, { repairBay });
       if (!actionState.canAct) return;
       agent.supportClock -= delta;
 
@@ -6924,10 +6945,16 @@ class FreemanEngine {
     const recruited = (id: AgentId) =>
       this.agents.some((agent) => agent.id === id);
     const skills = createInitialSkillHud();
+    const repairBayState = {
+      hp: this.repairBay.hp,
+      maxHp: this.repairBay.maxHp,
+      isSeparate: true,
+      repairPerSecond: 18,
+    };
     for (const id of Object.keys(skills) as EvolutionAgentId[]) {
       const agent = this.agents.find((candidate) => candidate.id === id);
       skills[id].cooldownLeftMs = agent?.skillCooldownLeftMs ?? 0;
-      skills[id].status = getAgentSkillAvailability(agent ?? null);
+      skills[id].status = getAgentSkillAvailability(agent ?? null, repairBayState);
       skills[id].available = skills[id].status === "ready";
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
@@ -7699,7 +7726,13 @@ class FreemanCanvasEngine implements GameController {
     const agent = this.agents.find((candidate) => candidate.id === id);
     const skill = AGENT_SKILLS[id];
     if (!agent || !skill) return;
-    const actionState = getAgentActionState(agent);
+    const actionState = getAgentActionState(agent, {
+      repairBay: {
+        ...this.repairBay,
+        isSeparate: true,
+        repairPerSecond: 18,
+      },
+    });
     if (!actionState.canAct) return;
     const enemyTarget = id === "covenant" ? null : this.getFlatPriorityEnemy();
     const supportTarget = id === "covenant"
@@ -8784,6 +8817,11 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private updateTemporarySubAgents(delta: number) {
+    const repairBay = {
+      ...this.repairBay,
+      isSeparate: true,
+      repairPerSecond: 18,
+    };
     const active: FlatTemporarySubAgent[] = [];
     this.temporarySubAgents.forEach((subAgent, index) => {
       const parent = this.agents.find((agent) => agent.id === subAgent.parentId);
@@ -8791,7 +8829,7 @@ class FreemanCanvasEngine implements GameController {
       const { canAct: parentCanAct } = getAgentActionState({
         ...parent,
         disabledLeftMs: parent.disabledLeft * 1_000,
-      });
+      }, { repairBay });
       const angle = this.elapsed * 1.8 + index * 2.1;
       subAgent.x = parent.x + Math.cos(angle) * 0.75;
       subAgent.z = parent.z + Math.sin(angle) * 0.75;
@@ -8902,6 +8940,11 @@ class FreemanCanvasEngine implements GameController {
   private updateAgents(delta: number) {
     const count = this.agents.length;
     const priority = this.getFlatPriorityEnemy();
+    const repairBay = {
+      ...this.repairBay,
+      isSeparate: true,
+      repairPerSecond: 18,
+    };
     this.agents.forEach((agent, index) => {
       const roleIntent = decideAgentIntent(
         { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
@@ -8923,11 +8966,7 @@ class FreemanCanvasEngine implements GameController {
             ? "defend"
             : roleIntent;
       agent.repairDecision = getRepairDecision(agent, {
-        repairBay: {
-          ...this.repairBay,
-          isSeparate: true,
-          repairPerSecond: 18,
-        },
+        repairBay,
       });
       const gathering = tickAgentGathering(
         {
@@ -8942,8 +8981,7 @@ class FreemanCanvasEngine implements GameController {
           ),
           retreating:
             agent.disabledLeft > 0 ||
-            agent.repairDecision === "repair" ||
-            agent.repairDecision === "retreat",
+            shouldWithdrawToRepairBay(agent.repairDecision, repairBay),
           nearbyLoot: this.pickups,
         },
         delta * 1000,
@@ -8956,8 +8994,10 @@ class FreemanCanvasEngine implements GameController {
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
         (intent === "support" ? this.elapsed * 0.18 : 0);
-      const withdrawing =
-        agent.repairDecision === "repair" || agent.repairDecision === "retreat";
+      const withdrawing = shouldWithdrawToRepairBay(
+        agent.repairDecision,
+        repairBay,
+      );
       const anchorX = withdrawing
         ? this.repairBay.x
         : gatheringPickup
@@ -9008,7 +9048,7 @@ class FreemanCanvasEngine implements GameController {
       const atRepairBay =
         this.distance(agent.x, agent.z, this.repairBay.x, this.repairBay.z) <= 1.35;
       const repaired = tickRepairBay(
-        { ...this.repairBay, isSeparate: true, repairPerSecond: 18 },
+        repairBay,
         [{
           ...agent,
           disabledLeftMs: agent.disabledLeft * 1_000,
@@ -9029,7 +9069,7 @@ class FreemanCanvasEngine implements GameController {
       const actionState = getAgentActionState({
         ...agent,
         disabledLeftMs: agent.disabledLeft * 1_000,
-      });
+      }, { repairBay });
       if (!actionState.canAct) return;
       agent.supportClock -= delta;
       if (gatheringPickup) {
@@ -12202,10 +12242,15 @@ class FreemanCanvasEngine implements GameController {
     const recruited = (id: AgentId) =>
       this.agents.some((agent) => agent.id === id);
     const skills = createInitialSkillHud();
+    const repairBayState = {
+      ...this.repairBay,
+      isSeparate: true,
+      repairPerSecond: 18,
+    };
     for (const id of Object.keys(skills) as EvolutionAgentId[]) {
       const agent = this.agents.find((candidate) => candidate.id === id);
       skills[id].cooldownLeftMs = agent?.skillCooldownLeftMs ?? 0;
-      skills[id].status = getAgentSkillAvailability(agent ?? null);
+      skills[id].status = getAgentSkillAvailability(agent ?? null, repairBayState);
       skills[id].available = skills[id].status === "ready";
     }
     const boss = this.enemies.find((enemy) => enemy.bossState)?.bossState ?? null;
