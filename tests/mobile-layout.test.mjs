@@ -55,7 +55,23 @@ test("offers macro and tactical camera presentation controls", () => {
   assert.match(game, /mobile-camera-toggle/);
   assert.match(game, /MACRO MAP/);
   assert.match(game, /TACTICAL VIEW/);
+  assert.match(game, /COMMAND MAP/);
+  assert.match(game, /aria-pressed=\{cameraPresentation === "command"\}/);
   assert.match(styles, /\.mobile-camera-toggle/);
+  assert.match(styles, /\.command-map-layer/);
+  assert.match(styles, /\.command-map-marker[\s\S]*?min-height: 48px/);
+});
+
+test("keeps watch cinema controls visible, touch-safe, and dismissible", () => {
+  for (const label of ["CINEMA", "EXIT CINEMA", "PAUSE", "COMMAND MAP"]) {
+    assert.match(game, new RegExp(label));
+  }
+  assert.match(game, /aria-label="Cinema watch controls"/);
+  assert.match(game, /event\.code === "KeyC"/);
+  assert.match(game, /event\.code === "KeyP"/);
+  assert.match(game, /event\.code === "KeyV"/);
+  assert.match(styles, /\.watch-panel__cinema-controls button[\s\S]*?min-height: 44px/);
+  assert.match(styles, /\.game-shell\.is-cinema[\s\S]*?\.watch-panel/);
 });
 
 test("keeps commander mode compact until the roster is explicitly opened", () => {
@@ -84,7 +100,7 @@ test("keeps commander-only controls out of the desktop warband dock", () => {
 });
 
 test("keeps workshop overlays from being covered by mobile gameplay trays", () => {
-  assert.match(game, /className=\{`game-shell mode-\$\{mode\}`\}/);
+  assert.match(game, /className=\{`game-shell mode-\$\{mode\}[\s\S]*?is-cinema/);
   assert.match(game, /mobile-status-strip/);
   assert.match(styles, /\.mode-upgrade[\s\S]*\.mobile-action-tray/);
   assert.match(styles, /\.mode-evolution[\s\S]*\.mobile-action-tray/);

@@ -228,8 +228,8 @@ test("simulation view normalizes render-neutral state and projects command marke
     agents: [{ id: "kairos", hp: 40, maxHp: 50, x: 2, z: 2, state: "gathering" }],
     enemies: [{ id: "virus-1", kind: "virus", hp: 10, maxHp: 20, x: -2, z: 1, state: "alive" }],
     pickups: [{ id: "loot-1", type: "component", value: 1, x: 3, z: 0 }],
-    sentries: [],
-    subAgents: [],
+    sentries: [{ id: "sentry-0", hp: 90, maxHp: 100, x: -1, z: 2 }],
+    subAgents: [{ id: "subagent-kairos-1", parentId: "kairos", role: "assault", x: 1, z: -2 }],
     boss: null,
   });
   assert.deepEqual(view.resources, { compute: 55, components: 2, shards: 1 });
@@ -237,6 +237,10 @@ test("simulation view normalizes render-neutral state and projects command marke
   const markers = getCommandMapMarkers(view);
   assert.equal(markers.some((marker) => marker.kind === "loot"), true);
   assert.equal(markers.some((marker) => marker.kind === "agent" && marker.status === "gathering"), true);
+  assert.equal(markers.some((marker) => marker.id === "sentry-sentry-0"), true);
+  assert.equal(markers.some((marker) => marker.id === "sub-agent-subagent-kairos-1"), true);
+  assert.equal(markers.some((marker) => marker.id === "north-breach"), true);
+  assert.equal(markers.some((marker) => marker.id === "south-breach"), true);
   assert.equal(getCombatEffectBudget("low", true).hitStopMs, 0);
 });
 
@@ -446,6 +450,8 @@ test("watch mode state clamps speed, pauses on hidden tabs, and tracks visible s
 
   const active = tickWatchState(configured, 100);
   assert.equal(active.survivalMs, 400);
+  const cinemaPaused = tickWatchState(active, 1_000, { visible: false });
+  assert.equal(cinemaPaused.survivalMs, 400);
   const hidden = pauseForVisibility(active, true);
   assert.equal(hidden.paused, true);
   assert.equal(tickWatchState(hidden, 1_000).survivalMs, 400);

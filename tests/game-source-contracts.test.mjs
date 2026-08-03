@@ -63,6 +63,26 @@ test("both renderers consume the shared quality, battleground, and snapshot help
   assert.match(game, /setCinemaSpeed/);
 });
 
+test("cinema watch and command map controls stay explicit and keyboard reachable", () => {
+  for (const label of ["COMMAND MAP", "CINEMA", "PAUSE", "EXIT CINEMA"]) {
+    assert.match(game, new RegExp(label));
+  }
+  assert.match(game, /\[0\.5, 1, 2, 4\]/);
+  assert.match(game, /\{speed\}X/);
+  assert.match(game, /type CameraPresentation = "macro" \| "tactical" \| "command"/);
+  assert.match(game, /event\.code === "KeyC"/);
+  assert.match(game, /event\.code === "KeyP"/);
+  assert.match(game, /event\.code === "KeyV"/);
+  assert.match(styles, /\.command-map-marker[\s\S]*?min-width: 44px/);
+  assert.match(styles, /\.game-shell\.is-cinema[\s\S]*?\.watch-panel/);
+  assert.match(game, /focusCommandMarker\(id: string\)/);
+  assert.ok((game.match(/private getCameraFocusPosition\(\)/g) ?? []).length >= 2);
+  assert.ok((game.match(/this\.yaw \+= delta \* 0\.045/g) ?? []).length >= 2);
+  assert.match(game, /commandMapFixedIds/);
+  assert.match(game, /\.slice\(0, 64\)/);
+  assert.match(game, /cinema-status__actions/);
+});
+
 test("combat presentation rules stay renderer-independent", () => {
   assert.match(combatPresentationRules, /export const OVERLAYS/);
   assert.match(combatPresentationRules, /export function createOverlayState/);
@@ -159,7 +179,7 @@ test("co-op prompt dismissal is keyed instead of synchronously reset in effects"
 });
 
 test("both renderers mark the shared arena zones and throttle the live zone HUD", () => {
-  assert.match(game, /import\s+\{\s*classifyCombatFeedback,\s*getArenaZone,?\s*\}/);
+  assert.match(game, /import\s+\{[\s\S]*classifyCombatFeedback,[\s\S]*getArenaZone,[\s\S]*\}\s+from "\.\/game\/combat-presentation-rules\.mjs"/);
   assert.match(webglGame, /private buildArenaZoneMarkers\(\)/);
   assert.match(canvasGame, /private drawArenaZoneMarkers\(\)/);
 
@@ -1062,7 +1082,7 @@ test("both renderers expose a presentation-only macro camera mode", () => {
 });
 
 test("desktop starts in macro map presentation", () => {
-  assert.match(game, /isMobile \? cameraPresentation : "macro"/);
+  assert.match(game, /isMobile \|\| cameraPresentation === "command" \? cameraPresentation : "macro"/);
 });
 
 test("both renderers give agents autonomous network management", () => {

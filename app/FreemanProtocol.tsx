@@ -18,6 +18,7 @@ import {
 } from "./game/combat-rules.mjs";
 import {
   classifyCombatFeedback,
+  getCommandMapMarkers,
   getArenaZone,
 } from "./game/combat-presentation-rules.mjs";
 import {
@@ -188,7 +189,7 @@ type AgentSkillId =
 type AgentSkillAvailability = "ready" | "disabled" | "repair" | "retreat" | "offline";
 type SquadCommand = "auto" | "follow" | "defend" | "focus";
 type MobilePanel = "command" | "defend" | "skills";
-type CameraPresentation = "macro" | "tactical";
+type CameraPresentation = "macro" | "tactical" | "command";
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type CombatFeedbackEmphasis = "standard" | "strong" | "urgent";
 type UpgradeId =
@@ -440,6 +441,15 @@ type HudState = {
   cinemaCleanView: boolean;
   battlegroundId: string;
   qualityPreset: "low" | "medium" | "high";
+  commandMap: Array<{
+    id: string;
+    kind: string;
+    label: string;
+    x: number;
+    z: number;
+    status: string;
+    priority: number;
+  }>;
   survivalMs: number;
   sessionIncome: { compute: number; components: number; shards: number };
   lastAutonomyEvent: string;
@@ -514,6 +524,7 @@ interface GameController {
   setCinemaSpeed(speed: number): void;
   toggleCinemaPause(): void;
   toggleCinemaCleanView(): void;
+  focusCommandMarker(id: string): void;
   endWatchRun(): void;
   setVisibilityPaused(hidden: boolean): void;
   skipTutorial(): void;
@@ -993,6 +1004,7 @@ const INITIAL_HUD: HudState = {
   cinemaCleanView: false,
   battlegroundId: "clear-grid",
   qualityPreset: "medium",
+  commandMap: [],
   survivalMs: 0,
   sessionIncome: { compute: 0, components: 0, shards: 0 },
   lastAutonomyEvent: "NETWORK STANDING BY",
@@ -1381,6 +1393,10 @@ class FreemanEngine {
   private readonly cameraTarget = new THREE.Vector3();
   private readonly desiredCameraTarget = new THREE.Vector3();
   private cameraPresentation: CameraPresentation = "tactical";
+  private cameraFocusId: string | null = null;
+  private readonly cinemaTarget = new THREE.Vector3();
+  private hasCinemaTarget = false;
+  private cinemaHoldClock = 0;
   private qualityMonitor = createQualityMonitor("medium");
   private qualityPreset: "low" | "medium" | "high" = "medium";
   private battleground = getBattlegroundForWave(1);
@@ -1587,6 +1603,9 @@ class FreemanEngine {
     this.watchState = createWatchState();
     this.cinemaState = createCinemaState();
     this.watchDirectorState = createWatchDirectorState();
+    this.cameraPresentation = "macro";
+    this.hasCinemaTarget = false;
+    this.cinemaHoldClock = 0;
     this.resetMissionState();
     if (options.tutorial) {
       this.tutorialStep = "move";
@@ -1620,7 +1639,17 @@ class FreemanEngine {
   }
 
   toggleCinemaCleanView() {
+    const wasClean = this.cinemaState.cleanView;
     this.cinemaState = toggleCinemaCleanView(this.cinemaState);
+    if (wasClean) this.cinemaHoldClock = 0.8;
+    else this.hasCinemaTarget = false;
+    this.emitHud(true);
+  }
+
+  focusCommandMarker(id: string) {
+    this.cameraFocusId = id || null;
+    this.cameraPresentation = "command";
+    this.resize();
     this.emitHud(true);
   }
 
@@ -1672,6 +1701,7 @@ class FreemanEngine {
     this.dismissedEmpPrompt = false;
     this.empReadyPrompt = false;
     this.watchDirectorState = createWatchDirectorState();
+    this.cameraFocusId = null;
     this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
@@ -2602,12 +2632,14 @@ class FreemanEngine {
 
   setCameraPresentation(presentation: CameraPresentation) {
     this.cameraPresentation = presentation;
+    if (presentation !== "command") this.cameraFocusId = null;
     this.resize();
   }
 
   resetCamera() {
     this.yaw = Math.PI / 4;
     this.zoom = 1;
+    this.cameraFocusId = null;
     this.resize();
   }
 
@@ -4213,7 +4245,6 @@ class FreemanEngine {
     if (event.code === "KeyQ" || event.code === "ShiftLeft") this.dash();
     if (event.code === "KeyR") this.activateEmp();
     if (event.code === "KeyZ") this.rotateCamera(-1);
-    if (event.code === "KeyC") this.rotateCamera(1);
     if (event.code === "KeyF") this.resetCamera();
     if (event.code === "KeyB") {
       if (event.shiftKey) this.beginManualDefensePlacement();
@@ -4409,18 +4440,25 @@ class FreemanEngine {
     this.hitStop = Math.max(0, this.hitStop - rawDelta);
     this.elapsed += rawDelta;
     if (isWatchMode(this.sessionMode)) {
-      this.cinemaState = tickCinemaState(this.cinemaState, rawDelta * 1_000);
+      const cinemaDelta = this.mode === "playing" && !this.watchState.paused
+        ? rawDelta * 1_000
+        : 0;
+      this.cinemaState = tickCinemaState(this.cinemaState, cinemaDelta);
       this.watchState = tickWatchState(
         this.watchState,
         rawDelta * 1_000,
-        { visible: !document.hidden },
+        { visible: !document.hidden && !this.cinemaState.paused },
       );
     }
-    this.updateAmbient(rawDelta);
+    const presentationDelta = isWatchMode(this.sessionMode) &&
+      (this.watchState.paused || this.cinemaState.paused)
+      ? 0
+      : rawDelta;
+    this.updateAmbient(presentationDelta);
     if (!this.coOpPresentation && this.mode === "playing" && (!isWatchMode(this.sessionMode) || (!this.watchState.paused && !this.cinemaState.paused))) {
       this.updateGame(isWatchMode(this.sessionMode) ? delta * this.watchState.speed * this.cinemaState.speed : delta);
     }
-    this.updateEffects(rawDelta);
+    this.updateEffects(presentationDelta);
     this.updateCamera(rawDelta);
     this.updateTargetingPresentation();
     if (!this.contextLost) this.renderer.render(this.scene, this.camera);
@@ -4977,7 +5015,10 @@ class FreemanEngine {
         : null;
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
-        (intent === "support" ? this.elapsed * 0.18 : 0);
+        (isWatchMode(this.sessionMode) ? (this.cinemaState.elapsedMs / 1_000) * 0.22 : 0) +
+        (intent === "support"
+          ? (isWatchMode(this.sessionMode) ? this.cinemaState.elapsedMs / 1_000 : this.elapsed) * 0.18
+          : 0);
       const withdrawing = shouldWithdrawToRepairBay(
         agent.repairDecision,
         repairBay,
@@ -5893,15 +5934,35 @@ class FreemanEngine {
   }
 
   private updateCamera(delta: number) {
-    this.desiredCameraTarget
-      .copy(this.core.group.position)
-      .multiplyScalar(0.35)
-      .add(this.player.group.position.clone().multiplyScalar(0.65));
+    const focus = this.getCameraFocusPosition();
+    if (focus) {
+      this.desiredCameraTarget.copy(focus);
+      if (this.cinemaState.cleanView) {
+        this.cinemaTarget.copy(focus);
+        this.hasCinemaTarget = true;
+      }
+    } else if (this.cinemaHoldClock > 0 && this.hasCinemaTarget) {
+      this.desiredCameraTarget.copy(this.cinemaTarget);
+    } else {
+      this.desiredCameraTarget
+        .copy(this.core.group.position)
+        .multiplyScalar(0.35)
+        .add(this.player.group.position.clone().multiplyScalar(0.65));
+    }
     this.cameraTarget.lerp(
       this.desiredCameraTarget,
       1 - Math.exp(-delta * 4.2),
     );
-    const distance = 23;
+    if (
+      this.cinemaState.cleanView &&
+      this.mode === "playing" &&
+      !this.watchState.paused &&
+      !this.cinemaState.paused &&
+      !this.reducedMotion
+    ) {
+      this.yaw += delta * 0.045;
+    }
+    const distance = this.cinemaState.cleanView ? 25 : 23;
     const cameraOffset = new THREE.Vector3(
       Math.sin(this.yaw) * distance,
       15.5,
@@ -5923,6 +5984,63 @@ class FreemanEngine {
       );
     this.camera.lookAt(this.cameraTarget);
     this.shake = Math.max(0, this.shake - delta * 1.8);
+    this.cinemaHoldClock = Math.max(0, this.cinemaHoldClock - delta);
+  }
+
+  private getCameraFocusPosition() {
+    const focusId = this.cameraFocusId;
+    if (focusId === "core") return this.core.group.position.clone();
+    if (focusId === "repair-bay") return this.repairBay.group.position.clone();
+    if (focusId === "compute-node") return new THREE.Vector3(3.1, 0, 1.15);
+    if (focusId === "north-breach") return new THREE.Vector3(0, 0, -4);
+    if (focusId === "south-breach") return new THREE.Vector3(0, 0, 4);
+    if (focusId === "boss-portal") return new THREE.Vector3(0, 0, -6.45);
+
+    if (focusId) {
+      const [kind, ...keyParts] = focusId.split("-");
+      const key = keyParts.join("-");
+      if (kind === "agent") {
+        const agent = this.agents.find((candidate) => candidate.id === key);
+        if (agent) return agent.group.position.clone();
+      }
+      if (kind === "threat") {
+        const enemy = this.enemies.find((candidate) => String(candidate.id) === key);
+        if (enemy) return enemy.group.position.clone();
+      }
+      if (kind === "loot") {
+        const pickup = this.pickups.find((candidate) => candidate.id === key);
+        if (pickup) return new THREE.Vector3(pickup.x, 0, pickup.y);
+      }
+      if (kind === "sentry") {
+        const defenseKey = key.startsWith("sentry-") ? key.slice("sentry-".length) : key;
+        const defense = this.defenses.find((candidate) => String(candidate.index) === defenseKey);
+        if (defense) return defense.group.position.clone();
+      }
+      if (focusId.startsWith("sub-agent-")) {
+        const subAgentKey = focusId.slice("sub-agent-".length);
+        const subAgent =
+          this.temporarySubAgents.find((candidate) => candidate.id === subAgentKey) ??
+          this.temporarySubAgents[Number(subAgentKey)];
+        if (subAgent) return subAgent.marker.position.clone();
+      }
+      if (kind === "boss") {
+        const boss = this.enemies.find((candidate) => candidate.bossState);
+        if (boss) return boss.group.position.clone();
+      }
+    }
+
+    if (this.cinemaState.cleanView) {
+      const priorityBoss = this.enemies.find((enemy) => enemy.bossState);
+      if (priorityBoss) return priorityBoss.group.position.clone();
+      const breachEnemy = this.enemies.find(
+        (enemy) => enemy.group.position.distanceTo(this.core.group.position) <= 4.5,
+      );
+      if (breachEnemy) return breachEnemy.group.position.clone();
+      const pickup = this.pickups[this.pickups.length - 1];
+      if (pickup) return new THREE.Vector3(pickup.x, 0, pickup.y);
+      return this.core.group.position.clone();
+    }
+    return null;
   }
 
   private completeWave() {
@@ -7059,7 +7177,11 @@ class FreemanEngine {
     const aspect = width / height;
     const portraitPullback =
       aspect < 0.58 ? 1.5 : aspect < 0.78 ? 1.28 : aspect < 1 ? 1.12 : 1;
-    const presentationPullback = this.cameraPresentation === "macro" ? 1.34 : 1;
+    const presentationPullback = this.cameraPresentation === "command"
+      ? 1.62
+      : this.cameraPresentation === "macro"
+        ? 1.34
+        : 1;
     const viewHeight = 15.8 * this.zoom * portraitPullback * presentationPullback;
     this.camera.left = (-viewHeight * aspect) / 2;
     this.camera.right = (viewHeight * aspect) / 2;
@@ -7182,7 +7304,11 @@ class FreemanEngine {
         maxHp: agent.maxHp,
         x: agent.group.position.x,
         z: agent.group.position.z,
-        state: agent.repairDecision,
+        state: agent.disabledLeft > 0
+          ? "disabled"
+          : agent.gatheringTargetId
+            ? "gathering"
+            : agent.repairDecision,
       })),
       enemies: this.enemies.map((enemy) => ({
         id: enemy.id,
@@ -7226,14 +7352,12 @@ class FreemanEngine {
           }
         : null,
     });
+    const commandMap = getCommandMapMarkers(simulationView);
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
       watchSpeed: this.watchState.speed,
       watchPriority: this.watchState.priority as "survive" | "farm" | "expand",
-      cinemaPaused: this.cinemaState.paused,
-      cinemaSpeed: this.cinemaState.speed,
-      cinemaCleanView: this.cinemaState.cleanView,
       cinemaPaused: this.cinemaState.paused,
       cinemaSpeed: this.cinemaState.speed,
       cinemaCleanView: this.cinemaState.cleanView,
@@ -7298,6 +7422,7 @@ class FreemanEngine {
       terrainLabel: this.terrain.label,
       battlegroundId: this.battleground.id,
       qualityPreset: this.qualityPreset,
+      commandMap: [...commandMap],
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       recruitmentAdvice,
@@ -7543,6 +7668,10 @@ class FreemanCanvasEngine implements GameController {
   private battleground = getBattlegroundForWave(1);
   private cameraX = 0;
   private cameraZ = 0;
+  private cameraFocusId: string | null = null;
+  private cinemaTarget = { x: 0, z: 0 };
+  private hasCinemaTarget = false;
+  private cinemaHoldClock = 0;
   private width = 1;
   private height = 1;
   private pixelRatio = 1;
@@ -7624,6 +7753,9 @@ class FreemanCanvasEngine implements GameController {
     this.watchState = createWatchState();
     this.cinemaState = createCinemaState();
     this.watchDirectorState = createWatchDirectorState();
+    this.cameraPresentation = "macro";
+    this.hasCinemaTarget = false;
+    this.cinemaHoldClock = 0;
     this.resetMissionState();
     if (options.tutorial) {
       this.tutorialStep = "move";
@@ -7657,7 +7789,16 @@ class FreemanCanvasEngine implements GameController {
   }
 
   toggleCinemaCleanView() {
+    const wasClean = this.cinemaState.cleanView;
     this.cinemaState = toggleCinemaCleanView(this.cinemaState);
+    if (wasClean) this.cinemaHoldClock = 0.8;
+    else this.hasCinemaTarget = false;
+    this.emitHud(true);
+  }
+
+  focusCommandMarker(id: string) {
+    this.cameraFocusId = id || null;
+    this.cameraPresentation = "command";
     this.emitHud(true);
   }
 
@@ -7712,6 +7853,7 @@ class FreemanCanvasEngine implements GameController {
     this.dismissedEmpPrompt = false;
     this.empReadyPrompt = false;
     this.watchDirectorState = createWatchDirectorState();
+    this.cameraFocusId = null;
     this.playerAttackCooldownMultiplier = 1;
     this.upgradeStacks = { ...EMPTY_UPGRADE_STACKS };
     this.evolutions = { ...EMPTY_EVOLUTIONS };
@@ -8495,11 +8637,13 @@ class FreemanCanvasEngine implements GameController {
 
   setCameraPresentation(presentation: CameraPresentation) {
     this.cameraPresentation = presentation;
+    if (presentation !== "command") this.cameraFocusId = null;
   }
 
   resetCamera() {
     this.yaw = Math.PI / 4;
     this.zoom = 1;
+    this.cameraFocusId = null;
   }
 
   setTouchMovement(x: number, y: number) {
@@ -8603,7 +8747,6 @@ class FreemanCanvasEngine implements GameController {
     if (event.code === "KeyQ" || event.code === "ShiftLeft") this.dash();
     if (event.code === "KeyR") this.activateEmp();
     if (event.code === "KeyZ") this.rotateCamera(-1);
-    if (event.code === "KeyC") this.rotateCamera(1);
     if (event.code === "KeyF") this.resetCamera();
     if (event.code === "KeyB") {
       if (event.shiftKey) this.beginManualDefensePlacement();
@@ -8771,17 +8914,24 @@ class FreemanCanvasEngine implements GameController {
     this.updateQuality(delta * 1_000);
     this.elapsed += delta;
     if (isWatchMode(this.sessionMode)) {
-      this.cinemaState = tickCinemaState(this.cinemaState, delta * 1_000);
+      const cinemaDelta = this.mode === "playing" && !this.watchState.paused
+        ? delta * 1_000
+        : 0;
+      this.cinemaState = tickCinemaState(this.cinemaState, cinemaDelta);
       this.watchState = tickWatchState(
         this.watchState,
         delta * 1_000,
-        { visible: !document.hidden },
+        { visible: !document.hidden && !this.cinemaState.paused },
       );
     }
+    const presentationDelta = isWatchMode(this.sessionMode) &&
+      (this.watchState.paused || this.cinemaState.paused)
+      ? 0
+      : delta;
     if (!this.coOpPresentation && this.mode === "playing" && (!isWatchMode(this.sessionMode) || (!this.watchState.paused && !this.cinemaState.paused))) {
       this.updateGame(isWatchMode(this.sessionMode) ? delta * this.watchState.speed * this.cinemaState.speed : delta);
     }
-    this.updateEffects(delta);
+    this.updateEffects(presentationDelta);
     this.updateCamera(delta);
     this.draw();
   };
@@ -9240,7 +9390,10 @@ class FreemanCanvasEngine implements GameController {
         : null;
       const angle =
         (index / Math.max(1, count)) * Math.PI * 2 +
-        (intent === "support" ? this.elapsed * 0.18 : 0);
+        (isWatchMode(this.sessionMode) ? (this.cinemaState.elapsedMs / 1_000) * 0.22 : 0) +
+        (intent === "support"
+          ? (isWatchMode(this.sessionMode) ? this.cinemaState.elapsedMs / 1_000 : this.elapsed) * 0.18
+          : 0);
       const withdrawing = shouldWithdrawToRepairBay(
         agent.repairDecision,
         repairBay,
@@ -9978,12 +10131,90 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private updateCamera(delta: number) {
-    const targetX = this.core.x * 0.35 + this.player.x * 0.65;
-    const targetZ = this.core.z * 0.35 + this.player.z * 0.65;
+    const focus = this.getCameraFocusPosition();
+    let targetX = this.core.x * 0.35 + this.player.x * 0.65;
+    let targetZ = this.core.z * 0.35 + this.player.z * 0.65;
+    if (focus) {
+      targetX = focus.x;
+      targetZ = focus.z;
+      if (this.cinemaState.cleanView) {
+        this.cinemaTarget = { x: focus.x, z: focus.z };
+        this.hasCinemaTarget = true;
+      }
+    } else if (this.cinemaHoldClock > 0 && this.hasCinemaTarget) {
+      targetX = this.cinemaTarget.x;
+      targetZ = this.cinemaTarget.z;
+    }
     const ease = 1 - Math.exp(-delta * 4.2);
     this.cameraX += (targetX - this.cameraX) * ease;
     this.cameraZ += (targetZ - this.cameraZ) * ease;
+    if (
+      this.cinemaState.cleanView &&
+      this.mode === "playing" &&
+      !this.watchState.paused &&
+      !this.cinemaState.paused &&
+      !this.reducedMotion
+    ) {
+      this.yaw += delta * 0.045;
+    }
     this.shake = Math.max(0, this.shake - delta * 1.8);
+    this.cinemaHoldClock = Math.max(0, this.cinemaHoldClock - delta);
+  }
+
+  private getCameraFocusPosition() {
+    const focusId = this.cameraFocusId;
+    if (focusId === "core") return { x: this.core.x, z: this.core.z };
+    if (focusId === "repair-bay") return { x: this.repairBay.x, z: this.repairBay.z };
+    if (focusId === "compute-node") return { x: 3.1, z: 1.15 };
+    if (focusId === "north-breach") return { x: 0, z: -4 };
+    if (focusId === "south-breach") return { x: 0, z: 4 };
+    if (focusId === "boss-portal") return { x: 0, z: -6.45 };
+
+    if (focusId) {
+      const [kind, ...keyParts] = focusId.split("-");
+      const key = keyParts.join("-");
+      if (kind === "agent") {
+        const agent = this.agents.find((candidate) => candidate.id === key);
+        if (agent) return { x: agent.x, z: agent.z };
+      }
+      if (kind === "threat") {
+        const enemy = this.enemies.find((candidate) => String(candidate.id) === key);
+        if (enemy) return { x: enemy.x, z: enemy.z };
+      }
+      if (kind === "loot") {
+        const pickup = this.pickups.find((candidate) => candidate.id === key);
+        if (pickup) return { x: pickup.x, z: pickup.y };
+      }
+      if (kind === "sentry") {
+        const defenseKey = key.startsWith("sentry-") ? key.slice("sentry-".length) : key;
+        const defense = this.defenses.find((candidate) => String(candidate.index) === defenseKey);
+        if (defense) return { x: defense.x, z: defense.z };
+      }
+      if (focusId.startsWith("sub-agent-")) {
+        const subAgentKey = focusId.slice("sub-agent-".length);
+        const subAgent =
+          this.temporarySubAgents.find((candidate) => candidate.id === subAgentKey) ??
+          this.temporarySubAgents[Number(subAgentKey)];
+        if (subAgent) return { x: subAgent.x, z: subAgent.z };
+      }
+      if (kind === "boss") {
+        const boss = this.enemies.find((candidate) => candidate.bossState);
+        if (boss) return { x: boss.x, z: boss.z };
+      }
+    }
+
+    if (this.cinemaState.cleanView) {
+      const priorityBoss = this.enemies.find((enemy) => enemy.bossState);
+      if (priorityBoss) return { x: priorityBoss.x, z: priorityBoss.z };
+      const breachEnemy = this.enemies.find(
+        (enemy) => this.distance(enemy.x, enemy.z, this.core.x, this.core.z) <= 4.5,
+      );
+      if (breachEnemy) return { x: breachEnemy.x, z: breachEnemy.z };
+      const pickup = this.pickups[this.pickups.length - 1];
+      if (pickup) return { x: pickup.x, z: pickup.y };
+      return { x: this.core.x, z: this.core.z };
+    }
+    return null;
   }
 
   private spawnWave(wave: number) {
@@ -11082,7 +11313,11 @@ class FreemanCanvasEngine implements GameController {
     const sine = Math.sin(this.yaw);
     const cameraSpaceX = cosine * dx - sine * dz;
     const cameraSpaceZ = sine * dx + cosine * dz;
-    const presentationPullback = this.cameraPresentation === "macro" ? 1.34 : 1;
+    const presentationPullback = this.cameraPresentation === "command"
+      ? 1.62
+      : this.cameraPresentation === "macro"
+        ? 1.34
+        : 1;
     const scale = Math.min(this.width, this.height) / (25 * this.zoom * presentationPullback);
     return {
       x: this.width / 2 + cameraSpaceX * scale + shakeX,
@@ -11093,7 +11328,11 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private unproject(screenX: number, screenY: number) {
-    const presentationPullback = this.cameraPresentation === "macro" ? 1.34 : 1;
+    const presentationPullback = this.cameraPresentation === "command"
+      ? 1.62
+      : this.cameraPresentation === "macro"
+        ? 1.34
+        : 1;
     const scale = Math.min(this.width, this.height) / (25 * this.zoom * presentationPullback);
     const cameraSpaceX = (screenX - this.width / 2) / scale;
     const cameraSpaceZ = (screenY - this.height * 0.49) / (scale * 0.55);
@@ -12588,7 +12827,11 @@ class FreemanCanvasEngine implements GameController {
         maxHp: agent.maxHp,
         x: agent.x,
         z: agent.z,
-        state: agent.repairDecision,
+        state: agent.disabledLeft > 0
+          ? "disabled"
+          : agent.gatheringTargetId
+            ? "gathering"
+            : agent.repairDecision,
       })),
       enemies: this.enemies.map((enemy) => ({
         id: enemy.id,
@@ -12626,11 +12869,15 @@ class FreemanCanvasEngine implements GameController {
           }
         : null,
     });
+    const commandMap = getCommandMapMarkers(simulationView);
     this.callbacks.onHud({
       sessionMode: this.sessionMode,
       watchPaused: this.watchState.paused,
       watchSpeed: this.watchState.speed,
       watchPriority: this.watchState.priority as "survive" | "farm" | "expand",
+      cinemaPaused: this.cinemaState.paused,
+      cinemaSpeed: this.cinemaState.speed,
+      cinemaCleanView: this.cinemaState.cleanView,
       survivalMs: this.watchState.survivalMs,
       sessionIncome: { ...this.watchState.sessionIncome },
       lastAutonomyEvent: this.watchState.lastEvent,
@@ -12692,6 +12939,7 @@ class FreemanCanvasEngine implements GameController {
       terrainLabel: this.terrain.label,
       battlegroundId: this.battleground.id,
       qualityPreset: this.qualityPreset,
+      commandMap: [...commandMap],
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       recruitmentAdvice,
@@ -13251,18 +13499,76 @@ export default function FreemanProtocol({
     hud.tutorialStep !== "skipped"
       ? TUTORIAL_COPY[hud.tutorialStep]
       : null;
+  const cinemaActive = mode === "playing" && hud.sessionMode === "watch" && hud.cinemaCleanView;
+  const commandMapVisible = mode === "playing" && !coOpActive && cameraPresentation === "command";
+  const commandMapPosition = (x: number, z: number) => ({
+    left: `${Math.max(4, Math.min(96, 50 + x * 2.65))}%`,
+    top: `${Math.max(9, Math.min(91, 50 + z * 2.65))}%`,
+  });
+  const commandMapFixedIds = new Set([
+    "core",
+    "repair-bay",
+    "compute-node",
+    "north-breach",
+    "south-breach",
+    "boss-portal",
+  ]);
+  const commandMapReservedKinds = new Set(["agent", "sub-agent", "sentry", "boss"]);
+  const commandMapMarkerSort = (first: HudState["commandMap"][number], second: HudState["commandMap"][number]) =>
+    Number(commandMapFixedIds.has(second.id)) - Number(commandMapFixedIds.has(first.id)) ||
+    Number(commandMapReservedKinds.has(second.kind)) - Number(commandMapReservedKinds.has(first.kind)) ||
+    second.priority - first.priority;
+  const commandMapMarkers = [
+    ...hud.commandMap
+      .filter((marker) => commandMapFixedIds.has(marker.id) || commandMapReservedKinds.has(marker.kind))
+      .sort(commandMapMarkerSort),
+    ...hud.commandMap
+      .filter((marker) => !commandMapFixedIds.has(marker.id) && !commandMapReservedKinds.has(marker.kind))
+      .sort(commandMapMarkerSort),
+  ].slice(0, 64);
+  const cycleCinemaSpeed = () => {
+    const speeds = [0.5, 1, 2, 4];
+    const currentIndex = speeds.indexOf(hud.cinemaSpeed);
+    engineRef.current?.setCinemaSpeed(speeds[(currentIndex + 1) % speeds.length]);
+  };
+  const startGame = (options: StartOptions) => {
+    setCameraPresentation("macro");
+    engineRef.current?.start(options);
+  };
 
   useEffect(() => {
     const applyCameraPresentation = () => {
       const isMobile = window.matchMedia("(max-width: 820px)").matches;
       engineRef.current?.setCameraPresentation(
-        isMobile ? cameraPresentation : "macro",
+        isMobile || cameraPresentation === "command" ? cameraPresentation : "macro",
       );
     };
     applyCameraPresentation();
     window.addEventListener("resize", applyCameraPresentation);
     return () => window.removeEventListener("resize", applyCameraPresentation);
   }, [cameraPresentation]);
+
+  useEffect(() => {
+    const onCinemaKey = (event: KeyboardEvent) => {
+      if (mode !== "playing" || event.repeat) return;
+      if (event.code === "KeyC") {
+        if (coOpActive) return;
+        event.preventDefault();
+        setCameraPresentation((presentation) => presentation === "command" ? "macro" : "command");
+      }
+      if (hud.sessionMode !== "watch") return;
+      if (event.code === "KeyP") {
+        event.preventDefault();
+        engineRef.current?.toggleCinemaPause();
+      }
+      if (event.code === "KeyV") {
+        event.preventDefault();
+        engineRef.current?.toggleCinemaCleanView();
+      }
+    };
+    window.addEventListener("keydown", onCinemaKey);
+    return () => window.removeEventListener("keydown", onCinemaKey);
+  }, [coOpActive, hud.sessionMode, mode]);
 
   useEffect(() => {
     if (mode !== "playing") {
@@ -13291,13 +13597,62 @@ export default function FreemanProtocol({
   }, [hud.tutorialStep]);
 
   return (
-    <main className={`game-shell mode-${mode}`} data-co-op-authoritative={coOpActive || undefined}>
+    <main
+      className={`game-shell mode-${mode} ${cinemaActive ? "is-cinema" : ""} ${commandMapVisible ? "is-command-map" : ""}`}
+      data-co-op-authoritative={coOpActive || undefined}
+    >
       <canvas
         ref={canvasRef}
         className="game-canvas"
         tabIndex={0}
         aria-label="Freeman Protocol isometric combat arena"
       />
+
+      {commandMapVisible && (
+        <aside className="command-map-layer" aria-label="Command Map">
+          <div className="command-map-layer__header">
+            <span>
+              <small>COMMAND MAP</small>
+              <strong>{hud.battlegroundId.replaceAll("-", " ").toUpperCase()}</strong>
+            </span>
+            <button
+              type="button"
+              className="command-map-layer__close"
+              onClick={() => setCameraPresentation("macro")}
+            >
+              EXIT MAP
+            </button>
+          </div>
+          <div className="command-map-layer__legend" aria-label="Map legend">
+            <span><i className="is-core" />CORE</span>
+            <span><i className="is-repair" />REPAIR</span>
+            <span><i className="is-compute" />COMPUTE</span>
+            <span><i className="is-breach" />BREACH</span>
+            <span><i className="is-agent" />AGENT</span>
+            <span><i className="is-loot" />LOOT</span>
+            <span className="command-map-legend__optional"><i className="is-sentry" />SENTRY</span>
+            <span className="command-map-legend__optional"><i className="is-boss" />BOSS</span>
+            <span className="command-map-legend__optional"><i className="is-portal" />PORTAL</span>
+            <span className="command-map-legend__optional"><i className="is-threat" />THREAT</span>
+          </div>
+          <div className="command-map-layer__markers">
+            {commandMapMarkers.map((marker) => (
+              <button
+                key={marker.id}
+                type="button"
+                className={`command-map-marker command-map-marker--${marker.kind}`}
+                style={commandMapPosition(marker.x, marker.z)}
+                title={`${marker.label} · ${marker.status}`}
+                onClick={() => engineRef.current?.focusCommandMarker(marker.id)}
+              >
+                <i />
+                <small>{marker.label}</small>
+              </button>
+            ))}
+          </div>
+          <p className="command-map-layer__hint">Tap a marker to keep the battlefield in focus · C toggles map</p>
+        </aside>
+      )}
 
       {coOpActive && (
         <section className="co-op-world" aria-label="Authoritative co-op arena">
@@ -13463,6 +13818,16 @@ export default function FreemanProtocol({
 
         <div className="hud-actions">
           <a href="/asset-catalog">ASSET LEDGER</a>
+          {mode === "playing" && !coOpActive && hud.sessionMode !== "watch" && (
+            <button
+              type="button"
+              className="desktop-command-map-action"
+              aria-pressed={commandMapVisible}
+              onClick={() => setCameraPresentation(commandMapVisible ? "macro" : "command")}
+            >
+              {commandMapVisible ? "EXIT MAP" : "COMMAND MAP"}
+            </button>
+          )}
           <button type="button" onClick={openHelp}>
             CONTROLS
           </button>
@@ -13485,7 +13850,10 @@ export default function FreemanProtocol({
             <button
               type="button"
               className="watch-end-button"
-              onClick={() => engineRef.current?.endWatchRun()}
+              onClick={() => {
+                setCameraPresentation("macro");
+                engineRef.current?.endWatchRun();
+              }}
             >
               END RUN
             </button>
@@ -13494,7 +13862,10 @@ export default function FreemanProtocol({
             <button
               type="button"
               className="co-op-leave-button"
-              onClick={() => onCoOpLeave?.()}
+              onClick={() => {
+                setCameraPresentation("macro");
+                onCoOpLeave?.();
+              }}
             >
               END CO-OP RUN
             </button>
@@ -13661,7 +14032,7 @@ export default function FreemanProtocol({
               <div className="watch-panel__header">
                 <span>
                   <small>WATCH MODE</small>
-                  <strong>{hud.watchPaused ? "PAUSED" : "AUTONOMOUS RUNNING"}</strong>
+                    <strong>{hud.watchPaused || hud.cinemaPaused ? "PAUSED" : "AUTONOMOUS RUNNING"}</strong>
                 </span>
                 <span>
                   <small>SURVIVAL</small>
@@ -13736,11 +14107,86 @@ export default function FreemanProtocol({
                   ))}
                 </div>
               </div>
-              {hud.watchPaused && (
+              <div className="watch-panel__cinema-controls" aria-label="Cinema watch controls">
+                <div>
+                  <small>CINEMA SPEED</small>
+                  {[0.5, 1, 2, 4].map((speed) => (
+                    <button
+                      key={speed}
+                      type="button"
+                      className={hud.cinemaSpeed === speed ? "is-active" : ""}
+                      aria-pressed={hud.cinemaSpeed === speed}
+                      onClick={() => engineRef.current?.setCinemaSpeed(speed)}
+                    >
+                      {speed}X
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className={hud.cinemaPaused ? "is-active" : ""}
+                  aria-pressed={hud.cinemaPaused}
+                  onClick={() => engineRef.current?.toggleCinemaPause()}
+                >
+                  {hud.cinemaPaused ? "RESUME" : "PAUSE"}
+                </button>
+                <button
+                  type="button"
+                  className={hud.cinemaCleanView ? "is-active" : ""}
+                  aria-pressed={hud.cinemaCleanView}
+                  onClick={() => engineRef.current?.toggleCinemaCleanView()}
+                >
+                  {hud.cinemaCleanView ? "EXIT CINEMA" : "CINEMA"}
+                </button>
+                <button
+                  type="button"
+                  className={commandMapVisible ? "is-active" : ""}
+                  aria-pressed={commandMapVisible}
+                  onClick={() => setCameraPresentation(commandMapVisible ? "macro" : "command")}
+                >
+                  COMMAND MAP
+                </button>
+              </div>
+              {(hud.watchPaused || hud.cinemaPaused) && (
                 <p className="watch-panel__paused" role="status">
                   RUN PAUSED — RETURN TO RESUME
                 </p>
               )}
+            </aside>
+          )}
+
+          {cinemaActive && (
+            <aside className="cinema-status" aria-label="Cinema watch controls">
+              <span>
+                <small>CINEMA WATCH</small>
+                <strong>WAVE {hud.wave} · {hud.battlegroundId.replaceAll("-", " ").toUpperCase()}</strong>
+              </span>
+              <div className="cinema-status__actions">
+                <button
+                  type="button"
+                  aria-label={`Cinema speed ${hud.cinemaSpeed}X`}
+                  onClick={cycleCinemaSpeed}
+                >
+                  {hud.cinemaSpeed}X
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={commandMapVisible}
+                  onClick={() => setCameraPresentation(commandMapVisible ? "macro" : "command")}
+                >
+                  {commandMapVisible ? "EXIT MAP" : "MAP"}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={hud.cinemaPaused}
+                  onClick={() => engineRef.current?.toggleCinemaPause()}
+                >
+                  {hud.cinemaPaused ? "RESUME" : "PAUSE"}
+                </button>
+                <button type="button" className="cinema-exit" onClick={() => engineRef.current?.toggleCinemaCleanView()}>
+                  EXIT CINEMA
+                </button>
+              </div>
             </aside>
           )}
 
@@ -14031,14 +14477,22 @@ export default function FreemanProtocol({
           <button
             type="button"
             className="mobile-camera-toggle"
-            aria-pressed={cameraPresentation === "macro"}
-            onClick={() =>
-              setCameraPresentation((presentation) =>
-                presentation === "macro" ? "tactical" : "macro",
-              )
-            }
+            aria-label={`Camera presentation: ${cameraPresentation}. Tap to change view.`}
+            aria-pressed={cameraPresentation === "command"}
+            onClick={() => setCameraPresentation((presentation) => {
+              if (coOpActive) return presentation === "macro" ? "tactical" : "macro";
+              if (presentation === "macro") return "tactical";
+              if (presentation === "tactical") return "command";
+              return "macro";
+            })}
           >
-            {cameraPresentation === "macro" ? "TACTICAL VIEW" : "MACRO MAP"}
+            {coOpActive
+              ? cameraPresentation === "macro" ? "TACTICAL VIEW" : "MACRO MAP"
+              : cameraPresentation === "macro"
+                ? "TACTICAL VIEW"
+                : cameraPresentation === "tactical"
+                  ? "COMMAND MAP"
+                  : "MACRO MAP"}
           </button>
 
           <section
@@ -14418,9 +14872,7 @@ export default function FreemanProtocol({
             <button
               type="button"
               className="enter-button"
-              onClick={() =>
-                engineRef.current?.start({ tutorial: !tutorialComplete, mode: "campaign" })
-              }
+              onClick={() => startGame({ tutorial: !tutorialComplete, mode: "campaign" })}
             >
               <span>START CAMPAIGN</span>
               <i>→</i>
@@ -14428,9 +14880,7 @@ export default function FreemanProtocol({
             <button
               type="button"
               className="enter-button enter-button--watch"
-              onClick={() =>
-                engineRef.current?.start({ tutorial: false, mode: "watch" })
-              }
+              onClick={() => startGame({ tutorial: false, mode: "watch" })}
             >
               <span>START WATCH MODE</span>
               <i>◉</i>
@@ -14442,7 +14892,7 @@ export default function FreemanProtocol({
               <button
                 type="button"
                 className="intro-tutorial-button"
-                onClick={() => engineRef.current?.start({ tutorial: true })}
+                onClick={() => startGame({ tutorial: true })}
               >
                 PLAY TUTORIAL
               </button>
@@ -14723,7 +15173,7 @@ export default function FreemanProtocol({
           <button
             type="button"
             className={`enter-button enter-button--compact ${mode === "defeat" && hud.canRetryWave ? "enter-button--secondary" : ""}`}
-            onClick={() => engineRef.current?.start({ tutorial: false })}
+            onClick={() => startGame({ tutorial: false })}
           >
             <span>{mode === "victory" ? "PLAY AGAIN" : "RESTART MISSION"}</span>
             <i>→</i>
