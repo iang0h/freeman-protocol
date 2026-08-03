@@ -190,6 +190,10 @@ type AgentSkillAvailability = "ready" | "disabled" | "repair" | "retreat" | "off
 type SquadCommand = "auto" | "follow" | "defend" | "focus";
 type MobilePanel = "command" | "defend" | "skills";
 type CameraPresentation = "macro" | "tactical" | "command";
+type QualityMonitor = {
+  profile: "low" | "medium" | "high";
+  overBudgetFrames: number;
+};
 type RigAnimation = "idle" | "run" | "attack" | "hit" | "death" | "cheer";
 type CombatFeedbackEmphasis = "standard" | "strong" | "urgent";
 type UpgradeId =
@@ -1397,7 +1401,7 @@ class FreemanEngine {
   private readonly cinemaTarget = new THREE.Vector3();
   private hasCinemaTarget = false;
   private cinemaHoldClock = 0;
-  private qualityMonitor = createQualityMonitor("medium");
+  private qualityMonitor: QualityMonitor = createQualityMonitor("medium");
   private qualityPreset: "low" | "medium" | "high" = "medium";
   private battleground = getBattlegroundForWave(1);
   private readonly player: {
@@ -2907,7 +2911,7 @@ class FreemanEngine {
       this.scene.fog.color.set(palette.fog);
     }
     const grid = this.scene.getObjectByName("arena-grid");
-    if (!grid) return;
+    if (!(grid instanceof THREE.LineSegments)) return;
     const material = grid.material as THREE.LineBasicMaterial | THREE.LineBasicMaterial[];
     const materials = Array.isArray(material) ? material : [material];
     materials.forEach((entry) => entry.color.set(palette.grid));
@@ -7663,7 +7667,7 @@ class FreemanCanvasEngine implements GameController {
   private yaw = Math.PI / 4;
   private zoom = 1;
   private cameraPresentation: CameraPresentation = "tactical";
-  private qualityMonitor = createQualityMonitor("medium");
+  private qualityMonitor: QualityMonitor = createQualityMonitor("medium");
   private qualityPreset: "low" | "medium" | "high" = "medium";
   private battleground = getBattlegroundForWave(1);
   private cameraX = 0;

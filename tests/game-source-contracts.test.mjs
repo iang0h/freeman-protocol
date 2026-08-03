@@ -63,6 +63,21 @@ test("both renderers consume the shared quality, battleground, and snapshot help
   assert.match(game, /setCinemaSpeed/);
 });
 
+test("WebGL battleground theme narrows the arena grid before reading its material", () => {
+  assert.match(
+    webglGame,
+    /const grid = this\.scene\.getObjectByName\("arena-grid"\);[\s\S]*?if \(!\(grid instanceof THREE\.LineSegments\)\) return;[\s\S]*?grid\.material/,
+  );
+});
+
+test("quality monitor state widens the frame counter returned by the shared JS helper", () => {
+  assert.match(
+    game,
+    /type QualityMonitor = \{\s*profile: "low" \| "medium" \| "high";\s*overBudgetFrames: number;\s*\};/,
+  );
+  assert.equal((game.match(/private qualityMonitor: QualityMonitor = createQualityMonitor\("medium"\);/g) ?? []).length, 2);
+});
+
 test("cinema watch and command map controls stay explicit and keyboard reachable", () => {
   for (const label of ["COMMAND MAP", "CINEMA", "PAUSE", "EXIT CINEMA"]) {
     assert.match(game, new RegExp(label));
