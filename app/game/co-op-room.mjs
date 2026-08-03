@@ -6,6 +6,7 @@ import {
   parseServerMessage,
 } from "./co-op-protocol.mjs";
 import { applyCoOpAction, startCoOpSimulation, tickCoOpSimulation } from "./co-op-simulation.mjs";
+import { createEmpState } from "./emp-rules.mjs";
 
 export const RECONNECT_GRACE_MS = 30_000;
 export const ROOM_EVENT_LIMIT = 64;
@@ -41,6 +42,7 @@ function playerSlot(player, slot) {
     connected: false,
     ready: false,
     operator: { health: 100, maxHealth: 100, x: 0, y: 0, aimX: 0, aimY: 1 },
+    emp: createEmpState(),
     contribution: {},
     input: { moveX: 0, moveY: 0, aimX: 0, aimY: 1 },
     shootCooldownLeftMs: 0,
@@ -372,6 +374,7 @@ export function getSnapshot(room) {
         connected: player.connected,
         ready: player.ready,
         operator: player.operator,
+        emp: player.emp,
       })),
       core: room.core,
       resources: room.resources,

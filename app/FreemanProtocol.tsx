@@ -324,6 +324,12 @@ export type CoOpCombatSnapshot = {
         aimX: number;
         aimY: number;
       };
+      emp: {
+        charge: number;
+        maxCharge: number;
+        cooldownLeftMs: number;
+        cooldownMs: number;
+      };
     }>;
     enemies: Array<{ id: string; kind: string; health: number; maxHealth: number; x: number; y: number }>;
     loot: Array<{ id: string; type: string; value: number; x: number; y: number }>;
@@ -612,7 +618,7 @@ type EnemyRuntime = {
   armorBreakReduction: number;
   bossState: BossState | null;
   bossVisual: THREE.Group | null;
-  robotAnimate: (elapsed: number, delta: number, moving?: boolean) => void;
+  robotAnimate: (elapsed: number, delta: number, moving?: boolean, reducedMotion?: boolean) => void;
 };
 
 type ProjectileRuntime = {
@@ -895,6 +901,10 @@ const getRecruitmentNeed = ({
   if (operatorHp / Math.max(1, operatorMaxHp) <= 0.65) return "support";
   return activeThreatCount > 0 ? "assault" : null;
 };
+const formatRecruitmentCost = (cost: Readonly<RecruitmentResources> | null) =>
+  cost
+    ? `${Math.round(cost.compute)}C · ${Math.round(cost.components)} COMP · ${Math.round(cost.shards)} SHARDS`
+    : "NO COST DATA";
 const getArmorBonuses = (armorId: PlayerArmorId | null): ArmorBonuses =>
   armorId ? PLAYER_ARMORS[armorId].bonuses : {};
 const getComponentRank = (
@@ -1487,7 +1497,10 @@ class FreemanEngine {
         ? object.material
         : [object.material];
       const converted = materials.map((material) => {
-        if (!(material instanceof THREE.MeshStandardMaterial)) return material;
+        if (
+          !(material instanceof THREE.MeshStandardMaterial) ||
+          material.userData.keepStandard === true
+        ) return material;
         const toonMaterial = new THREE.MeshToonMaterial({
           color: material.color,
           map: material.map,
@@ -2266,7 +2279,7 @@ class FreemanEngine {
   }
 
   activateEmp() {
-    if (this.mode !== "playing" || !canFireEmp(this.empState)) return;
+    if (this.mode !== "playing" || this.intermissionClock > 0 || !this.waveActive || !canFireEmp(this.empState)) return;
     const pulse = fireEmp(this.empState, { baseDamage: EMP_BASE_DAMAGE });
     this.empState = pulse.state as EmpState;
     this.empReadyPrompt = false;
@@ -3620,7 +3633,13 @@ class FreemanEngine {
     if (bossState && !resistanceFlags.includes("armor")) {
       resistanceFlags.push("armor");
     }
-    const robotVisual = createLowPolyWarRobot(type, definition.color, definition.scale);
+    const enemyId = ++this.enemySequence;
+    const robotVisual = createLowPolyWarRobot(
+      type,
+      definition.color,
+      definition.scale,
+      enemyId * 0.73,
+    );
     const group = robotVisual.group;
     const body = robotVisual.body;
     group.position.copy(position);
@@ -3645,6 +3664,7 @@ class FreemanEngine {
     );
     threatRing.rotation.x = -Math.PI / 2;
     threatRing.position.y = 0.02;
+    threatRing.scale.setScalar(1 / definition.scale);
     group.add(threatRing);
 
     if (resistanceFlags.includes("jammer")) {
@@ -3665,6 +3685,7 @@ class FreemanEngine {
       jammerZone.name = "enemy-jammer-zone";
       jammerZone.rotation.x = -Math.PI / 2;
       jammerZone.position.y = 0.035;
+      jammerZone.scale.setScalar(1 / definition.scale);
       group.add(jammerZone);
     }
 
@@ -3683,7 +3704,16 @@ class FreemanEngine {
     }
 
     const healthBar = new THREE.Group();
-    healthBar.position.y = definition.radius * 2.25 + 0.48;
+    const robotOverlayY =
+      type === "rootkit"
+        ? 2.35
+        : type === "phisher"
+          ? 2.2
+          : type === "trojan"
+            ? 2.08
+            : 1.92;
+    healthBar.position.y = robotOverlayY;
+    healthBar.scale.setScalar(1 / definition.scale);
     const healthBack = new THREE.Mesh(
       new THREE.PlaneGeometry(1.25, 0.09),
       new THREE.MeshBasicMaterial({
@@ -3703,8 +3733,8 @@ class FreemanEngine {
     healthFill.position.z = 0.01;
     healthBar.add(healthBack, healthFill);
     if (bossState) {
-      healthBar.scale.x = 2.35;
-      healthBar.position.y = definition.radius * 2.25 + 0.82;
+      healthBar.scale.x = 2.35 / definition.scale;
+      healthBar.position.y = robotOverlayY + 0.42;
     }
     group.add(healthBar);
 
@@ -3722,9 +3752,10 @@ class FreemanEngine {
       cue.name = "enemy-resistance-cue";
       cue.position.set(
         (index - (resistanceFlags.length - 1) / 2) * 0.3,
-        definition.radius * 2.25 + 0.7,
+        robotOverlayY + 0.38,
         0,
       );
+      cue.scale.setScalar(1 / definition.scale);
       group.add(cue);
     });
 
@@ -3747,7 +3778,7 @@ class FreemanEngine {
         ? 1
         : Math.round(definition.hp * healthScale);
     const enemy: EnemyRuntime = {
-      id: ++this.enemySequence,
+      id: enemyId,
       type,
       group,
       body,
@@ -5230,7 +5261,12 @@ class FreemanEngine {
       }
     }
 
-    enemy.robotAnimate(this.elapsed, delta, result.boss.telegraphLeftMs === 0);
+    enemy.robotAnimate(
+      this.elapsed,
+      delta,
+      result.boss.telegraphLeftMs === 0,
+      this.reducedMotion,
+    );
     enemy.healthBar.quaternion.copy(this.camera.quaternion);
     const pendingTarget = getPendingBossTarget(result.boss, bossTargets);
     const movementTarget =
@@ -5348,6 +5384,7 @@ class FreemanEngine {
         this.elapsed,
         delta,
         distance > enemy.range * 0.72,
+        this.reducedMotion,
       );
       enemy.healthBar.quaternion.copy(this.camera.quaternion);
 
@@ -5417,27 +5454,13 @@ class FreemanEngine {
           1 +
           Math.sin((enemy.telegraphLeft / enemy.telegraphTotal) * Math.PI * 6) *
             0.08;
-        enemy.body.scale.setScalar(
-          pulse *
-            (enemy.type === "rootkit"
-              ? 2.05
-              : enemy.type === "trojan"
-                ? 1.26
-                : enemy.type === "phisher"
-                  ? 1.08
-                  : 1.02),
-        );
+        // The robot factory owns the definition scale on the parent group.
+        // Telegraphs should only pulse the local torso, otherwise the torso
+        // becomes permanently larger than its legs and overlays.
+        enemy.body.scale.setScalar(pulse);
         if (enemy.telegraphLeft <= 0) {
           enemy.cooldownLeft = enemy.attackCooldown;
-          enemy.body.scale.setScalar(
-            enemy.type === "rootkit"
-              ? 2.05
-              : enemy.type === "trojan"
-                ? 1.26
-                : enemy.type === "phisher"
-                  ? 1.08
-                  : 1.02,
-          );
+          enemy.body.scale.setScalar(1);
           if (enemy.type === "phisher") {
             if (enemy.resistanceFlags.includes("decoy")) {
               const hasActiveDecoys = this.enemies.some(
@@ -6958,7 +6981,7 @@ class FreemanEngine {
       });
     }
     this.previousRecruitmentAdvice = recruitmentAdvice;
-    const empReady = canFireEmp(this.empState);
+    const empReady = this.mode === "playing" && this.intermissionClock <= 0 && this.waveActive && canFireEmp(this.empState);
     if (!empReady) {
       this.empReadyPrompt = false;
       this.dismissedEmpPrompt = false;
@@ -8015,7 +8038,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   activateEmp() {
-    if (this.mode !== "playing" || !canFireEmp(this.empState)) return;
+    if (this.mode !== "playing" || this.intermissionClock > 0 || !this.waveActive || !canFireEmp(this.empState)) return;
     const pulse = fireEmp(this.empState, { baseDamage: EMP_BASE_DAMAGE });
     this.empState = pulse.state as EmpState;
     this.empReadyPrompt = false;
@@ -11786,10 +11809,11 @@ class FreemanCanvasEngine implements GameController {
     const recoilStrength = clamp01(enemy.hitFlash / 0.11);
     const displayX = enemy.x + enemy.hitRecoilX * recoilStrength;
     const displayZ = enemy.z + enemy.hitRecoilZ * recoilStrength;
+    const motionTime = this.reducedMotion ? 0 : this.elapsed;
     const point = this.project(
       displayX,
       displayZ,
-      enemy.radius + Math.sin(this.elapsed * 2.4 + enemy.id) * 0.05,
+      enemy.radius + Math.sin(motionTime * 2.4 + enemy.id) * 0.05,
     );
     const floor = this.project(displayX, displayZ);
     const baseSize = point.scale * enemy.radius;
@@ -11802,7 +11826,7 @@ class FreemanCanvasEngine implements GameController {
             ? "#b45d32"
             : "#a73d2d";
     const pulse =
-      enemy.telegraphLeft > 0 ? 1 + Math.sin(this.elapsed * 18) * 0.09 : 1;
+      enemy.telegraphLeft > 0 ? 1 + Math.sin(motionTime * 18) * 0.09 : 1;
     const size = baseSize * pulse;
     this.drawRobotEnemy(enemy, point, floor, size, color);
 
@@ -11855,10 +11879,15 @@ class FreemanCanvasEngine implements GameController {
   ) {
     const context = this.context;
     const robotColor = enemy.hitFlash > 0 ? "#fff0df" : color;
-    const armorColor = enemy.type === "rootkit" ? "#5e1718" : "#2b1519";
+    const armorColor = enemy.type === "rootkit"
+      ? "#5e1718"
+      : enemy.type === "trojan"
+        ? "#44242a"
+        : "#2b1519";
     const highlight = enemy.type === "phisher" ? "#ffc57c" : "#ff9f6d";
+    const motionTime = this.reducedMotion ? 0 : this.elapsed;
     const pulse = enemy.telegraphLeft > 0
-      ? 1 + Math.sin(this.elapsed * 18) * 0.08
+      ? 1 + Math.sin(motionTime * 18) * 0.08
       : 1;
     const bodyW = size * (enemy.type === "rootkit" ? 0.92 : 0.72) * pulse;
     const bodyH = size * (enemy.type === "rootkit" ? 0.92 : 0.8) * pulse;
@@ -11896,7 +11925,9 @@ class FreemanCanvasEngine implements GameController {
 
     // Legs and feet make the threat read as a moving war machine instead of
     // another floating gem. Their alternating stride mirrors the WebGL rig.
-    const stride = Math.sin(this.elapsed * (enemy.type === "rootkit" ? 4.4 : 8.5) + enemy.id) * size * 0.09;
+    const stride = this.reducedMotion
+      ? 0
+      : Math.sin(motionTime * (enemy.type === "rootkit" ? 4.4 : 8.5) + enemy.id) * size * 0.09;
     context.fillStyle = armorColor;
     drawPolygon([
       { x: point.x - bodyW * 0.38 + stride, y: point.y + bodyH * 0.35 },
@@ -11977,6 +12008,53 @@ class FreemanCanvasEngine implements GameController {
     context.beginPath();
     context.arc(point.x + bodyW * 1.48, point.y - bodyH, Math.max(2, size * 0.1), 0, Math.PI * 2);
     context.fill();
+
+    if (enemy.type === "virus") {
+      // Fast scout: lateral signal spikes make this silhouette distinct from
+      // the heavier armored classes in the Canvas fallback.
+      context.fillStyle = highlight;
+      drawPolygon([
+        { x: point.x - bodyW * 1.02, y: point.y - bodyH * 0.25 },
+        { x: point.x - bodyW * 1.62, y: point.y - bodyH * 0.55 },
+        { x: point.x - bodyW * 1.08, y: point.y + bodyH * 0.02 },
+      ]);
+      drawPolygon([
+        { x: point.x + bodyW * 1.02, y: point.y - bodyH * 0.25 },
+        { x: point.x + bodyW * 1.62, y: point.y - bodyH * 0.55 },
+        { x: point.x + bodyW * 1.08, y: point.y + bodyH * 0.02 },
+      ]);
+    } else if (enemy.type === "phisher") {
+      // Phishers broadcast a lure: a tall antenna and a bright signal node.
+      context.strokeStyle = highlight;
+      context.lineWidth = Math.max(2, size * 0.06);
+      context.beginPath();
+      context.moveTo(point.x, point.y - bodyH * 1.02);
+      context.lineTo(point.x, point.y - bodyH * 1.55);
+      context.stroke();
+      context.fillStyle = highlight;
+      context.beginPath();
+      context.arc(point.x, point.y - bodyH * 1.62, Math.max(2, size * 0.1), 0, Math.PI * 2);
+      context.fill();
+    } else if (enemy.type === "trojan") {
+      // Trojans carry a plated wedge and horns; the extra mass reads as a
+      // slow breach unit before the health bar is even visible.
+      context.fillStyle = armorColor;
+      drawPolygon([
+        { x: point.x - bodyW * 0.65, y: point.y + bodyH * 0.38 },
+        { x: point.x, y: point.y + bodyH * 0.8 },
+        { x: point.x + bodyW * 0.65, y: point.y + bodyH * 0.38 },
+        { x: point.x + bodyW * 0.45, y: point.y + bodyH * 0.08 },
+        { x: point.x - bodyW * 0.45, y: point.y + bodyH * 0.08 },
+      ]);
+      context.strokeStyle = highlight;
+      context.lineWidth = Math.max(2, size * 0.07);
+      for (const side of [-1, 1]) {
+        context.beginPath();
+        context.moveTo(point.x + side * headSize * 0.55, point.y - bodyH * 1.02);
+        context.lineTo(point.x + side * headSize * 0.95, point.y - bodyH * 1.38);
+        context.stroke();
+      }
+    }
 
     if (enemy.type === "rootkit") {
       context.globalAlpha *= 0.7;
@@ -12178,7 +12256,7 @@ class FreemanCanvasEngine implements GameController {
       });
     }
     this.previousRecruitmentAdvice = recruitmentAdvice;
-    const empReady = canFireEmp(this.empState);
+    const empReady = this.mode === "playing" && this.intermissionClock <= 0 && this.waveActive && canFireEmp(this.empState);
     if (!empReady) {
       this.empReadyPrompt = false;
       this.dismissedEmpPrompt = false;
@@ -12338,6 +12416,15 @@ export default function FreemanProtocol({
   const [coOpClock, setCoOpClock] = useState(0);
   const [previousCoOpSnapshot, setPreviousCoOpSnapshot] = useState<CoOpCombatSnapshot | null>(null);
   const [coOpSnapshotReceivedAt, setCoOpSnapshotReceivedAt] = useState(0);
+  const [coOpRecruitPromptDismissedKey, setCoOpRecruitPromptDismissedKey] = useState<string | null>(null);
+  const [coOpEmpPromptDismissedState, setCoOpEmpPromptDismissedState] = useState<{
+    sessionKey: string | null;
+    dismissed: boolean;
+  }>({ sessionKey: null, dismissed: false });
+  const [coOpEmpActionPendingSnapshot, setCoOpEmpActionPendingSnapshot] = useState<{
+    sessionKey: string | null;
+    snapshotId: number | null;
+  }>({ sessionKey: null, snapshotId: null });
 
   const coOpActive = Boolean(coOpPlayerId);
   const remoteCoOpPlayer = coOpSnapshot?.state.players.find(
@@ -12400,8 +12487,79 @@ export default function FreemanProtocol({
     top: `${Math.max(8, Math.min(92, 50 + y * 3.9))}%`,
   });
   const coOpRecruited = new Set(coOpSnapshot?.state.warband.agents ?? []);
-  const coOpCanAct = coOpActive && coOpConnectionState !== "reconnecting" && coOpSnapshot?.state.wave.status === "playing";
+  const coOpCanAct = coOpActive && coOpConnectionState === "playing" && coOpSnapshot?.state.wave.status === "playing";
   const coOpWarbandLimit = coOpSnapshot?.state.warband.maxAgents ?? 8;
+  const coOpEmpState = localCoOpPlayer?.emp ?? null;
+  const coOpEmpReady = Boolean(
+    coOpCanAct &&
+      coOpEmpState &&
+      canFireEmp(coOpEmpState),
+  );
+  const coOpBreachThreatCount = coOpSnapshot?.state.enemies.filter((enemy) =>
+    coOpCore
+      ? Math.hypot(enemy.x, enemy.y) <= 4.5
+      : false,
+  ).length ?? 0;
+  const coOpRecruitmentNeed = coOpSnapshot
+    ? getRecruitmentNeed({
+        coreHp: coOpCore?.health ?? 0,
+        coreMaxHp: coOpCore?.maxHealth ?? 1,
+        operatorHp: localCoOpPlayer?.operator.health ?? 0,
+        operatorMaxHp: localCoOpPlayer?.operator.maxHealth ?? 1,
+        breachThreatCount: coOpBreachThreatCount,
+        activeThreatCount: coOpSnapshot.state.enemies.length,
+      })
+    : null;
+  const coOpRecruitmentAdvice = coOpSnapshot
+    ? (getRecruitmentAdvice({
+        coreHp: coOpCore?.health ?? 0,
+        coreMaxHp: coOpCore?.maxHealth ?? 1,
+        operatorHp: localCoOpPlayer?.operator.health ?? 0,
+        operatorMaxHp: localCoOpPlayer?.operator.maxHealth ?? 1,
+        threatCount: coOpBreachThreatCount,
+        activeAgents: coOpRecruited.size,
+        maxAgents: coOpWarbandLimit,
+        compute: coOpResources?.compute ?? 0,
+        components: coOpResources?.components ?? 0,
+        shards: coOpResources?.shards ?? 0,
+        candidates: getRecruitmentCandidates(
+          coOpRecruited.size,
+          coOpRecruitmentNeed,
+        ),
+      }) as RecruitmentAdvice)
+    : null;
+  const coOpRecruitPromptAgentId =
+    coOpCanAct && coOpRecruitmentAdvice?.state === "recruit"
+      ? coOpRecruitmentAdvice.agentId
+      : null;
+  const coOpRecruitPromptKey = coOpRecruitPromptAgentId
+    ? `${coOpPlayerId ?? "co-op"}:${coOpRecruitPromptAgentId}`
+    : null;
+  const coOpRecruitPromptDismissed = coOpRecruitPromptKey !== null &&
+    coOpRecruitPromptDismissedKey === coOpRecruitPromptKey;
+  const coOpRecruitPrompt =
+    coOpRecruitPromptAgentId && !coOpRecruitPromptDismissed
+      ? coOpRecruitmentAdvice
+      : null;
+  const coOpEmpPromptSessionKey = coOpPlayerId ?? null;
+  const coOpEmpPromptDismissed = coOpEmpPromptDismissedState.sessionKey === coOpEmpPromptSessionKey &&
+    coOpEmpPromptDismissedState.dismissed;
+  const coOpSnapshotId = coOpSnapshot?.snapshotId ?? null;
+  const coOpEmpActionPending = coOpEmpActionPendingSnapshot.sessionKey === coOpEmpPromptSessionKey &&
+    coOpEmpActionPendingSnapshot.snapshotId !== null &&
+    coOpSnapshotId === coOpEmpActionPendingSnapshot.snapshotId;
+  const recruitPrompt = coOpActive ? coOpRecruitPrompt : hud.recruitPrompt;
+  const empPromptVisible = coOpActive
+    ? coOpEmpReady && !coOpEmpPromptDismissed && !coOpEmpActionPending
+    : mode === "playing" && hud.intermissionMs <= 0 && hud.empReadyPrompt;
+  const displayEmpCharge = coOpActive
+    ? coOpEmpState && coOpEmpState.maxCharge > 0
+      ? coOpEmpState.charge / coOpEmpState.maxCharge
+      : 0
+    : hud.empCharge;
+  const displayEmpCooldownLeftMs = coOpActive
+    ? coOpEmpState?.cooldownLeftMs ?? 0
+    : hud.empCooldownLeftMs;
   const toCoOpPriority = (command: SquadCommand): "follow" | "guard" | "focus" =>
     command === "defend" || command === "auto" ? "guard" : command;
   const displayHp = coOpActive ? Math.round(localCoOpPlayer?.operator.health ?? 0) : hud.hp;
@@ -12417,6 +12575,22 @@ export default function FreemanProtocol({
     if (!coOpActive) return false;
     return Boolean(onCoOpAction?.(action));
   }, [coOpActive, onCoOpAction]);
+
+  const triggerCoOpEmp = useCallback(() => {
+    if (!coOpEmpReady || coOpEmpActionPending) return false;
+    const sent = sendCoOpAction({ action: "emp" });
+    if (sent) {
+      setCoOpEmpActionPendingSnapshot({
+        sessionKey: coOpEmpPromptSessionKey,
+        snapshotId: coOpSnapshotId,
+      });
+      setCoOpEmpPromptDismissedState({
+        sessionKey: coOpEmpPromptSessionKey,
+        dismissed: false,
+      });
+    }
+    return sent;
+  }, [coOpEmpActionPending, coOpEmpPromptSessionKey, coOpEmpReady, coOpSnapshotId, sendCoOpAction]);
 
   useEffect(() => {
     recruitmentAdvisorChangeRef.current = onRecruitmentAdvisorChange;
@@ -12500,6 +12674,10 @@ export default function FreemanProtocol({
       coOpClient.sendInput({ moveX: 0, moveY: 0, aimX, aimY });
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "KeyR" && !event.repeat) {
+        triggerCoOpEmp();
+        return;
+      }
       if (!/^(KeyW|KeyA|KeyS|KeyD)$/.test(event.code)) return;
       pressed.add(event.code);
       sendInput();
@@ -12525,7 +12703,7 @@ export default function FreemanProtocol({
       canvas?.removeEventListener("pointerup", releaseCoOpTouch);
       canvas?.removeEventListener("pointercancel", releaseCoOpTouch);
     };
-  }, [coOpActive, coOpClient]);
+  }, [coOpActive, coOpClient, triggerCoOpEmp]);
 
   useEffect(() => {
     if (readStoredValue(TUTORIAL_STORAGE_KEY) !== "1") return;
@@ -12629,7 +12807,7 @@ export default function FreemanProtocol({
     const closing = overlayState.active === panel;
     const opening = overlayState.active === "closed";
 
-    if (hud.sessionMode === "campaign") {
+    if (hud.sessionMode === "campaign" && !coOpActive) {
       if (opening && mode === "playing") {
         engineRef.current?.togglePause();
         engineRef.current?.setCombatOverlayOpen(true);
@@ -12643,7 +12821,19 @@ export default function FreemanProtocol({
       }
     }
     onToggleOverlay(panel);
-  }, [hud.sessionMode, mode, onToggleOverlay, overlayState.active]);
+  }, [coOpActive, hud.sessionMode, mode, onToggleOverlay, overlayState.active]);
+
+  const focusRecruitment = (advice: RecruitmentAdvice, resources: RecruitmentResources) => {
+    onRecruitmentAdvisorChange({
+      recruitmentAdvice: advice,
+      resources,
+      sessionMode: hud.sessionMode,
+      watchPriority: hud.watchPriority,
+    });
+    setMobilePanel("command");
+    setMobileSquadOpen(true);
+    if (overlayState.active !== "warband") toggleCombatOverlay("warband");
+  };
 
   useEffect(() => {
     if (
@@ -12993,7 +13183,7 @@ export default function FreemanProtocol({
         </p>
       )}
 
-      {mode === "playing" && !coOpActive && hud.recruitPrompt && (
+      {mode === "playing" && recruitPrompt && (
         <aside
           className="combat-prompt combat-prompt--recruit"
           role="status"
@@ -13002,16 +13192,37 @@ export default function FreemanProtocol({
         >
           <div className="combat-prompt__copy">
             <small>AI RECRUIT READY</small>
-            <strong>{hud.recruitPrompt.title}</strong>
-            <span>{hud.recruitPrompt.detail}</span>
+            <strong>{recruitPrompt.title}</strong>
+            <span>{recruitPrompt.detail}</span>
+            <span className="combat-prompt__cost">
+              COST · {formatRecruitmentCost(recruitPrompt.cost)}
+            </span>
           </div>
           <button
             type="button"
             className="combat-prompt__action"
             onClick={() => {
-              const agentId = hud.recruitPrompt?.agentId;
-              if (agentId) engineRef.current?.recruit(agentId);
-              engineRef.current?.dismissRecruitPrompt();
+              if (!recruitPrompt?.agentId) return;
+              const advice = recruitPrompt;
+              focusRecruitment(
+                advice,
+                coOpActive
+                  ? {
+                      compute: coOpResources?.compute ?? 0,
+                      components: coOpResources?.components ?? 0,
+                      shards: coOpResources?.shards ?? 0,
+                    }
+                  : {
+                      compute: hud.data,
+                      components: hud.loot.components,
+                      shards: hud.loot.shards,
+                    },
+              );
+              if (coOpActive) {
+                if (coOpRecruitPromptKey) setCoOpRecruitPromptDismissedKey(coOpRecruitPromptKey);
+              } else {
+                engineRef.current?.dismissRecruitPrompt();
+              }
             }}
           >
             RECRUIT NOW
@@ -13020,14 +13231,20 @@ export default function FreemanProtocol({
             type="button"
             className="combat-prompt__dismiss"
             aria-label="Dismiss recruit prompt"
-            onClick={() => engineRef.current?.dismissRecruitPrompt()}
+            onClick={() => {
+              if (coOpActive) {
+                if (coOpRecruitPromptKey) setCoOpRecruitPromptDismissedKey(coOpRecruitPromptKey);
+              } else {
+                engineRef.current?.dismissRecruitPrompt();
+              }
+            }}
           >
             ×
           </button>
         </aside>
       )}
 
-      {mode === "playing" && hud.empReadyPrompt && (
+      {mode === "playing" && empPromptVisible && (
         <aside
           className="combat-prompt combat-prompt--emp"
           role="status"
@@ -13043,8 +13260,9 @@ export default function FreemanProtocol({
             type="button"
             className="combat-prompt__action"
             onClick={() => {
-              if (coOpActive) sendCoOpAction({ action: "emp" });
-              else engineRef.current?.activateEmp();
+              if (coOpActive) {
+                triggerCoOpEmp();
+              } else engineRef.current?.activateEmp();
             }}
           >
             EMP PULSE
@@ -13053,7 +13271,15 @@ export default function FreemanProtocol({
             type="button"
             className="combat-prompt__dismiss"
             aria-label="Dismiss EMP ready prompt"
-            onClick={() => engineRef.current?.dismissEmpPrompt()}
+            onClick={() => {
+              if (coOpActive) {
+                setCoOpEmpPromptDismissedState({
+                  sessionKey: coOpEmpPromptSessionKey,
+                  dismissed: true,
+                });
+              }
+              else engineRef.current?.dismissEmpPrompt();
+            }}
           >
             ×
           </button>
@@ -13735,27 +13961,28 @@ export default function FreemanProtocol({
             </button>
             <button
               type="button"
-              className={`ability ability--emp ${hud.empCharge >= 1 && hud.empCooldownLeftMs === 0 ? "is-ready" : ""}`}
+              className={`ability ability--emp ${displayEmpCharge >= 1 && displayEmpCooldownLeftMs === 0 ? "is-ready" : ""}`}
               onClick={() => {
                 if (coOpActive) {
-                  sendCoOpAction({ action: "emp" });
+                  triggerCoOpEmp();
                 } else {
                   engineRef.current?.activateEmp();
                 }
               }}
               disabled={
-                coOpActive ? !coOpCanAct :
+                coOpActive ? !coOpCanAct || !coOpEmpReady || coOpEmpActionPending :
                 mode !== "playing" ||
-                hud.empCharge < 1 ||
-                hud.empCooldownLeftMs > 0
+                hud.intermissionMs > 0 ||
+                displayEmpCharge < 1 ||
+                displayEmpCooldownLeftMs > 0
               }
               aria-label="EMP pulse"
             >
-              <i style={{ "--charge": hud.empCharge } as React.CSSProperties} />
+              <i style={{ "--charge": displayEmpCharge } as React.CSSProperties} />
               <small>
-                {hud.empCharge >= 1 && hud.empCooldownLeftMs === 0
+                {displayEmpCharge >= 1 && displayEmpCooldownLeftMs === 0
                   ? "R / READY"
-                  : `R / EMP COOLDOWN ${Math.ceil(hud.empCooldownLeftMs / 1_000)}S · ${Math.round(hud.empCharge * 100)}%`}
+                  : `R / EMP COOLDOWN ${Math.ceil(displayEmpCooldownLeftMs / 1_000)}S · ${Math.round(displayEmpCharge * 100)}%`}
               </small>
               <strong>EMP PULSE</strong>
             </button>

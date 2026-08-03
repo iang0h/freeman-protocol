@@ -137,6 +137,17 @@ test("combat prompts expose one-tap recruit and EMP actions", () => {
   assert.match(game, /sendCoOpAction\(\{ action: "emp" \}\)/);
   assert.match(game, /engineRef\.current\?\.activateEmp\(\)/);
   assert.match(empRules, /export function shouldShowEmpReadyPrompt/);
+  assert.match(game, /recruitPrompt\.cost/);
+  assert.match(game, /toggleCombatOverlay\("warband"\)/);
+  assert.match(game, /state\.players.*emp|localCoOpPlayer\?\.emp/);
+  assert.match(game, /intermissionMs === 0|intermissionClock <= 0/);
+});
+
+test("co-op prompt dismissal is keyed instead of synchronously reset in effects", () => {
+  assert.match(game, /coOpRecruitPromptDismissedKey/);
+  assert.match(game, /coOpEmpPromptDismissedState/);
+  assert.doesNotMatch(game, /useEffect\(\(\) => \{\s*setCoOpRecruitPromptDismissed\(false\);/);
+  assert.doesNotMatch(game, /useEffect\(\(\) => \{\s*if \(!coOpEmpReady\) setCoOpEmpPromptDismissed\(false\);/);
 });
 
 test("both renderers mark the shared arena zones and throttle the live zone HUD", () => {
@@ -222,6 +233,9 @@ test("war threats use readable low-poly robot silhouettes in both renderers", ()
   assert.match(webglGame, /robotVisual|robotAnimate|robot\.animate/);
   assert.match(canvasGame, /drawRobotEnemy\(/);
   assert.match(canvasGame, /drawRobotEnemy|robot-head|enemy-robot/);
+  assert.match(canvasGame, /robot-virus|robot-antenna|robot-horn|PHISHER/);
+  assert.match(threeResources, /reducedMotion/);
+  assert.match(webglGame, /this\.reducedMotion\)/);
 });
 
 test("dynamic WebGL objects use centralized cleanup and pooling", () => {

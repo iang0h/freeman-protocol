@@ -260,7 +260,7 @@ test("blocks duplicate co-op intents while reconnecting without persisting match
 test("disables combat controls while the authoritative socket is reconnecting", async () => {
   const combat = await readFile(new URL("../app/FreemanProtocol.tsx", import.meta.url), "utf8");
 
-  assert.match(combat, /const coOpCanAct = coOpActive && coOpConnectionState !== "reconnecting"/);
+  assert.match(combat, /const coOpCanAct = coOpActive && coOpConnectionState === "playing"/);
 });
 
 test("turns an active co-op leave into a local manual match summary", async () => {

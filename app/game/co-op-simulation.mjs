@@ -1,6 +1,6 @@
 import { canAffordMaterialCost, spendMaterialCost } from "./progression.mjs";
 import { resolveArmoredDamage } from "./combat-rules.mjs";
-import { createEmpState, fireEmp, tickEmp } from "./emp-rules.mjs";
+import { EMP_BASE_RADIUS, createEmpState, fireEmp, tickEmp } from "./emp-rules.mjs";
 import { applyLootPickup, canCollectLoot, rollLootDrop } from "./loot-rules.mjs";
 import { chooseAutonomousNetworkAction, repairCore } from "./autonomous-network-rules.mjs";
 import { PLAYER_RESERVE_BATCH_SIZE, canSpendTemporarySubAgent, clearSubAgents, spawnTemporarySubAgent, tickSubAgents } from "./autonomy-rules.mjs";
@@ -314,7 +314,9 @@ function tickBossState(state, elapsedMs) {
 export function applyCoOpAction(state, playerId, message) {
   const player = (state.players ?? []).find((entry) => entry.id === playerId);
   if (!player) return { state, error: actionError("UNKNOWN_PLAYER", "Player is not in this room") };
-  if (state.phase !== "playing") return { state, error: actionError("ROOM_NOT_PLAYING", "The room has not started") };
+  if (state.phase !== "playing" || state.wave?.status !== "playing") {
+    return { state, error: actionError("ROOM_NOT_PLAYING", "The room is not in active combat") };
+  }
 
   if (message.action === "shoot") {
     if (finite(player.shootCooldownLeftMs) > 0) return { state, error: actionError("ACTION_COOLDOWN", "Shoot is cooling down") };
@@ -326,7 +328,11 @@ export function applyCoOpAction(state, playerId, message) {
   if (message.action === "emp") {
     const fired = fireEmp(player.emp ?? createEmpState());
     if (fired.damage === 0) return { state, error: actionError("ACTION_COOLDOWN", "EMP is charging") };
-    const next = damageEnemies(state, (state.enemies ?? []).map((enemy) => enemy.id), fired.damage, playerId);
+    const origin = player.operator ?? { x: 0, y: 0 };
+    const targets = (state.enemies ?? [])
+      .filter((enemy) => Math.hypot(finite(enemy.x) - finite(origin.x), finite(enemy.y ?? enemy.z) - finite(origin.y)) <= EMP_BASE_RADIUS)
+      .map((enemy) => enemy.id);
+    const next = damageEnemies(state, targets, fired.damage, playerId);
     return { state: { ...next, players: next.players.map((entry) => entry.id === playerId ? { ...entry, emp: fired.state } : entry) }, error: null };
   }
 

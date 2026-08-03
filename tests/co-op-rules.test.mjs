@@ -228,6 +228,32 @@ test("starts only a two-player ready room without mutating earlier states", asyn
   assert.equal(started.wave.status, "playing");
 });
 
+test("authoritative snapshots expose and consume each player's EMP state", async () => {
+  const { applyClientMessage, createRoom, getSnapshot, joinRoom, setPlayerReady, startRoom } = await import("../app/game/co-op-room.mjs");
+  let room = createRoom({
+    roomCode: "ABC123",
+    seed: "emp-seed",
+    enemies: [{ id: "emp-target", kind: "virus", health: 20, maxHealth: 20, x: 1, y: 0 }],
+  });
+  room = joinRoom(room, { id: "p1", name: "Host" });
+  room = joinRoom(room, { id: "p2", name: "Guest" });
+  room = startRoom(setPlayerReady(setPlayerReady(room, "p1", true), "p2", true));
+
+  const ready = getSnapshot(room);
+  assert.equal(ready.state.players[0].emp.charge, ready.state.players[0].emp.maxCharge);
+  assert.equal(ready.state.players[0].emp.cooldownLeftMs, 0);
+
+  const fired = applyClientMessage(room, "p1", {
+    type: "action",
+    sequence: 1,
+    action: "emp",
+  });
+  assert.equal(fired.error, null);
+  const after = getSnapshot(fired.room);
+  assert.equal(after.state.players[0].emp.charge, 0);
+  assert.ok(after.state.players[0].emp.cooldownLeftMs > 0);
+});
+
 test("only the host can start a fully ready connected room", async () => {
   const { applyClientMessage, createRoom, getRoomMessage, joinRoom, setPlayerReady } = await import("../app/game/co-op-room.mjs");
   let room = createRoom({ roomCode: "ABC123", seed: "test-seed" });

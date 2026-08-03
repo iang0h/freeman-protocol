@@ -16,6 +16,12 @@ const PRIORITIES = new Set(["follow", "guard", "focus"]);
 const SERVER_EVENT_KINDS = new Set(["hit", "critical", "kill", "loot", "agent-task", "wave", "boss"]);
 const MATCH_RESULTS = new Set(["victory", "defeat", "abandoned"]);
 const WAVE_STATUSES = new Set(["waiting", "playing", "intermission", "ended"]);
+const EMP_DEFAULTS = Object.freeze({
+  charge: 100,
+  maxCharge: 100,
+  cooldownLeftMs: 0,
+  cooldownMs: 16_000,
+});
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
@@ -63,6 +69,17 @@ function canonicalizeResources(resources) {
   const values = ["compute", "components", "shards", "repairKits", "modules"];
   const result = Object.fromEntries(values.map((key) => [key, boundedNumber(resources[key], 0, Number.MAX_SAFE_INTEGER)]));
   return Object.values(result).every((value) => value !== null) ? result : null;
+}
+
+function canonicalizeEmpState(value) {
+  if (value === undefined) return { ...EMP_DEFAULTS };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const maxCharge = boundedNumber(value.maxCharge, 0, 1000);
+  const cooldownMs = boundedNumber(value.cooldownMs, 0, 120_000);
+  const cooldownLeftMs = boundedNumber(value.cooldownLeftMs, 0, cooldownMs ?? 0);
+  const charge = boundedNumber(value.charge, 0, maxCharge ?? 0);
+  if ([charge, maxCharge, cooldownLeftMs, cooldownMs].some((entry) => entry === null)) return null;
+  return { charge, maxCharge, cooldownLeftMs, cooldownMs };
 }
 
 function canonicalizeRuntimeEntity(value, fields) {
@@ -140,6 +157,8 @@ function canonicalizeSnapshot(state) {
     if (!operator || typeof operator !== "object" || Array.isArray(operator)) return null;
     const maxHealth = boundedNumber(operator.maxHealth, 1, 1000);
     if (maxHealth === null || boundedNumber(operator.health, 0, maxHealth) === null || [operator.x, operator.y].some((value) => boundedNumber(value, -10000, 10000) === null) || [operator.aimX, operator.aimY].some((value) => boundedNumber(value, -1, 1) === null)) return null;
+    const emp = canonicalizeEmpState(player.emp);
+    if (!emp) return null;
     return {
       slot,
       id: player.id === null ? null : optionalIdentifier(player.id),
@@ -154,6 +173,7 @@ function canonicalizeSnapshot(state) {
         aimX: operator.aimX,
         aimY: operator.aimY,
       },
+      emp,
     };
   });
   const core = state.core;
@@ -336,6 +356,7 @@ export function createEmptyCoOpSnapshot(seed) {
       connected: false,
       ready: false,
       operator: { health: 100, maxHealth: 100, x: 0, y: 0, aimX: 0, aimY: 1 },
+      emp: { ...EMP_DEFAULTS },
     })),
     core: { health: 180, maxHealth: 180 },
     resources: { compute: 0, components: 0, shards: 0, repairKits: 0, modules: 0 },

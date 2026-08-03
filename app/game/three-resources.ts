@@ -105,7 +105,7 @@ export type LowPolyWarRobotType = "virus" | "phisher" | "trojan" | "rootkit";
 export type LowPolyWarRobot = {
   group: THREE.Group;
   body: THREE.Mesh;
-  animate: (elapsed: number, delta: number, moving?: boolean) => void;
+  animate: (elapsed: number, delta: number, moving?: boolean, reducedMotion?: boolean) => void;
 };
 
 /**
@@ -132,7 +132,7 @@ const lowPolyRobotGeometry = <T extends THREE.BufferGeometry>(
 };
 
 function robotMaterial(color: number, emissive: number, intensity: number) {
-  return new THREE.MeshStandardMaterial({
+  const material = new THREE.MeshStandardMaterial({
     color,
     emissive,
     emissiveIntensity: intensity,
@@ -140,6 +140,12 @@ function robotMaterial(color: number, emissive: number, intensity: number) {
     metalness: 0.68,
     flatShading: true,
   });
+  // Preserve these materials through the scene's toon pass so hit flashes
+  // can continue to use MeshStandardMaterial emissive feedback. It also
+  // avoids replacing a per-robot material every time an endless watch wave
+  // spawns and disposes a threat.
+  material.userData.keepStandard = true;
+  return material;
 }
 
 function robotAccentMaterial(color: number) {
@@ -150,6 +156,7 @@ export function createLowPolyWarRobot(
   type: LowPolyWarRobotType,
   color: number,
   scale = 1,
+  phase = 0,
 ): LowPolyWarRobot {
   const group = new THREE.Group();
   group.name = `enemy-robot-${type}`;
@@ -232,7 +239,7 @@ export function createLowPolyWarRobot(
 
   if (type === "trojan" || type === "rootkit") {
     const hornGeometry = lowPolyRobotGeometry(
-      "horn",
+      `horn-${type}`,
       () => new THREE.ConeGeometry(type === "rootkit" ? 0.15 : 0.1, type === "rootkit" ? 0.5 : 0.34, 5),
     );
     for (const side of [-1, 1]) {
@@ -241,6 +248,20 @@ export function createLowPolyWarRobot(
       horn.position.set(side * 0.2, 1.77, 0);
       horn.rotation.z = side * -0.22;
       group.add(horn);
+    }
+  }
+
+  if (type === "virus") {
+    const spikeGeometry = lowPolyRobotGeometry(
+      "virus-spike",
+      () => new THREE.ConeGeometry(0.07, 0.34, 5),
+    );
+    for (const side of [-1, 1]) {
+      const spike = new THREE.Mesh(spikeGeometry, robotAccentMaterial(hot));
+      spike.name = `robot-virus-spike-${side < 0 ? "left" : "right"}`;
+      spike.position.set(side * 0.57, 1.08, -0.08);
+      spike.rotation.z = side * -Math.PI / 2;
+      group.add(spike);
     }
   }
 
@@ -265,14 +286,17 @@ export function createLowPolyWarRobot(
     group.add(shield);
   }
 
-  const animate = (elapsed: number, delta: number, moving = true) => {
-    const stride = moving ? Math.sin(elapsed * (type === "rootkit" ? 4.4 : 8.5)) * 0.34 : 0;
+  const animate = (elapsed: number, delta: number, moving = true, reducedMotion = false) => {
+    const motionTime = reducedMotion ? 0 : elapsed + phase;
+    const stride = moving && !reducedMotion
+      ? Math.sin(motionTime * (type === "rootkit" ? 4.4 : 8.5)) * 0.34
+      : 0;
     leftLeg.rotation.x = stride;
     rightLeg.rotation.x = -stride;
-    torso.position.y = 0.9 + (moving ? Math.abs(Math.sin(elapsed * 8.5)) * 0.035 : Math.sin(elapsed * 2) * 0.012);
-    weapon.rotation.x = Math.sin(elapsed * 5.2) * 0.025;
+    torso.position.y = 0.9 + (moving && !reducedMotion ? Math.abs(Math.sin(motionTime * 8.5)) * 0.035 : 0);
+    weapon.rotation.x = reducedMotion ? 0 : Math.sin(motionTime * 5.2) * 0.025;
     const bossShield = group.getObjectByName("robot-boss-shield");
-    if (bossShield) bossShield.rotation.z += delta * 0.75;
+    if (bossShield && !reducedMotion) bossShield.rotation.z += delta * 0.75;
   };
 
   group.traverse((object) => {
