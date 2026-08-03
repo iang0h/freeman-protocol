@@ -56,6 +56,9 @@ test("catalog source defines the living network sections and reusable cards", as
   assert.match(catalog, /function LootCard/);
   assert.match(catalog, />Live Agents</);
   assert.match(catalog, />Threat Archive</);
+  assert.match(catalog, /war-robot-threat\.webp/);
+  assert.match(catalog, /alt="Low-poly armored Freeman Protocol war robot/);
+  assert.match(catalog, />War Robots</);
   assert.match(catalog, />Field Components</);
   assert.match(catalog, />Armor Profiles</);
   assert.match(catalog, />Elite Recovery</);
@@ -73,6 +76,7 @@ test("catalog source defines the living network sections and reusable cards", as
   assert.match(styles, /--loot-amber:\s*#d8a14b/);
   assert.match(styles, /--loot-violet:\s*#a78bfa/);
   assert.match(styles, /\.progressionGrid/);
+  assert.match(styles, /\.threatFeature/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 

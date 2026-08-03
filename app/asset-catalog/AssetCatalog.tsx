@@ -438,6 +438,25 @@ export default function AssetCatalog() {
           </div>
           <p>Signatures are prioritised by their ability to reach the Core.</p>
         </div>
+        <article className={styles.threatFeature}>
+          <div className={styles.threatFeatureArt}>
+            <img
+              src="/asset-catalog/war-robot-threat.webp"
+              alt="Low-poly armored Freeman Protocol war robot with an orange sensor core"
+              loading="lazy"
+            />
+          </div>
+          <div className={styles.threatFeatureCopy}>
+            <SignalBadge label="NEW VISUAL LANGUAGE · LOW-POLY 3D" tone="red" />
+            <h3>War Robots</h3>
+            <p>
+              Threats now read as armored machines in motion: sensor cores, plated
+              silhouettes, weapon arms and boss-grade shielding. This concept sets
+              the visual target for the realtime robot rigs in the arena.
+            </p>
+            <span>RUNTIME // PROCEDURAL MESH · CATALOG // IMAGEGEN CONCEPT</span>
+          </div>
+        </article>
         <div className={styles.threatGrid}>
           {threatEntries.map((threat, index) => (
             <article className={styles.threatCard} data-tone={threat.tone} key={threat.id}>
