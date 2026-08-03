@@ -11862,7 +11862,6 @@ class FreemanCanvasEngine implements GameController {
       : 1;
     const bodyW = size * (enemy.type === "rootkit" ? 0.92 : 0.72) * pulse;
     const bodyH = size * (enemy.type === "rootkit" ? 0.92 : 0.8) * pulse;
-    const legW = Math.max(3, size * 0.17);
     const legH = size * 0.62;
     const drawPolygon = (points: Array<{ x: number; y: number }>) => {
       context.beginPath();

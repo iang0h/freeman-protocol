@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useState } from "react";
 import styles from "./AssetCatalog.module.css";
 
@@ -440,9 +441,11 @@ export default function AssetCatalog() {
         </div>
         <article className={styles.threatFeature}>
           <div className={styles.threatFeatureArt}>
-            <img
+            <Image
               src="/asset-catalog/war-robot-threat.webp"
               alt="Low-poly armored Freeman Protocol war robot with an orange sensor core"
+              fill
+              sizes="(max-width: 720px) 100vw, 38vw"
               loading="lazy"
             />
           </div>
