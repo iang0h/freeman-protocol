@@ -101,11 +101,16 @@ import {
   rollLootDrop,
 } from "./game/loot-rules.mjs";
 import {
+  SUB_AGENT_GLOBAL_CAP,
   SUB_AGENT_MATERIAL_COST,
+  SUB_AGENT_SPAWN_COOLDOWN_MS,
   PLAYER_RESERVE_BATCH_SIZE,
   clearSubAgents,
+  createSubAgentSpawnState,
   decideAgentIntent,
+  getSubAgentSpawnDecision,
   spawnTemporarySubAgent,
+  tickSubAgentSpawnState,
   tickTemporarySubAgent,
 } from "./game/autonomy-rules.mjs";
 import { WAVE_INTERMISSION_MS, tickWaveIntermission } from "./game/wave-rules.mjs";
@@ -1385,6 +1390,7 @@ class FreemanEngine {
   private readonly enemies: EnemyRuntime[] = [];
   private readonly agents: AgentRuntime[] = [];
   private autonomyState: Partial<Record<AgentId, AutonomyIntent>> = {};
+  private subAgentSpawnState: Partial<Record<AgentId, { cooldownLeftMs: number }>> = {};
   private autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
   private temporarySubAgents: WebglTemporarySubAgent[] = [];
   private readonly defenses: DefenseRuntime[] = [];
@@ -4905,18 +4911,33 @@ class FreemanEngine {
   private maybeSpawnTemporarySubAgent(
     agent: AgentRuntime,
     intent: AutonomyIntent,
+    elapsedMs = 0,
   ) {
-    const previous = this.autonomyState[agent.id];
-    if (intent !== "improvise") {
-      this.autonomyState[agent.id] = intent;
-      return;
-    }
-    if (previous === "improvise") return;
+    const spawnState = tickSubAgentSpawnState(
+      this.subAgentSpawnState[agent.id] ?? createSubAgentSpawnState(),
+      elapsedMs,
+    );
+    this.subAgentSpawnState[agent.id] = spawnState;
+    this.autonomyState[agent.id] = intent;
+    if (intent !== "improvise") return;
     const spendableMaterials = getSpendableWarbandMaterials({
       components: this.loot.components,
       shards: this.loot.shards,
       warband: this.agents.map((candidate) => candidate.id),
     });
+    const pressure = this.enemies.length / this.activeEnemyLimit;
+    const decision = getSubAgentSpawnDecision({
+      pressure,
+      activeChildren: this.temporarySubAgents.filter(
+        (subAgent) => subAgent.parentId === agent.id,
+      ).length,
+      totalActive: this.temporarySubAgents.length,
+      materials: spendableMaterials,
+      cooldownLeftMs: spawnState.cooldownLeftMs,
+      maxPerParent: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
+      globalCap: SUB_AGENT_GLOBAL_CAP,
+    });
+    if (!decision.allowed) return;
     const spawned = spawnTemporarySubAgent(
       { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
       {
@@ -4952,7 +4973,9 @@ class FreemanEngine {
       agent.color,
       8,
     );
-    this.autonomyState[agent.id] = intent;
+    this.subAgentSpawnState[agent.id] = {
+      cooldownLeftMs: SUB_AGENT_SPAWN_COOLDOWN_MS,
+    };
     this.callbacks.onToast({
       eyebrow: "TEMPORARY SUB-AGENT DEPLOYED",
       title: `${agent.name} DEPLOYED ${spawned.role.toUpperCase()} SUPPORT`,
@@ -4971,6 +4994,7 @@ class FreemanEngine {
     }
     this.temporarySubAgents = clearSubAgents() as WebglTemporarySubAgent[];
     this.autonomyState = {};
+    this.subAgentSpawnState = {};
   }
 
   private updateAgents(delta: number) {
@@ -5186,7 +5210,7 @@ class FreemanEngine {
         }
       }
 
-      this.maybeSpawnTemporarySubAgent(agent, roleIntent);
+      this.maybeSpawnTemporarySubAgent(agent, roleIntent, delta * 1_000);
 
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
@@ -7656,6 +7680,7 @@ class FreemanCanvasEngine implements GameController {
   private readonly enemies: FlatEnemy[] = [];
   private readonly agents: FlatAgent[] = [];
   private autonomyState: Partial<Record<AgentId, AutonomyIntent>> = {};
+  private subAgentSpawnState: Partial<Record<AgentId, { cooldownLeftMs: number }>> = {};
   private autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
   private temporarySubAgents: FlatTemporarySubAgent[] = [];
   private readonly defenses: FlatDefense[] = [];
@@ -9326,18 +9351,33 @@ class FreemanCanvasEngine implements GameController {
   private maybeSpawnTemporarySubAgent(
     agent: FlatAgent,
     intent: AutonomyIntent,
+    elapsedMs = 0,
   ) {
-    const previous = this.autonomyState[agent.id];
-    if (intent !== "improvise") {
-      this.autonomyState[agent.id] = intent;
-      return;
-    }
-    if (previous === "improvise") return;
+    const spawnState = tickSubAgentSpawnState(
+      this.subAgentSpawnState[agent.id] ?? createSubAgentSpawnState(),
+      elapsedMs,
+    );
+    this.subAgentSpawnState[agent.id] = spawnState;
+    this.autonomyState[agent.id] = intent;
+    if (intent !== "improvise") return;
     const spendableMaterials = getSpendableWarbandMaterials({
       components: this.loot.components,
       shards: this.loot.shards,
       warband: this.agents.map((candidate) => candidate.id),
     });
+    const pressure = this.enemies.length / this.activeEnemyLimit;
+    const decision = getSubAgentSpawnDecision({
+      pressure,
+      activeChildren: this.temporarySubAgents.filter(
+        (subAgent) => subAgent.parentId === agent.id,
+      ).length,
+      totalActive: this.temporarySubAgents.length,
+      materials: spendableMaterials,
+      cooldownLeftMs: spawnState.cooldownLeftMs,
+      maxPerParent: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
+      globalCap: SUB_AGENT_GLOBAL_CAP,
+    });
+    if (!decision.allowed) return;
     const spawned = spawnTemporarySubAgent(
       { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
       {
@@ -9366,7 +9406,9 @@ class FreemanCanvasEngine implements GameController {
     });
     this.addRing(agent.x, agent.z, agent.color, 0.12, 1.4, 0.28);
     this.addBurst(agent.x, agent.z, agent.color, 8);
-    this.autonomyState[agent.id] = intent;
+    this.subAgentSpawnState[agent.id] = {
+      cooldownLeftMs: SUB_AGENT_SPAWN_COOLDOWN_MS,
+    };
     this.callbacks.onToast({
       eyebrow: "TEMPORARY SUB-AGENT DEPLOYED",
       title: `${agent.name} DEPLOYED ${spawned.role.toUpperCase()} SUPPORT`,
@@ -9378,6 +9420,7 @@ class FreemanCanvasEngine implements GameController {
   private clearTemporarySubAgents() {
     this.temporarySubAgents = clearSubAgents() as FlatTemporarySubAgent[];
     this.autonomyState = {};
+    this.subAgentSpawnState = {};
   }
 
   private updateAgents(delta: number) {
@@ -9544,7 +9587,7 @@ class FreemanCanvasEngine implements GameController {
           this.emitHud(true);
         }
       }
-      this.maybeSpawnTemporarySubAgent(agent, roleIntent);
+      this.maybeSpawnTemporarySubAgent(agent, roleIntent, delta * 1_000);
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
         const aegis = this.evolutions.covenant === "aegis-relay";

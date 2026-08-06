@@ -703,6 +703,23 @@ test("temporary autonomous sub-agents are bounded, rendered, expired, and reset"
   }
 });
 
+test("both renderers schedule recurring autonomous sub-agent bursts without edge-trigger stalls", () => {
+  assert.match(game, /SUB_AGENT_GLOBAL_CAP/);
+  assert.match(game, /SUB_AGENT_SPAWN_COOLDOWN_MS/);
+  assert.match(game, /getSubAgentSpawnDecision/);
+  assert.match(game, /tickSubAgentSpawnState/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private subAgentSpawnState/);
+    assert.match(engine, /tickSubAgentSpawnState\(/);
+    assert.match(engine, /getSubAgentSpawnDecision\(/);
+    assert.match(engine, /activeChildren:[\s\S]*?totalActive:/);
+    assert.match(engine, /cooldownLeftMs: spawnState\.cooldownLeftMs/);
+    assert.match(engine, /cooldownLeftMs: SUB_AGENT_SPAWN_COOLDOWN_MS/);
+    assert.doesNotMatch(engine, /if \(previous === "improvise"\) return/);
+    assert.match(engine, /this\.maybeSpawnTemporarySubAgent\(agent, roleIntent, delta \* 1_000\)/);
+  }
+});
+
 test("both renderers credit pending material drops before wave cleanup", () => {
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
