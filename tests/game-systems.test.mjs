@@ -68,6 +68,10 @@ import {
   resolveEmpDamage,
 } from "../app/game/encounter-rules.mjs";
 import {
+  createMovementWatchdogState,
+  resolveEnemyAdvance,
+} from "../app/game/enemy-movement-rules.mjs";
+import {
   EMP_BASE_DAMAGE,
   EMP_BASE_RADIUS,
   canFireEmp,
@@ -164,6 +168,75 @@ import {
   getCommandMapMarkers,
   getCombatEffectBudget,
 } from "../app/game/combat-presentation-rules.mjs";
+
+test("enemy route bias retains inward progress and fades near arrival", () => {
+  const far = resolveEnemyAdvance(
+    {
+      position: { x: 0, z: 0 },
+      target: { id: "core", x: 10, z: 0 },
+      routeBias: 0.3,
+      arrivalDistance: 1,
+      watchdog: createMovementWatchdogState(),
+    },
+    100,
+  );
+  const near = resolveEnemyAdvance(
+    {
+      position: { x: 8.9, z: 0 },
+      target: { id: "core", x: 10, z: 0 },
+      routeBias: 0.3,
+      arrivalDistance: 1,
+      watchdog: createMovementWatchdogState(),
+    },
+    100,
+  );
+  assert.ok(far.vector.x > 0);
+  assert.ok(near.vector.x > 0.95);
+});
+
+test("enemy watchdog forces direct convergence after radial progress stalls", () => {
+  let result = resolveEnemyAdvance(
+    {
+      position: { x: 0, z: 0 },
+      target: { id: "core", x: 10, z: 0 },
+      routeBias: 0.3,
+      arrivalDistance: 1,
+      watchdog: createMovementWatchdogState(),
+    },
+    100,
+  );
+  for (let index = 0; index < 16; index += 1) {
+    result = resolveEnemyAdvance(
+      {
+        position: { x: 0, z: 0 },
+        target: { id: "core", x: 10, z: 0 },
+        routeBias: 0.3,
+        arrivalDistance: 1,
+        watchdog: result.watchdog,
+      },
+      100,
+    );
+  }
+  assert.equal(result.forcedDirect, true);
+  assert.equal(result.vector.z, 0);
+  assert.equal(result.vector.x, 1);
+});
+
+test("changing an enemy target resets the stall timer", () => {
+  const result = resolveEnemyAdvance(
+    {
+      position: { x: 0, z: 0 },
+      target: { id: "agent", x: 0, z: 10 },
+      routeBias: 0.3,
+      arrivalDistance: 1,
+      watchdog: { targetId: "core", lastDistance: 10, stalledMs: 1400 },
+    },
+    100,
+  );
+  assert.equal(result.forcedDirect, false);
+  assert.equal(result.watchdog.targetId, "agent");
+  assert.equal(result.watchdog.stalledMs, 0);
+});
 
 async function loadRepairRules() {
   return import("../app/game/repair-rules.mjs");
