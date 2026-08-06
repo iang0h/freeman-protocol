@@ -49,11 +49,16 @@ import {
 } from "../app/game/loot-rules.mjs";
 import {
   AGENT_ROLES,
+  SUB_AGENT_GLOBAL_CAP,
   SUB_AGENT_MATERIAL_COST,
+  SUB_AGENT_SPAWN_COOLDOWN_MS,
   clearSubAgents,
+  createSubAgentSpawnState,
   decideAgentIntent,
+  getSubAgentSpawnDecision,
   shouldImprovise,
   spawnTemporarySubAgent,
+  tickSubAgentSpawnState,
   tickTemporarySubAgent,
   tickSubAgents,
 } from "../app/game/autonomy-rules.mjs";
@@ -1841,6 +1846,67 @@ test("autonomous agents use their role priorities when not improvising", () => {
   assert.equal(decideAgentIntent({ role: "assault" }, {}), "assault");
   assert.equal(decideAgentIntent({ role: "support" }, {}), "support");
   assert.equal(decideAgentIntent({ role: "defend" }, {}), "defend");
+});
+
+test("sub-agent cadence allows a pressure burst only when resources and caps permit", () => {
+  assert.deepEqual(createSubAgentSpawnState(), { cooldownLeftMs: 0 });
+  assert.deepEqual(
+    getSubAgentSpawnDecision({
+      pressure: 0.8,
+      activeChildren: 1,
+      totalActive: 3,
+      materials: { components: 1, shards: 1 },
+      cooldownLeftMs: 0,
+    }),
+    { allowed: true, reason: "ready" },
+  );
+  assert.equal(
+    getSubAgentSpawnDecision({
+      pressure: 0.8,
+      activeChildren: 1,
+      totalActive: 3,
+      materials: { components: 1, shards: 1 },
+      cooldownLeftMs: 10,
+    }).allowed,
+    false,
+  );
+  assert.equal(
+    getSubAgentSpawnDecision({
+      pressure: 0.8,
+      activeChildren: 4,
+      totalActive: 3,
+      materials: { components: 1, shards: 1 },
+      cooldownLeftMs: 0,
+    }).reason,
+    "parent-cap",
+  );
+  assert.equal(
+    getSubAgentSpawnDecision({
+      pressure: 0.8,
+      activeChildren: 1,
+      totalActive: SUB_AGENT_GLOBAL_CAP,
+      materials: { components: 1, shards: 1 },
+      cooldownLeftMs: 0,
+    }).reason,
+    "global-cap",
+  );
+  assert.equal(
+    getSubAgentSpawnDecision({
+      pressure: 0.4,
+      activeChildren: 1,
+      totalActive: 3,
+      materials: { components: 1, shards: 1 },
+      cooldownLeftMs: 0,
+    }).reason,
+    "low-pressure",
+  );
+  assert.equal(
+    tickSubAgentSpawnState(
+      { cooldownLeftMs: SUB_AGENT_SPAWN_COOLDOWN_MS },
+      500,
+    ).cooldownLeftMs,
+    2300,
+  );
 });
 
 test("each role has a deterministic improvisation threshold", () => {

@@ -14,6 +14,8 @@ export const AGENT_ROLES = Object.freeze({
 });
 
 const DEFAULT_MAX_SUB_AGENTS = 4;
+export const SUB_AGENT_GLOBAL_CAP = 16;
+export const SUB_AGENT_SPAWN_COOLDOWN_MS = 2_800;
 const MAX_SUB_AGENT_LIFETIME_TIER = 2;
 const SUB_AGENT_LIFETIME_MS = Object.freeze([10_000, 15_000, 20_000]);
 const SUB_AGENT_ACTION_COOLDOWN_MS = 1_400;
@@ -22,6 +24,54 @@ export const SUB_AGENT_MATERIAL_COST = Object.freeze({
   shards: 1,
 });
 export const PLAYER_RESERVE_BATCH_SIZE = 3;
+
+export function createSubAgentSpawnState() {
+  return { cooldownLeftMs: 0 };
+}
+
+export function tickSubAgentSpawnState(state = createSubAgentSpawnState(), elapsedMs = 0) {
+  return {
+    ...state,
+    cooldownLeftMs: Math.max(
+      0,
+      (Number.isFinite(state?.cooldownLeftMs) ? state.cooldownLeftMs : 0) -
+        Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0),
+    ),
+  };
+}
+
+export function getSubAgentSpawnDecision({
+  pressure = 0,
+  activeChildren = 0,
+  totalActive = 0,
+  materials,
+  cooldownLeftMs = 0,
+  maxPerParent = DEFAULT_MAX_SUB_AGENTS,
+  globalCap = SUB_AGENT_GLOBAL_CAP,
+} = {}) {
+  if (!(Number.isFinite(pressure) && pressure >= 0.6)) {
+    return { allowed: false, reason: "low-pressure" };
+  }
+  if (Number.isFinite(cooldownLeftMs) && cooldownLeftMs > 0) {
+    return { allowed: false, reason: "cooldown" };
+  }
+  if (
+    validNonNegativeInteger(activeChildren, 0) >=
+    Math.min(DEFAULT_MAX_SUB_AGENTS, validNonNegativeInteger(maxPerParent, DEFAULT_MAX_SUB_AGENTS))
+  ) {
+    return { allowed: false, reason: "parent-cap" };
+  }
+  if (
+    validNonNegativeInteger(totalActive, 0) >=
+    Math.min(SUB_AGENT_GLOBAL_CAP, validNonNegativeInteger(globalCap, SUB_AGENT_GLOBAL_CAP))
+  ) {
+    return { allowed: false, reason: "global-cap" };
+  }
+  if (!canSpendTemporarySubAgent(materials)) {
+    return { allowed: false, reason: "materials" };
+  }
+  return { allowed: true, reason: "ready" };
+}
 
 function getRole(agent) {
   return AGENT_ROLES[agent.role] ? agent.role : "defend";
