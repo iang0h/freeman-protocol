@@ -118,7 +118,6 @@ import {
 } from "./game/autonomous-network-rules.mjs";
 import {
   JAMMER_ZONE_RADIUS,
-  applyTerrainRouteBias,
   getEffectiveResistanceFlags,
   getMaxEmpResistancePercent,
   getPhisherDecoyOffsets,
@@ -127,6 +126,10 @@ import {
   getWaveModifiers,
   resolveEmpDamage,
 } from "./game/encounter-rules.mjs";
+import {
+  createMovementWatchdogState,
+  resolveEnemyAdvance,
+} from "./game/enemy-movement-rules.mjs";
 import {
   FIRST_WAVE,
   OBSERVE_BREACH,
@@ -670,6 +673,11 @@ type EnemyRuntime = {
   armorBreakReduction: number;
   bossState: BossState | null;
   bossVisual: THREE.Group | null;
+  movementWatchdog: {
+    targetId: string | number | null;
+    lastDistance: number | null;
+    stalledMs: number;
+  };
   robotAnimate: (elapsed: number, delta: number, moving?: boolean, reducedMotion?: boolean) => void;
 };
 
@@ -3968,6 +3976,7 @@ class FreemanEngine {
       armorBreakReduction: 0,
       bossState,
       bossVisual,
+      movementWatchdog: createMovementWatchdogState(),
       robotAnimate: robotVisual.animate,
     };
     this.toonifyObject(enemy.group);
@@ -5045,12 +5054,16 @@ class FreemanEngine {
             : intent === "defend"
               ? this.core.group.position
               : priority?.group.position ?? this.player.group.position;
+      const assaultRadius = Math.max(2.6, agent.range * 0.46);
+      const bossRadius = priority?.bossState
+        ? Math.max(0.8, priority.bossState.attackRadius * 0.75)
+        : Infinity;
       const radius = withdrawing || gatheringPickup
         ? 0
         : intent === "defend"
           ? 2.75
           : intent === "assault" || intent === "improvise"
-            ? Math.max(2.6, agent.range * 0.46)
+            ? Math.min(assaultRadius, bossRadius)
             : 1.45 + (index % 2) * 0.38;
       const targetPosition = anchor
         .clone()
@@ -5472,17 +5485,34 @@ class FreemanEngine {
         enemy.group.position.z,
       );
     if (movementTarget && result.boss.telegraphLeftMs === 0) {
-      const direction = new THREE.Vector3(
-        movementTarget.x,
-        0,
-        movementTarget.z,
-      ).sub(enemy.group.position).setY(0);
-      const distance = direction.length();
-      if (distance > result.boss.attackRadius * 0.86 && distance > 0.001) {
+      const arrivalDistance = Math.max(0.75, result.boss.attackRadius * 0.86);
+      const distance = enemy.group.position.distanceTo(
+        new THREE.Vector3(movementTarget.x, 0, movementTarget.z),
+      );
+      if (distance > arrivalDistance) {
         const slowFactor = getSlowMovementMultiplier(
           enemy.slow * 1_000,
           enemy.slowMultiplier,
         );
+        const advance = resolveEnemyAdvance(
+          {
+            position: {
+              x: enemy.group.position.x,
+              z: enemy.group.position.z,
+            },
+            target: {
+              id: movementTarget.id,
+              x: movementTarget.x,
+              z: movementTarget.z,
+            },
+            routeBias: this.terrain.routeBias,
+            arrivalDistance,
+            watchdog: enemy.movementWatchdog,
+          },
+          delta * 1_000,
+        );
+        enemy.movementWatchdog = advance.watchdog;
+        const direction = new THREE.Vector3(advance.vector.x, 0, advance.vector.z);
         enemy.group.position.add(
           direction
             .normalize()
@@ -5564,16 +5594,6 @@ class FreemanEngine {
               ? this.repairBay.group.position
               : this.core.group.position;
       const distance = position.distanceTo(targetPosition);
-      const direction = targetPosition.clone().sub(position).setY(0);
-      if (direction.lengthSq() > 0.001) {
-        direction.normalize();
-        const directX = direction.x;
-        const directZ = direction.z;
-        const routeBias =
-          this.terrain.routeBias * (enemy.id % 2 === 0 ? 1 : -1);
-        const routed = applyTerrainRouteBias(directX, directZ, routeBias);
-        direction.set(routed.x, 0, routed.z);
-      }
 
       if (Math.floor(this.elapsed * 60) % getQualitySettings(this.qualityPreset).robotAnimationStride === 0) {
         enemy.robotAnimate(
@@ -5774,11 +5794,26 @@ class FreemanEngine {
         continue;
       }
 
-      if (distance > Math.max(0.75, enemy.range * 0.86)) {
+      const arrivalDistance = Math.max(0.75, enemy.range * 0.86);
+      if (distance > arrivalDistance) {
         const slowFactor = getSlowMovementMultiplier(
           enemy.slow * 1_000,
           enemy.slowMultiplier,
         );
+        const routeBias =
+          this.terrain.routeBias * (enemy.id % 2 === 0 ? 1 : -1);
+        const advance = resolveEnemyAdvance(
+          {
+            position: { x: position.x, z: position.z },
+            target: { id: targetKind, x: targetPosition.x, z: targetPosition.z },
+            routeBias,
+            arrivalDistance,
+            watchdog: enemy.movementWatchdog,
+          },
+          delta * 1_000,
+        );
+        enemy.movementWatchdog = advance.watchdog;
+        const direction = new THREE.Vector3(advance.vector.x, 0, advance.vector.z);
         position.add(
           direction.multiplyScalar(delta * enemy.speed * slowFactor),
         );
@@ -7484,6 +7519,11 @@ type FlatEnemy = {
   armorBrokenLeft: number;
   armorBreakReduction: number;
   bossState: BossState | null;
+  movementWatchdog: {
+    targetId: string | number | null;
+    lastDistance: number | null;
+    stalledMs: number;
+  };
 };
 
 type FlatAgent = AgentDefinition & {
@@ -9434,12 +9474,16 @@ class FreemanCanvasEngine implements GameController {
             : intent === "defend"
               ? this.core.z
               : priority?.z ?? this.player.z;
+      const assaultRadius = Math.max(2.6, agent.range * 0.46);
+      const bossRadius = priority?.bossState
+        ? Math.max(0.8, priority.bossState.attackRadius * 0.75)
+        : Infinity;
       const radius = withdrawing || gatheringPickup
         ? 0
         : intent === "defend"
           ? 2.75
           : intent === "assault" || intent === "improvise"
-            ? Math.max(2.6, agent.range * 0.46)
+            ? Math.min(assaultRadius, bossRadius)
             : 1.45 + (index % 2) * 0.38;
       let targetX = anchorX + Math.cos(angle) * radius;
       let targetZ = anchorZ + Math.sin(angle) * radius;
@@ -9767,19 +9811,35 @@ class FreemanCanvasEngine implements GameController {
       targetZ !== undefined &&
       result.boss.telegraphLeftMs === 0
     ) {
+      const arrivalDistance = Math.max(0.75, result.boss.attackRadius * 0.86);
       const distance = this.distance(enemy.x, enemy.z, targetX, targetZ);
-      if (distance > result.boss.attackRadius * 0.86 && distance > 0.001) {
+      if (distance > arrivalDistance) {
         const slowFactor = getSlowMovementMultiplier(
           enemy.slow * 1_000,
           enemy.slowMultiplier,
         );
+        const advance = resolveEnemyAdvance(
+          {
+            position: { x: enemy.x, z: enemy.z },
+            target: {
+              id: movementTarget?.id ?? "boss-target",
+              x: targetX,
+              z: targetZ,
+            },
+            routeBias: this.terrain.routeBias,
+            arrivalDistance,
+            watchdog: enemy.movementWatchdog,
+          },
+          delta * 1_000,
+        );
+        enemy.movementWatchdog = advance.watchdog;
         enemy.x +=
-          ((targetX - enemy.x) / distance) *
+          advance.vector.x *
           delta *
           enemy.speed *
           slowFactor;
         enemy.z +=
-          ((targetZ - enemy.z) / distance) *
+          advance.vector.z *
           delta *
           enemy.speed *
           slowFactor;
@@ -10033,24 +10093,32 @@ class FreemanCanvasEngine implements GameController {
         continue;
       }
 
-      if (distance > Math.max(0.75, enemy.range * 0.86)) {
+      const arrivalDistance = Math.max(0.75, enemy.range * 0.86);
+      if (distance > arrivalDistance) {
         const slowFactor = getSlowMovementMultiplier(
           enemy.slow * 1_000,
           enemy.slowMultiplier,
         );
-        const length = distance || 1;
-        const directX = (targetX - enemy.x) / length;
-        const directZ = (targetZ - enemy.z) / length;
         const routeBias =
           this.terrain.routeBias * (enemy.id % 2 === 0 ? 1 : -1);
-        const routed = applyTerrainRouteBias(directX, directZ, routeBias);
+        const advance = resolveEnemyAdvance(
+          {
+            position: { x: enemy.x, z: enemy.z },
+            target: { id: targetKind, x: targetX, z: targetZ },
+            routeBias,
+            arrivalDistance,
+            watchdog: enemy.movementWatchdog,
+          },
+          delta * 1_000,
+        );
+        enemy.movementWatchdog = advance.watchdog;
         enemy.x +=
-          routed.x *
+          advance.vector.x *
           delta *
           enemy.speed *
           slowFactor;
         enemy.z +=
-          routed.z *
+          advance.vector.z *
           delta *
           enemy.speed *
           slowFactor;
@@ -10465,6 +10533,7 @@ class FreemanCanvasEngine implements GameController {
       armorBrokenLeft: 0,
       armorBreakReduction: 0,
       bossState,
+      movementWatchdog: createMovementWatchdogState(),
     };
     this.enemies.push(enemy);
     this.addRing(

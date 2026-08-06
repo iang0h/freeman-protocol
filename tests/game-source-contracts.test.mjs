@@ -915,7 +915,7 @@ test("both renderers consume shared hacker and terrain encounter rules", () => {
   assert.ok((game.match(/resolveEmpDamage\(/g) ?? []).length >= 2);
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /resistanceFlags/);
-    assert.match(engine, /applyTerrainRouteBias/);
+    assert.match(engine, /resolveEnemyAdvance\(/);
     assert.match(engine, /getEffectiveResistanceFlags/);
     assert.match(engine, /getPhisherDecoyOffsets/);
     assert.match(engine, /getRootkitRebootUpdates/);
@@ -924,6 +924,18 @@ test("both renderers consume shared hacker and terrain encounter rules", () => {
     assert.match(engine, /terrain\.routeBias/);
     assert.match(engine, /decoyOwnerId/);
     assert.match(engine, /enemy-jammer-zone/);
+  }
+});
+
+test("both renderers use the convergence watchdog and keep assault agents inside boss attack radius", () => {
+  assert.match(game, /createMovementWatchdogState[\s\S]*resolveEnemyAdvance/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /movementWatchdog/);
+    assert.match(engine, /resolveEnemyAdvance\(/);
+    assert.match(
+      engine,
+      /const assaultRadius = Math\.max\(2\.6, agent\.range \* 0\.46\);[\s\S]*?Math\.min\(assaultRadius, bossRadius\)/,
+    );
   }
 });
 
