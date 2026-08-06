@@ -646,6 +646,12 @@ type DefenseRuntime = {
   barrierLeft: number;
 };
 
+type EnemyMovementWatchdog = {
+  targetId: string | number | null;
+  lastDistance: number | null;
+  stalledMs: number;
+};
+
 type EnemyRuntime = {
   id: number;
   type: EnemyType;
@@ -678,11 +684,7 @@ type EnemyRuntime = {
   armorBreakReduction: number;
   bossState: BossState | null;
   bossVisual: THREE.Group | null;
-  movementWatchdog: {
-    targetId: string | number | null;
-    lastDistance: number | null;
-    stalledMs: number;
-  };
+  movementWatchdog: EnemyMovementWatchdog;
   robotAnimate: (elapsed: number, delta: number, moving?: boolean, reducedMotion?: boolean) => void;
 };
 
@@ -3982,7 +3984,7 @@ class FreemanEngine {
       armorBreakReduction: 0,
       bossState,
       bossVisual,
-      movementWatchdog: createMovementWatchdogState(),
+      movementWatchdog: createMovementWatchdogState() as EnemyMovementWatchdog,
       robotAnimate: robotVisual.animate,
     };
     this.toonifyObject(enemy.group);
@@ -4926,7 +4928,7 @@ class FreemanEngine {
       warband: this.agents.map((candidate) => candidate.id),
     });
     const pressure = this.enemies.length / this.activeEnemyLimit;
-    const decision = getSubAgentSpawnDecision({
+    const spawnDecisionInput = {
       pressure,
       activeChildren: this.temporarySubAgents.filter(
         (subAgent) => subAgent.parentId === agent.id,
@@ -4936,7 +4938,8 @@ class FreemanEngine {
       cooldownLeftMs: spawnState.cooldownLeftMs,
       maxPerParent: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
       globalCap: SUB_AGENT_GLOBAL_CAP,
-    });
+    };
+    const decision = getSubAgentSpawnDecision(spawnDecisionInput);
     if (!decision.allowed) return;
     const spawned = spawnTemporarySubAgent(
       { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
@@ -7543,11 +7546,7 @@ type FlatEnemy = {
   armorBrokenLeft: number;
   armorBreakReduction: number;
   bossState: BossState | null;
-  movementWatchdog: {
-    targetId: string | number | null;
-    lastDistance: number | null;
-    stalledMs: number;
-  };
+  movementWatchdog: EnemyMovementWatchdog;
 };
 
 type FlatAgent = AgentDefinition & {
@@ -9366,7 +9365,7 @@ class FreemanCanvasEngine implements GameController {
       warband: this.agents.map((candidate) => candidate.id),
     });
     const pressure = this.enemies.length / this.activeEnemyLimit;
-    const decision = getSubAgentSpawnDecision({
+    const spawnDecisionInput = {
       pressure,
       activeChildren: this.temporarySubAgents.filter(
         (subAgent) => subAgent.parentId === agent.id,
@@ -9376,7 +9375,8 @@ class FreemanCanvasEngine implements GameController {
       cooldownLeftMs: spawnState.cooldownLeftMs,
       maxPerParent: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
       globalCap: SUB_AGENT_GLOBAL_CAP,
-    });
+    };
+    const decision = getSubAgentSpawnDecision(spawnDecisionInput);
     if (!decision.allowed) return;
     const spawned = spawnTemporarySubAgent(
       { id: agent.id, role: AUTONOMY_ROLES[agent.id] },
@@ -10463,6 +10463,7 @@ class FreemanCanvasEngine implements GameController {
         | "armorBrokenLeft"
         | "armorBreakReduction"
         | "bossState"
+        | "movementWatchdog"
       >
     > = {
       virus: {
@@ -10576,7 +10577,7 @@ class FreemanCanvasEngine implements GameController {
       armorBrokenLeft: 0,
       armorBreakReduction: 0,
       bossState,
-      movementWatchdog: createMovementWatchdogState(),
+      movementWatchdog: createMovementWatchdogState() as EnemyMovementWatchdog,
     };
     this.enemies.push(enemy);
     this.addRing(

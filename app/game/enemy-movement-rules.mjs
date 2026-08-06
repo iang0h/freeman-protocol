@@ -2,11 +2,14 @@ export const ENEMY_MOVEMENT_STALL_LIMIT_MS = 1_500;
 const MIN_PROGRESS_DISTANCE = 0.01;
 const MAX_TERRAIN_TANGENT = 0.35;
 
+/** @typedef {{ targetId: string | number | null, lastDistance: number | null, stalledMs: number }} MovementWatchdogState */
+
 const finite = (value, fallback = 0) =>
   Number.isFinite(value) ? value : fallback;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
+/** @param {string | number | null} [targetId] @returns {MovementWatchdogState} */
 export function createMovementWatchdogState(targetId = null) {
   return {
     targetId,
@@ -15,6 +18,16 @@ export function createMovementWatchdogState(targetId = null) {
   };
 }
 
+/**
+ * @param {{
+ *   position?: { x?: number, z?: number },
+ *   target?: { id?: string | number | null, x?: number, z?: number },
+ *   routeBias?: number,
+ *   arrivalDistance?: number,
+ *   watchdog?: MovementWatchdogState,
+ * }} options
+ * @param {number} [deltaMs]
+ */
 export function resolveEnemyAdvance(
   {
     position,
