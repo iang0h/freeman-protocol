@@ -767,12 +767,29 @@ canvas:focus-visible {
   height: 20px;
   border: 1px solid #a7d6d8;
   background: #163d43;
-  rotate: 45deg;
   box-shadow: 0 0 12px rgba(121, 222, 220, 0.55);
 }
 
-.co-op-world__agent i { width: 7px; height: 7px; background: #dbffff; }
-.co-op-world__agent small { top: calc(100% + 6px); rotate: -45deg; color: #b5f4ef; }
+.co-op-world__agent-avatar {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  overflow: hidden;
+  transform: rotate(45deg);
+}
+
+.co-op-world__agent-avatar .agent-portrait {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  box-shadow: none;
+  transform: rotate(-45deg);
+}
+
+.co-op-world__agent small { top: calc(100% + 6px); color: #b5f4ef; }
 
 .co-op-world__sub-agent {
   width: 10px;
@@ -1130,14 +1147,14 @@ canvas:focus-visible {
   top: 58px;
   left: 50%;
   z-index: 39;
-  width: min(620px, calc(100vw - 48px));
+  width: min(740px, calc(100vw - 48px));
   transform: translateX(-50%);
   pointer-events: auto;
 }
 
 .recruitment-advisor {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(160px, auto) 104px;
+  grid-template-columns: 48px minmax(210px, 1fr) minmax(180px, auto) 104px;
   align-items: stretch;
   gap: 10px;
   padding: 9px 10px;
@@ -1148,6 +1165,22 @@ canvas:focus-visible {
     rgba(5, 11, 14, 0.95);
   box-shadow: 0 14px 38px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(14px);
+}
+
+.recruitment-advisor__portrait {
+  display: grid;
+  min-width: 48px;
+  min-height: 48px;
+  place-items: center;
+  align-self: center;
+}
+
+.recruitment-advisor__portrait.is-guidance {
+  border: 1px solid rgba(217, 181, 109, 0.54);
+  border-radius: 11px;
+  color: #d9b56d;
+  font-family: var(--serif);
+  font-size: 24px;
 }
 
 .recruitment-advisor--recruit {
@@ -1220,6 +1253,17 @@ canvas:focus-visible {
 .recruitment-advisor__resources dt,
 .recruitment-advisor__resources dd {
   margin: 0;
+}
+
+.advisor-resource-chips {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.advisor-resource-chips.is-missing .agent-resource-chip {
+  border-color: rgba(239, 155, 112, 0.42);
+  color: #ef9b70;
 }
 
 .recruitment-advisor__resources dd {
@@ -2185,12 +2229,83 @@ canvas:focus-visible {
   gap: 4px;
 }
 
+.agent-portrait {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--agent-accent) 70%, transparent);
+  border-radius: 11px;
+  background:
+    radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--agent-accent) 25%, transparent), transparent 58%),
+    #0a1519;
+  color: var(--agent-accent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--agent-accent) 22%, transparent);
+  isolation: isolate;
+}
+
+.agent-portrait--sm {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.agent-portrait--md {
+  width: 48px;
+  height: 48px;
+}
+
+.agent-portrait--lg {
+  width: 58px;
+  height: 58px;
+  border-radius: 13px;
+}
+
+.agent-portrait img,
+.agent-portrait__fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.agent-portrait img {
+  z-index: 1;
+  object-fit: cover;
+}
+
+.agent-portrait__fallback {
+  display: grid;
+  place-items: center;
+  color: var(--agent-accent);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.agent-portrait--sm .agent-portrait__fallback { font-size: 0.55rem; }
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 .agent-card {
   position: relative;
   display: grid;
   min-width: 0;
-  min-height: 61px;
-  grid-template-columns: 35px 1fr auto;
+  min-height: 76px;
+  grid-template-columns: 48px minmax(0, 1fr) auto minmax(94px, auto);
   align-items: center;
   gap: 9px;
   overflow: hidden;
@@ -2241,25 +2356,7 @@ canvas:focus-visible {
     rgba(7, 10, 10, 0.9);
 }
 
-.agent-card__node {
-  display: grid;
-  width: 33px;
-  height: 33px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--agent-color) 62%, transparent);
-  color: var(--agent-color);
-  font-family: var(--mono);
-  font-size: 8px;
-  transform: rotate(45deg);
-}
-
-.agent-card__node::first-line {
-  transform: rotate(-45deg);
-}
-
-.agent-card__node {
-  text-shadow: 0 0 12px var(--agent-color);
-}
+.agent-card__portrait { width: 48px; height: 48px; }
 
 .agent-card__copy {
   display: flex;
@@ -2279,6 +2376,17 @@ canvas:focus-visible {
   white-space: nowrap;
 }
 
+.agent-card__role {
+  color: var(--ice) !important;
+  font-size: 8px !important;
+  letter-spacing: 0.1em !important;
+}
+
+.agent-card__hint {
+  color: #7f8a85 !important;
+  font-size: 7px !important;
+}
+
 .agent-card__copy strong {
   overflow: hidden;
   font-family: var(--serif);
@@ -2288,8 +2396,38 @@ canvas:focus-visible {
   text-overflow: ellipsis;
 }
 
+.agent-card__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  color: #a8beb5;
+  font-family: var(--mono);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.agent-card__status i {
+  width: 6px;
+  height: 6px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.agent-card__status[data-status="AVAILABLE"],
+.agent-card__status[data-status="ACTIVE"] { color: #79d0c0; }
+.agent-card__status[data-status="OFFLINE"],
+.agent-card__status[data-status="REPAIRING"] { color: #e28a61; }
+.agent-card__status[data-status="GATHERING"] { color: #d6c27f; }
+
 .agent-card__cost {
-  align-self: end;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
   color: var(--signal);
   font-family: var(--mono);
   font-size: 8px;
@@ -2300,6 +2438,62 @@ canvas:focus-visible {
 .agent-card__cost.is-low {
   color: #656a65;
 }
+
+.agent-card__recruited-mark {
+  color: #79d0c0;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.agent-resource-chip {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 2px 4px;
+  border: 1px solid rgba(158, 191, 192, 0.25);
+  background: rgba(5, 15, 18, 0.78);
+  color: #cbd7cf;
+  font-family: var(--mono);
+  font-size: 7px;
+  line-height: 1;
+}
+
+.agent-resource-chip i {
+  color: var(--ice);
+  font-size: 6px;
+  font-style: normal;
+  letter-spacing: 0.04em;
+}
+
+.agent-resource-chip b { font-weight: 600; }
+
+.agent-action-icon {
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: var(--ice);
+  opacity: 0.86;
+}
+
+.agent-action-icon::before {
+  font-family: var(--mono);
+  font-size: 8px;
+  line-height: 1;
+}
+
+.agent-action-icon--recruit::before { content: "+"; }
+.agent-action-icon--build::before { content: "▦"; }
+.agent-action-icon--repair::before { content: "+"; }
+.agent-action-icon--deploy::before { content: "↗"; }
+.agent-action-icon--follow::before { content: "→"; }
+.agent-action-icon--defend::before { content: "◇"; }
+.agent-action-icon--focus::before { content: "⊙"; }
 
 .agent-card kbd {
   position: absolute;
@@ -3224,6 +3418,37 @@ canvas:focus-visible {
 .command-map-marker:hover i,
 .command-map-marker:focus-visible i {
   transform: scale(1.55);
+}
+
+.command-map-marker__portrait {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.command-map-marker__portrait .agent-portrait {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.command-map-marker--agent small {
+  max-width: 0;
+  padding: 0;
+  border-color: transparent;
+  opacity: 0;
+  transition: opacity 140ms ease, max-width 140ms ease, padding 140ms ease;
+}
+
+.command-map-marker--agent:hover small,
+.command-map-marker--agent:focus-visible small {
+  max-width: 7rem;
+  padding: 0.18rem 0.28rem;
+  border-color: rgba(158, 191, 192, 0.32);
+  opacity: 1;
 }
 
 .command-map-marker small {
@@ -5208,5 +5433,146 @@ canvas:focus-visible {
   50% {
     opacity: 0.32;
     transform: scale(0.68);
+  }
+}
+
+/* Visual warband pass: portraits and action glyphs stay legible before detail is opened. */
+.agent-card__portrait {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.skill-action__portrait {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  box-shadow: none;
+}
+
+.squad-commands button .agent-action-icon {
+  margin-bottom: 2px;
+}
+
+.commander-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+@media (max-width: 820px) {
+  .recruitment-advisor {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    grid-template-rows: 48px;
+  }
+
+  .recruitment-advisor__portrait {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .recruitment-advisor__portrait .agent-portrait {
+    width: 40px;
+    height: 40px;
+  }
+
+  .recruitment-advisor__copy {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .recruitment-advisor__action {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .agent-card {
+    min-height: 56px;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    gap: 7px;
+  }
+
+  .agent-card__portrait {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .agent-card__copy small.agent-card__role {
+    display: block;
+    font-size: 6px !important;
+  }
+
+  .agent-card__hint {
+    display: none !important;
+  }
+
+  .agent-card__status {
+    position: static;
+    font-size: 6px;
+  }
+
+  .agent-card__cost {
+    position: static;
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+    margin-top: -3px;
+  }
+
+  .agent-resource-chip {
+    min-height: 24px;
+  }
+}
+
+@media (max-width: 520px) {
+  .agent-card {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    justify-content: stretch;
+    min-height: 48px;
+    padding: 4px;
+  }
+
+  .agent-card__portrait {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .agent-card__copy {
+    display: flex;
+    gap: 1px;
+  }
+
+  .agent-card__copy strong {
+    font-size: 9px;
+  }
+
+  .agent-card__copy small.agent-card__role {
+    display: none;
+  }
+
+  .agent-card__status {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    font-size: 5px;
+  }
+
+  .agent-card__cost {
+    display: none;
+  }
+
+  .agent-card__slot {
+    display: none;
+  }
+
+  .commander-actions .agent-action-icon {
+    width: 16px;
+    height: 16px;
   }
 }

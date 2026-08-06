@@ -170,6 +170,8 @@ import {
   createWatchDirectorState,
   tickWatchDirector,
 } from "./game/watch-director-rules.mjs";
+import AgentPortrait from "./AgentPortrait";
+import { getAgentVisual } from "./game/agent-presentation-rules.mjs";
 
 type GameMode =
   "intro" | "playing" | "upgrade" | "evolution" | "paused" | "defeat" | "victory";
@@ -13487,6 +13489,17 @@ export default function FreemanProtocol({
     if (hud.command === "auto") return "GATHERING";
     return "FIGHTING";
   };
+  const getAgentShortStatus = (agentId: AgentId) => {
+    const status = getAgentStatus(agentId);
+    return {
+      ACTIVE: "READY",
+      AVAILABLE: "READY",
+      OFFLINE: "OFFLINE",
+      REPAIRING: "REPAIR",
+      GATHERING: "GATHER",
+      FIGHTING: "FIGHT",
+    }[status] ?? status;
+  };
   const agentRankSummary = AGENTS.filter((agent) => hud.agents[agent.id])
     .map((agent) => {
       const componentRanks = (AGENT_COMPONENT_UPGRADES[agent.id] ?? []).reduce(
@@ -13640,19 +13653,33 @@ export default function FreemanProtocol({
             <span className="command-map-legend__optional"><i className="is-threat" />THREAT</span>
           </div>
           <div className="command-map-layer__markers">
-            {commandMapMarkers.map((marker) => (
-              <button
-                key={marker.id}
-                type="button"
-                className={`command-map-marker command-map-marker--${marker.kind}`}
-                style={commandMapPosition(marker.x, marker.z)}
-                title={`${marker.label} · ${marker.status}`}
-                onClick={() => engineRef.current?.focusCommandMarker(marker.id)}
-              >
-                <i />
-                <small>{marker.label}</small>
-              </button>
-            ))}
+            {commandMapMarkers.map((marker) => {
+              const markerAgentId = marker.kind === "agent"
+                ? marker.id.replace(/^agent-/, "")
+                : "";
+              const agentVisual = markerAgentId
+                ? getAgentVisual(markerAgentId)
+                : null;
+              return (
+                <button
+                  key={marker.id}
+                  type="button"
+                  className={`command-map-marker command-map-marker--${marker.kind}`}
+                  style={commandMapPosition(marker.x, marker.z)}
+                  title={`${marker.label} · ${marker.status}`}
+                  onClick={() => engineRef.current?.focusCommandMarker(marker.id)}
+                >
+                  {agentVisual ? (
+                    <span className="command-map-marker__portrait">
+                      <AgentPortrait agentId={markerAgentId} size="sm" decorative />
+                    </span>
+                  ) : (
+                    <i />
+                  )}
+                  <small>{marker.label}</small>
+                </button>
+              );
+            })}
           </div>
           <p className="command-map-layer__hint">Tap a marker to keep the battlefield in focus · C toggles map</p>
         </aside>
@@ -13707,8 +13734,10 @@ export default function FreemanProtocol({
                     style={coOpWorldPosition(Math.cos(angle) * radius, Math.sin(angle) * radius)}
                     title={`${agentId.toUpperCase()} autonomous agent`}
                   >
-                    <i />
-                    <small>{agentId.slice(0, 2).toUpperCase()}</small>
+                    <span className="co-op-world__agent-avatar">
+                      <AgentPortrait agentId={agentId} size="sm" decorative />
+                    </span>
+                    <small className="sr-only">{agentId.toUpperCase()}</small>
                   </div>
                 );
               })}
@@ -14519,31 +14548,38 @@ export default function FreemanProtocol({
               <strong>{mobileSquadOpen ? "CLOSE" : "OPEN"}</strong>
             </button>
             <div className="commander-actions" aria-label="Commander actions">
-              <small className="commander-explainer">
-                AGENTS FIGHT AUTOMATICALLY · AGENTS GATHER MATERIALS · REPAIR OFFLINE AGENTS · UPGRADE BETWEEN WAVES
+              <small
+                className="commander-explainer"
+                aria-label="AGENTS FIGHT AUTOMATICALLY · AGENTS GATHER MATERIALS · REPAIR OFFLINE AGENTS · UPGRADE BETWEEN WAVES"
+                title="AGENTS FIGHT AUTOMATICALLY · AGENTS GATHER MATERIALS · REPAIR OFFLINE AGENTS · UPGRADE BETWEEN WAVES"
+              >
+                AUTO // FIGHT + GATHER
               </small>
-              <button type="button" onClick={() => setMobileSquadOpen(true)} disabled={!canRecruitAgent}>
+              <button type="button" title="Recruit an AI agent" onClick={() => setMobileSquadOpen(true)} disabled={!canRecruitAgent}>
+                <i className="agent-action-icon agent-action-icon--recruit" aria-hidden="true" />
                 RECRUIT AGENT
               </button>
-              <button type="button" onClick={() => {
+              <button type="button" title="Build a sentry" onClick={() => {
                 if (coOpActive) {
                   sendCoOpAction({ action: "build-sentry" });
                 } else {
                   engineRef.current?.buildDefense();
                 }
               }} disabled={!canBuildSentry}>
+                <i className="agent-action-icon agent-action-icon--build" aria-hidden="true" />
                 BUILD SENTRY
               </button>
-              <button type="button" onClick={() => {
+              <button type="button" title="Repair the network" onClick={() => {
                 if (coOpActive) {
                   if (coOpRepairTarget) sendCoOpAction({ action: "repair", targetId: coOpRepairTarget });
                 } else {
                   engineRef.current?.useFieldKit();
                 }
               }} disabled={coOpActive ? !coOpCanAct || !coOpRepairTarget || (coOpResources?.components ?? 0) < 1 : mode !== "playing" || hud.loot.repairs < 1}>
+                <i className="agent-action-icon agent-action-icon--repair" aria-hidden="true" />
                 REPAIR NETWORK
               </button>
-              <button type="button" onClick={() => {
+              <button type="button" title="Deploy a temporary reserve" onClick={() => {
                 if (coOpActive) {
                   if (coOpReserveAgentId) sendCoOpAction({ action: "deploy-reserve", agentId: coOpReserveAgentId });
                 } else {
@@ -14552,6 +14588,7 @@ export default function FreemanProtocol({
               }} disabled={coOpActive
                 ? !coOpCanAct || !coOpReserveAgentId || (coOpResources?.components ?? 0) < 3 || (coOpResources?.shards ?? 0) < 3
                 : mode !== "playing" || hud.loot.components < 3 || hud.loot.shards < 3}>
+                <i className="agent-action-icon agent-action-icon--deploy" aria-hidden="true" />
                 DEPLOY RESERVE
               </button>
             </div>
@@ -14596,6 +14633,7 @@ export default function FreemanProtocol({
                     title={detail}
                     aria-pressed={coOpActive ? coOpSnapshot?.state.warband.priority === toCoOpPriority(command) : hud.command === command}
                   >
+                    <i className={`agent-action-icon agent-action-icon--${command}`} aria-hidden="true" />
                     <strong>{label}</strong>
                     <small>{detail}</small>
                   </button>
@@ -14613,6 +14651,8 @@ export default function FreemanProtocol({
                     (coOpActive ? coOpResources?.shards ?? 0 : hud.loot.shards) >= cost.shards,
                 );
                 const evolution = hud.evolutions[agent.id as EvolutionAgentId];
+                const visual = getAgentVisual(agent.id);
+                const status = getAgentStatus(agent.id);
                 return (
                   <button
                     type="button"
@@ -14633,42 +14673,45 @@ export default function FreemanProtocol({
                         : `Recruit ${agent.name} for ${cost?.compute ?? agent.cost} Compute, ${cost?.components ?? 0} Components, and ${cost?.shards ?? 0} Shards`
                     }
                   >
-                    <span
-                      className="agent-card__node"
-                      style={
-                        {
-                          "--agent-color": `#${agent.color.toString(16).padStart(6, "0")}`,
-                        } as React.CSSProperties
-                      }
-                    >
-                      {agent.code}
-                    </span>
+                    <AgentPortrait
+                      agentId={agent.id}
+                      size="md"
+                      state={status}
+                      decorative
+                      className="agent-card__portrait"
+                    />
                     <span className="agent-card__copy">
-                      <small className="agent-metrics">{agent.role}</small>
+                      <small className="agent-card__role">{visual?.roleLabel ?? agent.role}</small>
                       <strong>{agent.name}</strong>
-                      <small className="agent-metrics">
-                        DMG {agent.damage} · {agent.cooldown.toFixed(1)}S · RNG{" "}
-                        {agent.range}
+                      <small
+                        className="agent-card__hint agent-metrics"
+                        title={`Damage ${agent.damage}, cooldown ${agent.cooldown.toFixed(1)} seconds, range ${agent.range}`}
+                      >
+                        {evolution
+                          ? `RANK II · ${EVOLUTIONS[agent.id as EvolutionAgentId].find((item: { id: string }) => item.id === evolution)?.name ?? "UPGRADED"}`
+                          : "AUTONOMOUS"}
                       </small>
-                      {evolution && (
-                        <em className="agent-metrics">
-                          RANK II ·{" "}
-                          {EVOLUTIONS[agent.id as EvolutionAgentId].find(
-                            (item: { id: string }) =>
-                              item.id === evolution,
-                          )?.name}
-                        </em>
-                      )}
+                      <span className="agent-metrics" hidden aria-hidden="true">{agent.role}</span>
                     </span>
-                    <span className="agent-card__status">{getAgentStatus(agent.id)}</span>
+                    <span className="agent-card__status" data-status={status}>
+                      <i aria-hidden="true" />
+                      <span>{getAgentShortStatus(agent.id)}</span>
+                    </span>
                     <span
                       className={`agent-card__cost ${!affordable && !recruited ? "is-low" : ""}`}
+                      aria-label={recruited ? "Recruited" : `Cost ${cost?.compute ?? agent.cost} Compute, ${cost?.components ?? 0} Components, ${cost?.shards ?? 0} Shards`}
                     >
                       {recruited
-                        ? "RECRUITED"
-                        : `${cost?.compute ?? agent.cost} C · ${cost?.components ?? 0} COMP · ${cost?.shards ?? 0} SHARDS`}
+                        ? <span className="agent-card__recruited-mark">✓ ACTIVE</span>
+                        : (
+                          <>
+                            <span className="agent-resource-chip" title={`${cost?.compute ?? agent.cost} Compute`}><i aria-hidden="true">C</i><b>{cost?.compute ?? agent.cost}</b></span>
+                            <span className="agent-resource-chip" title={`${cost?.components ?? 0} Components`}><i aria-hidden="true">CO</i><b>{cost?.components ?? 0}</b></span>
+                            <span className="agent-resource-chip" title={`${cost?.shards ?? 0} Shards`}><i aria-hidden="true">SH</i><b>{cost?.shards ?? 0}</b></span>
+                          </>
+                        )}
                     </span>
-                    <kbd>{index + 1}</kbd>
+                    <kbd className="agent-card__slot" aria-label={`Keyboard shortcut ${index + 1}`}>{index + 1}</kbd>
                   </button>
                 );
               })}
@@ -14710,7 +14753,13 @@ export default function FreemanProtocol({
                   }
                 >
                   <i aria-hidden="true" />
-                  <small>{id.toUpperCase()}</small>
+                  <AgentPortrait
+                    agentId={id}
+                    size="sm"
+                    decorative
+                    className="skill-action__portrait"
+                  />
+                  <small className="sr-only">{id.toUpperCase()}</small>
                   <strong>{skill.label}</strong>
                   <span>
                     {skill.cooldownLeftMs > 0

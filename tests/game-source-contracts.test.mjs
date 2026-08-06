@@ -169,6 +169,23 @@ test("compact recruitment advisor explains the decision and only recruits throug
   assert.match(game, /toggleCombatOverlay\("warband"\)/);
 });
 
+test("warband identity is visual and resource controls are compact", () => {
+  assert.match(game, /import AgentPortrait from "\.\/AgentPortrait"/);
+  assert.match(game, /className="agent-card__portrait"/);
+  assert.match(game, /className="agent-resource-chip"/);
+  assert.match(game, /AgentPortrait[\s\S]*?co-op-world__agent-avatar/);
+  assert.match(game, /AgentPortrait[\s\S]*?skill-action__portrait/);
+  assert.doesNotMatch(
+    game,
+    /className="agent-card__node"[\s\S]*?\{agent\.code\}/,
+  );
+  assert.match(page, /import AgentPortrait from "\.\/AgentPortrait"/);
+  assert.match(page, /recruitment-advisor__portrait/);
+  assert.match(styles, /\.agent-portrait\s*\{/);
+  assert.match(styles, /\.agent-resource-chip\s*\{/);
+  assert.match(styles, /\.agent-action-icon\s*\{/);
+});
+
 test("combat prompts expose one-tap recruit and EMP actions", () => {
   assert.match(game, /recruitPrompt/);
   assert.match(game, /empReadyPrompt/);

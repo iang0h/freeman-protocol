@@ -147,6 +147,22 @@ test("keeps recruitment advice readable and touch-safe beside Warband", () => {
   );
 });
 
+test("keeps portrait identities and resource chips readable on compact layouts", () => {
+  assert.match(game, /AgentPortrait/);
+  assert.match(game, /agent-resource-chip/);
+  assert.match(styles, /\.agent-card__portrait[\s\S]*?min-width:\s*40px/);
+  assert.match(
+    styles,
+    /@media \(max-width: 520px\)[\s\S]*?\.agent-card__portrait[\s\S]*?width:\s*40px/,
+  );
+  assert.match(
+    styles,
+    /\.agent-card__portrait[\s\S]*?min-height:\s*44px/,
+  );
+  assert.match(styles, /\.agent-resource-chip[\s\S]*?min-height:\s*24px/);
+  assert.match(styles, /\.commander-actions button[\s\S]*?min-height:\s*48px/);
+});
+
 test("keeps contextual combat prompts touch-safe and safe-area aware", () => {
   assert.match(game, /className="combat-prompt combat-prompt--recruit"/);
   assert.match(game, /className="combat-prompt combat-prompt--emp"/);

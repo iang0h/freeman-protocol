@@ -7,6 +7,7 @@ import FreemanProtocol, {
   type RecruitmentAdvisorViewState,
 } from "./FreemanProtocol";
 import CoOpLobby, { type CoOpMatchResult, type MatchSummary } from "./CoOpLobby";
+import AgentPortrait from "./AgentPortrait";
 import { createOverlayState, toggleOverlay } from "./game/combat-presentation-rules.mjs";
 import { CoOpClient } from "./game/co-op-client.mjs";
 
@@ -31,6 +32,29 @@ const formatResources = (
 ) => resources
   ? `${resources.compute} C · ${resources.components} COMP · ${resources.shards} SHARDS`
   : "NONE";
+
+const AdvisorResourceChips = ({
+  resources,
+  label,
+  missing = false,
+}: {
+  resources: { compute: number; components: number; shards: number } | null;
+  label: string;
+  missing?: boolean;
+}) => (
+  <span className={`advisor-resource-chips ${missing ? "is-missing" : ""}`} aria-label={`${label}: ${formatResources(resources)}`}>
+    {([
+      ["C", "compute"],
+      ["COMP", "components"],
+      ["SH", "shards"],
+    ] as const).map(([token, key]) => (
+      <span className="agent-resource-chip" key={key} title={`${key}: ${resources?.[key] ?? 0}`}>
+        <i aria-hidden="true">{token}</i>
+        <b>{resources?.[key] ?? 0}</b>
+      </span>
+    ))}
+  </span>
+);
 
 function summarizeCoOpSnapshot(snapshot: CoOpCombatSnapshot | null): MatchSummary {
   const state = snapshot?.state;
@@ -123,6 +147,13 @@ export default function Home() {
       className={`recruitment-advisor recruitment-advisor--${recruitmentAdvice.state}`}
       aria-label="Recruitment advisor"
     >
+      {recruitmentAdvice.agentId ? (
+        <div className="recruitment-advisor__portrait">
+          <AgentPortrait agentId={recruitmentAdvice.agentId} size="md" />
+        </div>
+      ) : (
+        <span className="recruitment-advisor__portrait is-guidance" aria-hidden="true">!</span>
+      )}
       <div className="recruitment-advisor__copy">
         <small>{ADVISOR_LABELS[recruitmentAdvice.state]}</small>
         <strong>{recruitmentAdvice.title}</strong>
@@ -131,25 +162,24 @@ export default function Home() {
         </p>
         {advisorSessionMode === "watch" && (
           <p className="recruitment-advisor__watch">
-            WATCH MODE · AI PRIORITY {advisorWatchPriority.toUpperCase()} ·{" "}
-            {recruitmentAdvice.detail}
+            WATCH MODE · AI PRIORITY {advisorWatchPriority.toUpperCase()}
           </p>
         )}
       </div>
       <dl className="recruitment-advisor__resources">
         <div>
           <dt>CURRENT</dt>
-          <dd>{formatResources(advisorResources)}</dd>
+          <dd><AdvisorResourceChips resources={advisorResources} label="Current resources" /></dd>
         </div>
         <div>
           <dt>COST</dt>
-          <dd>{formatResources(recruitmentAdvice.cost)}</dd>
+          <dd><AdvisorResourceChips resources={recruitmentAdvice.cost} label="Recruitment cost" /></dd>
         </div>
         {recruitmentAdvice.missing &&
           Object.values(recruitmentAdvice.missing).some((value) => value > 0) && (
             <div className="is-missing">
               <dt>MISSING</dt>
-              <dd>{formatResources(recruitmentAdvice.missing)}</dd>
+              <dd><AdvisorResourceChips resources={recruitmentAdvice.missing} label="Missing resources" missing /></dd>
             </div>
           )}
       </dl>
