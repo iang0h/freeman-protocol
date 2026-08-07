@@ -111,7 +111,7 @@ The Sites lifecycle runs the locked install before returning a checkout. Edit so
 <details>
 <summary>Optional co-op multiplayer deployment</summary>
 
-Co-op is intentionally feature-flagged. The browser enables the room lobby only when a public WebSocket endpoint is injected at build time. Set the canonical `CO_OP_WS_URL` environment variable to the `wss://` origin of the Worker serving `/api/co-op/rooms/:roomCode`. Deployments that only expose framework-prefixed client variables may use `NEXT_PUBLIC_CO_OP_WS_URL` instead. Never put a token or credential in either value, and never commit `.env*` files or secret values.
+Co-op is intentionally feature-flagged. The browser enables the room lobby only when a public WebSocket endpoint is injected at build time. Set the canonical `CO_OP_WS_URL` environment variable to the `wss://` origin of the Worker serving `/api/co-op/rooms/:roomCode`. Deployments that only expose framework-prefixed client variables may use `NEXT_PUBLIC_CO_OP_WS_URL` instead. Never put a token or credential in either value. Do not commit `.env*` files or secret values.
 
 The room Worker needs a Cloudflare Durable Object namespace binding named `CO_OP_ROOMS` pointing to the `MultiplayerRoom` class, plus the first Durable Object migration for that class. Provision the equivalent binding and migration in production before pointing the frontend at it. Keep `.openai/hosting.json` unchanged until the real production binding has been provisioned by the hosting platform.
 
