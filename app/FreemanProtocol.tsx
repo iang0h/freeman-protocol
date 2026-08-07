@@ -183,6 +183,7 @@ import {
   damageWarSquad,
   orchestrateWarLayerTick,
   requestSupportEvent,
+  selectWarSquadRole,
   spawnWarSquad,
 } from "./game/war-layer-rules.mjs";
 import {
@@ -5249,16 +5250,11 @@ class FreemanEngine {
     if (spawnState.cooldownLeftMs > 0) return;
     const battlefieldEffects = getBattlefieldEffects(this.battlefieldState);
     if (!battlefieldEffects.assemblyEnabled) return;
-    const repairNeeded = this.battlefieldState.nodes.some(
-      (node) => node.status !== "online",
-    );
-    const role = repairNeeded
-      ? "repair"
-      : this.enemies.length >= 6
-        ? "screen"
-        : battlefieldEffects.computePerSecond > 0 && this.enemies.length > 0
-          ? "raider"
-          : null;
+    const role = selectWarSquadRole({
+      nodes: this.battlefieldState.nodes,
+      enemyCount: this.enemies.length,
+      computePerSecond: battlefieldEffects.computePerSecond,
+    });
     if (!role) return;
     const spawned = spawnWarSquad(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
       parentId: agent.id,
@@ -10166,16 +10162,11 @@ class FreemanCanvasEngine implements GameController {
     if (spawnState.cooldownLeftMs > 0) return;
     const battlefieldEffects = getBattlefieldEffects(this.battlefieldState);
     if (!battlefieldEffects.assemblyEnabled) return;
-    const repairNeeded = this.battlefieldState.nodes.some(
-      (node) => node.status !== "online",
-    );
-    const role = repairNeeded
-      ? "repair"
-      : this.enemies.length >= 6
-        ? "screen"
-        : battlefieldEffects.computePerSecond > 0 && this.enemies.length > 0
-          ? "raider"
-          : null;
+    const role = selectWarSquadRole({
+      nodes: this.battlefieldState.nodes,
+      enemyCount: this.enemies.length,
+      computePerSecond: battlefieldEffects.computePerSecond,
+    });
     if (!role) return;
     const spawned = spawnWarSquad(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
       parentId: agent.id,

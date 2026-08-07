@@ -145,6 +145,19 @@ export function createWarLayerState(options = {}) {
   };
 }
 
+export function selectWarSquadRole(options = {}) {
+  const repairNeeded = (Array.isArray(options.nodes) ? options.nodes : []).some(
+    (node) => node?.id !== "core" && node?.status !== "online",
+  );
+  if (repairNeeded) return "repair";
+
+  const enemyCount = Math.floor(finiteNonNegative(options.enemyCount));
+  if (enemyCount >= 6) return "screen";
+  return finiteNonNegative(options.computePerSecond) > 0 && enemyCount > 0
+    ? "raider"
+    : null;
+}
+
 export function spawnWarSquad(state = createWarLayerState(), request = {}) {
   const squads = Array.isArray(state.squads) ? state.squads : [];
   const parentId = typeof request.parentId === "string" ? request.parentId : "";

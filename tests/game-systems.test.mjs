@@ -230,6 +230,28 @@ test("war squad deployment spends one Component from the request", () => {
   );
 });
 
+test("war squad selection leaves Core recovery to the protected-Core path", () => {
+  const battlefieldState = battlefieldRules.syncBattlefieldRuntimeCore(
+    createBattlefieldState(),
+    { health: 135, maxHealth: 180 },
+  );
+
+  assert.ok(
+    battlefieldState.nodes
+      .filter((node) => node.id !== "core")
+      .every((node) => node.status === "online"),
+  );
+  assert.equal(typeof warLayerRules.selectWarSquadRole, "function");
+  assert.equal(
+    warLayerRules.selectWarSquadRole({
+      nodes: battlefieldState.nodes,
+      enemyCount: 0,
+      computePerSecond: 0,
+    }),
+    null,
+  );
+});
+
 test("war squads honor parent and global caps", () => {
   let state = createWarLayerState({ globalCap: 4, components: 8 });
   for (let index = 0; index < 4; index += 1) {

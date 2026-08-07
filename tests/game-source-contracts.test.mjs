@@ -895,6 +895,18 @@ test("both renderers consume bounded war squads and compact Assembly support", (
   assert.ok((game.match(/const supportEvent = this\.warLayerState\.supportEvent;/g) ?? []).length >= 2);
 });
 
+test("both war-squad decisions use the protected-Core-safe role selector", () => {
+  assert.match(game, /selectWarSquadRole/);
+  for (const engine of [webglGame, canvasGame]) {
+    const decision = engine.slice(
+      engine.indexOf("private maybeSpawnWarSquad("),
+      engine.indexOf("private maybeRequestWarSupport()", engine.indexOf("private maybeSpawnWarSquad(")),
+    );
+    assert.match(decision, /selectWarSquadRole\(\{[\s\S]*?nodes:\s*this\.battlefieldState\.nodes/);
+    assert.match(decision, /if \(!role\) return;/);
+  }
+});
+
 test("both renderers price node repairs, share temporary caps, damage squads, and animate support", () => {
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /externalParentChildren:/);
