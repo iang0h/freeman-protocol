@@ -132,8 +132,13 @@ import {
   resolveEmpDamage,
 } from "./game/encounter-rules.mjs";
 import {
+  ENGAGEMENT_LANES,
+  assignEngagementLane,
+  createEngagementState,
   createMovementWatchdogState,
+  resolveEngagementAdvance,
   resolveEnemyAdvance,
+  tickEngagement,
 } from "./game/enemy-movement-rules.mjs";
 import {
   FIRST_WAVE,
@@ -660,6 +665,22 @@ type EnemyMovementWatchdog = {
   targetId: string | number | null;
   lastDistance: number | null;
   stalledMs: number;
+};
+
+type EngagementRecord = {
+  laneId: string;
+  staging: { x: number; z: number };
+  attackTargetId: string;
+  repathLeftMs: number;
+  repositionLeftMs: number;
+  lastAction: string;
+};
+
+type EngagementState = {
+  wave: number;
+  records: Record<string, EngagementRecord>;
+  stationaryMs: number;
+  repositionReady: boolean;
 };
 
 type EnemyRuntime = {
@@ -1472,6 +1493,7 @@ class FreemanEngine {
   private cinemaState = createCinemaState();
   private watchDirectorState = createWatchDirectorState();
   private watchRecoveryClock = 0;
+  private engagementState: EngagementState = createEngagementState(1);
   private wave = 1;
   private waveActive = false;
   private waveEndClock = 0;
@@ -3810,6 +3832,18 @@ class FreemanEngine {
       resistanceFlags.push("armor");
     }
     const enemyId = ++this.enemySequence;
+    const engagement = assignEngagementLane(
+      enemyId,
+      this.engagementState,
+      bossState ? "boss-portal" : this.wave >= 4 ? "compute-relay" : "core",
+    );
+    this.engagementState = {
+      ...this.engagementState,
+      records: {
+        ...this.engagementState.records,
+        [String(enemyId)]: engagement,
+      },
+    };
     const robotVisual = createLowPolyWarRobot(
       type,
       definition.color,
@@ -4089,6 +4123,7 @@ class FreemanEngine {
       if (!enemy.tutorial) continue;
       this.disposeDynamicObject(enemy.group);
       this.enemies.splice(index, 1);
+      delete this.engagementState.records[String(enemy.id)];
     }
   }
 
@@ -4152,6 +4187,7 @@ class FreemanEngine {
     this.encounterModifiers = getWaveModifiers(wave);
     this.terrain = getTerrainModifier(wave);
     this.battleground = getBattlegroundForWave(wave);
+    this.engagementState = createEngagementState(wave);
     this.applyBattlegroundTheme();
     this.updateTerrainOverlay();
     this.waveActive = true;
@@ -5573,6 +5609,10 @@ class FreemanEngine {
   }
 
   private updateEnemies(delta: number) {
+    this.engagementState = tickEngagement(
+      this.engagementState,
+      delta * 1_000,
+    ) as EngagementState;
     for (const enemy of [...this.enemies]) {
       enemy.cooldownLeft = Math.max(0, enemy.cooldownLeft - delta);
       enemy.slow = Math.max(0, enemy.slow - delta);
@@ -5589,6 +5629,7 @@ class FreemanEngine {
         if (enemy.decoyLeft <= 0 || !ownerActive) {
           this.disposeDynamicObject(enemy.group);
           this.enemies.splice(this.enemies.indexOf(enemy), 1);
+          delete this.engagementState.records[String(enemy.id)];
         }
         continue;
       }
@@ -5623,6 +5664,7 @@ class FreemanEngine {
       const repairBayDistance = this.repairBay.hp > 0
         ? position.distanceTo(this.repairBay.group.position)
         : Infinity;
+      const engagement = this.engagementState.records[String(enemy.id)];
       const targetKind =
         playerDistance < 4.2
           ? "player"
@@ -5632,7 +5674,9 @@ class FreemanEngine {
               ? "turret"
               : repairBayDistance < 6.5
                 ? "repair-bay"
-                : "core";
+                : this.wave >= 4 && engagement
+                  ? "engagement"
+                  : "core";
       const targetPosition = targetKind === "player"
         ? this.player.group.position
         : targetKind === "agent" && agentTarget
@@ -5642,6 +5686,16 @@ class FreemanEngine {
             : targetKind === "repair-bay"
               ? this.repairBay.group.position
               : this.core.group.position;
+      const engagementLane = engagement
+        ? ENGAGEMENT_LANES.find((lane) => lane.id === engagement.laneId)
+        : null;
+      const stagingTargetPosition = engagement
+        ? new THREE.Vector3(engagement.staging.x, 0, engagement.staging.z)
+        : targetPosition;
+      const movementTargetPosition =
+        targetKind === "engagement" && engagement?.repositionLeftMs > 0
+          ? stagingTargetPosition
+          : targetPosition;
       const distance = position.distanceTo(targetPosition);
 
       if (Math.floor(this.elapsed * 60) % getQualitySettings(this.qualityPreset).robotAnimationStride === 0) {
@@ -5818,6 +5872,21 @@ class FreemanEngine {
             } else {
               this.damageTarget(targetKind === "player" ? "player" : "core", enemy.damage);
             }
+            if (targetKind === "engagement" && engagement) {
+              this.engagementState = {
+                ...this.engagementState,
+                stationaryMs: 0,
+                repositionReady: false,
+                records: {
+                  ...this.engagementState.records,
+                  [String(enemy.id)]: {
+                    ...engagement,
+                    repositionLeftMs: 650,
+                    lastAction: "attack",
+                  },
+                },
+              };
+            }
             this.addRing(
               targetPosition,
               0xb7422e,
@@ -5851,17 +5920,31 @@ class FreemanEngine {
         );
         const routeBias =
           this.terrain.routeBias * (enemy.id % 2 === 0 ? 1 : -1);
-        const advance = resolveEnemyAdvance(
-          {
-            position: { x: position.x, z: position.z },
-            target: { id: targetKind, x: targetPosition.x, z: targetPosition.z },
-            routeBias,
-            arrivalDistance,
-            watchdog: enemy.movementWatchdog,
-          },
-          delta * 1_000,
-        );
-        enemy.movementWatchdog = advance.watchdog;
+        const advance = targetKind === "engagement" && engagement
+          ? resolveEngagementAdvance(
+              {
+                position: { x: position.x, z: position.z },
+                target: {
+                  x: movementTargetPosition.x,
+                  z: movementTargetPosition.z,
+                },
+                arrivalDistance,
+                lane: engagementLane?.tangent,
+                reposition: engagement.repositionLeftMs > 0,
+              },
+              delta * 1_000,
+            )
+          : resolveEnemyAdvance(
+              {
+                position: { x: position.x, z: position.z },
+                target: { id: targetKind, x: targetPosition.x, z: targetPosition.z },
+                routeBias,
+                arrivalDistance,
+                watchdog: enemy.movementWatchdog,
+              },
+              delta * 1_000,
+            );
+        if ("watchdog" in advance) enemy.movementWatchdog = advance.watchdog;
         const direction = new THREE.Vector3(advance.vector.x, 0, advance.vector.z);
         position.add(
           direction.multiplyScalar(delta * enemy.speed * slowFactor),
@@ -6439,6 +6522,7 @@ class FreemanEngine {
     }
     this.disposeDynamicObject(enemy.group);
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
+    delete this.engagementState.records[String(enemy.id)];
     if (enemy.decoyOwnerId !== null) {
       this.addBurst(deathPosition, 0xc6a6e8, 5);
       return;
@@ -6448,6 +6532,7 @@ class FreemanEngine {
     )) {
       this.disposeDynamicObject(decoy.group);
       this.enemies.splice(this.enemies.indexOf(decoy), 1);
+      delete this.engagementState.records[String(decoy.id)];
     }
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);
@@ -7202,6 +7287,7 @@ class FreemanEngine {
     for (const effect of this.effects) this.releaseEffect(effect);
     this.clearLootPickups();
     this.enemies.length = 0;
+    this.engagementState = createEngagementState(this.wave);
     this.agents.length = 0;
     this.defenses.length = 0;
     this.projectiles.length = 0;
@@ -7744,6 +7830,7 @@ class FreemanCanvasEngine implements GameController {
   private cinemaState = createCinemaState();
   private watchDirectorState = createWatchDirectorState();
   private watchRecoveryClock = 0;
+  private engagementState: EngagementState = createEngagementState(1);
   private wave = 1;
   private waveActive = false;
   private waveEndClock = 0;
@@ -7924,6 +8011,7 @@ class FreemanCanvasEngine implements GameController {
 
   private resetMissionState() {
     this.enemies.length = 0;
+    this.engagementState = createEngagementState(this.wave);
     this.agents.length = 0;
     this.defenses.length = 0;
     this.projectiles.length = 0;
@@ -9925,6 +10013,10 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private updateEnemies(delta: number) {
+    this.engagementState = tickEngagement(
+      this.engagementState,
+      delta * 1_000,
+    ) as EngagementState;
     for (const enemy of [...this.enemies]) {
       enemy.cooldownLeft = Math.max(0, enemy.cooldownLeft - delta);
       enemy.slow = Math.max(0, enemy.slow - delta);
@@ -9944,6 +10036,7 @@ class FreemanCanvasEngine implements GameController {
         );
         if (enemy.decoyLeft <= 0 || !ownerActive) {
           this.enemies.splice(this.enemies.indexOf(enemy), 1);
+          delete this.engagementState.records[String(enemy.id)];
         }
         continue;
       }
@@ -9980,6 +10073,7 @@ class FreemanCanvasEngine implements GameController {
       const repairBayDistance = this.repairBay.hp > 0
         ? this.distance(enemy.x, enemy.z, this.repairBay.x, this.repairBay.z)
         : Infinity;
+      const engagement = this.engagementState.records[String(enemy.id)];
       const targetKind =
         playerDistance < 4.2
           ? "player"
@@ -9989,7 +10083,9 @@ class FreemanCanvasEngine implements GameController {
               ? "turret"
               : repairBayDistance < 6.5
                 ? "repair-bay"
-                : "core";
+                : this.wave >= 4 && engagement
+                  ? "engagement"
+                  : "core";
       const targetX = targetKind === "player"
         ? this.player.x
         : targetKind === "agent" && agentTarget
@@ -10008,6 +10104,16 @@ class FreemanCanvasEngine implements GameController {
             : targetKind === "repair-bay"
               ? this.repairBay.z
               : this.core.z;
+      const engagementLane = engagement
+        ? ENGAGEMENT_LANES.find((lane) => lane.id === engagement.laneId)
+        : null;
+      const stagingTarget = engagement
+        ? { x: engagement.staging.x, z: engagement.staging.z }
+        : { x: targetX, z: targetZ };
+      const movementTarget =
+        targetKind === "engagement" && engagement?.repositionLeftMs > 0
+          ? stagingTarget
+          : { x: targetX, z: targetZ };
       const distance = this.distance(enemy.x, enemy.z, targetX, targetZ);
 
       if (
@@ -10144,6 +10250,21 @@ class FreemanCanvasEngine implements GameController {
             } else {
               this.damageTarget(targetKind === "player" ? "player" : "core", enemy.damage);
             }
+            if (targetKind === "engagement" && engagement) {
+              this.engagementState = {
+                ...this.engagementState,
+                stationaryMs: 0,
+                repositionReady: false,
+                records: {
+                  ...this.engagementState.records,
+                  [String(enemy.id)]: {
+                    ...engagement,
+                    repositionLeftMs: 650,
+                    lastAction: "attack",
+                  },
+                },
+              };
+            }
             this.addRing(
               targetX,
               targetZ,
@@ -10178,17 +10299,28 @@ class FreemanCanvasEngine implements GameController {
         );
         const routeBias =
           this.terrain.routeBias * (enemy.id % 2 === 0 ? 1 : -1);
-        const advance = resolveEnemyAdvance(
-          {
-            position: { x: enemy.x, z: enemy.z },
-            target: { id: targetKind, x: targetX, z: targetZ },
-            routeBias,
-            arrivalDistance,
-            watchdog: enemy.movementWatchdog,
-          },
-          delta * 1_000,
-        );
-        enemy.movementWatchdog = advance.watchdog;
+        const advance = targetKind === "engagement" && engagement
+          ? resolveEngagementAdvance(
+              {
+                position: { x: enemy.x, z: enemy.z },
+                target: movementTarget,
+                arrivalDistance,
+                lane: engagementLane?.tangent,
+                reposition: engagement.repositionLeftMs > 0,
+              },
+              delta * 1_000,
+            )
+          : resolveEnemyAdvance(
+              {
+                position: { x: enemy.x, z: enemy.z },
+                target: { id: targetKind, x: targetX, z: targetZ },
+                routeBias,
+                arrivalDistance,
+                watchdog: enemy.movementWatchdog,
+              },
+              delta * 1_000,
+            );
+        if ("watchdog" in advance) enemy.movementWatchdog = advance.watchdog;
         enemy.x +=
           advance.vector.x *
           delta *
@@ -10372,6 +10504,7 @@ class FreemanCanvasEngine implements GameController {
     this.encounterModifiers = getWaveModifiers(wave);
     this.terrain = getTerrainModifier(wave);
     this.battleground = getBattlegroundForWave(wave);
+    this.engagementState = createEngagementState(wave);
     this.waveActive = true;
     this.waveEndClock = 0;
     if (wave === 1) {
@@ -10562,8 +10695,21 @@ class FreemanCanvasEngine implements GameController {
       : options.decoyOwnerId
         ? 1
         : Math.round(definition.hp * healthScale);
+    const enemyId = ++this.enemySequence;
+    const engagement = assignEngagementLane(
+      enemyId,
+      this.engagementState,
+      bossState ? "boss-portal" : this.wave >= 4 ? "compute-relay" : "core",
+    );
+    this.engagementState = {
+      ...this.engagementState,
+      records: {
+        ...this.engagementState.records,
+        [String(enemyId)]: engagement,
+      },
+    };
     const enemy: FlatEnemy = {
-      id: ++this.enemySequence,
+      id: enemyId,
       type,
       x,
       z,
@@ -10661,7 +10807,11 @@ class FreemanCanvasEngine implements GameController {
 
   private clearTutorialThreats() {
     for (let index = this.enemies.length - 1; index >= 0; index -= 1) {
-      if (this.enemies[index].tutorial) this.enemies.splice(index, 1);
+      if (this.enemies[index].tutorial) {
+        const enemy = this.enemies[index];
+        this.enemies.splice(index, 1);
+        delete this.engagementState.records[String(enemy.id)];
+      }
     }
   }
 
@@ -10971,6 +11121,7 @@ class FreemanCanvasEngine implements GameController {
       });
     }
     this.enemies.splice(this.enemies.indexOf(enemy), 1);
+    delete this.engagementState.records[String(enemy.id)];
     if (enemy.decoyOwnerId !== null) {
       this.addBurst(enemy.x, enemy.z, 0xc6a6e8, 5);
       return;
@@ -10979,6 +11130,7 @@ class FreemanCanvasEngine implements GameController {
       (threat) => threat.decoyOwnerId === enemy.id,
     )) {
       this.enemies.splice(this.enemies.indexOf(decoy), 1);
+      delete this.engagementState.records[String(decoy.id)];
     }
     this.data += enemy.reward;
     this.score += Math.round(enemy.maxHp * 10 + this.wave * 90);

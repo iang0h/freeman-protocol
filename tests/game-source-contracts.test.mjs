@@ -63,6 +63,20 @@ test("both renderers consume the shared quality, battleground, and snapshot help
   assert.match(game, /setCinemaSpeed/);
 });
 
+test("both renderers create, assign, and tick late-wave engagement lanes", () => {
+  assert.match(game, /from "\.\/game\/enemy-movement-rules\.mjs"/);
+  assert.match(game, /createEngagementState/);
+  assert.match(game, /assignEngagementLane/);
+  assert.match(game, /tickEngagement/);
+
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private engagementState(?:\s*:\s*[^=]+)? = createEngagementState\(1\);/);
+    assert.match(engine, /this\.engagementState = createEngagementState\(wave\);/);
+    assert.match(engine, /assignEngagementLane\(/);
+    assert.match(engine, /this\.engagementState = tickEngagement\(/);
+  }
+});
+
 test("WebGL battleground theme narrows the arena grid before reading its material", () => {
   assert.match(
     webglGame,

@@ -77,6 +77,12 @@ import {
   resolveEnemyAdvance,
 } from "../app/game/enemy-movement-rules.mjs";
 import {
+  assignEngagementLane,
+  createEngagementState,
+  resolveEngagementAdvance,
+  tickEngagement,
+} from "../app/game/enemy-movement-rules.mjs";
+import {
   EMP_BASE_DAMAGE,
   EMP_BASE_RADIUS,
   canFireEmp,
@@ -250,6 +256,54 @@ test("changing an enemy target resets the stall timer", () => {
   assert.equal(result.forcedDirect, false);
   assert.equal(result.watchdog.targetId, "agent");
   assert.equal(result.watchdog.stalledMs, 0);
+});
+
+test("late waves distribute threats across breach lanes", () => {
+  const state = createEngagementState(4);
+  const assignments = ["a", "b", "c", "d"].map((id) =>
+    assignEngagementLane(
+      id,
+      state,
+      id === "a" ? "core" : "compute-relay",
+    ),
+  );
+
+  assert.ok(new Set(assignments.map((entry) => entry.laneId)).size >= 2);
+});
+
+test("engagement watchdog forces a reposition after a stationary attack radius", () => {
+  let state = createEngagementState(4);
+  state = tickEngagement(state, 2_100);
+  assert.equal(state.repositionReady, true);
+  const advance = resolveEngagementAdvance({
+    position: { x: 1, z: 0 },
+    target: { x: 0, z: 0 },
+    arrivalDistance: 1,
+    lane: { x: 0, z: 1 },
+    reposition: true,
+  }, 100);
+
+  assert.ok(advance.vector.z > 0);
+});
+
+test("wave-four engagement records keep an attack or reposition cadence", () => {
+  let state = createEngagementState(4);
+  const record = assignEngagementLane("watch-4", state, "core");
+  state = {
+    ...state,
+    records: { ...state.records, ["watch-4"]: record },
+  };
+  const actions = [];
+
+  for (let elapsedMs = 0; elapsedMs < 12_000; elapsedMs += 100) {
+    state = tickEngagement(state, 100);
+    const next = state.records["watch-4"];
+    if (next.lastAction === "reposition") actions.push(elapsedMs);
+  }
+
+  for (let windowStart = 0; windowStart < 12_000; windowStart += 2_000) {
+    assert.ok(actions.some((elapsedMs) => elapsedMs >= windowStart && elapsedMs < windowStart + 2_000));
+  }
 });
 
 async function loadRepairRules() {
