@@ -509,9 +509,9 @@ canvas:focus-visible {
 
 @media (max-width: 820px) {
   .co-op-entry {
-    top: calc(env(safe-area-inset-top) + 10px);
+    top: calc(env(safe-area-inset-top) + 98px);
     right: 12px;
-    min-height: 48px;
+    min-height: 44px;
   }
 
   .co-op-remote-status {

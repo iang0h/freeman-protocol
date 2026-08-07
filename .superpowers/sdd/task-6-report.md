@@ -41,6 +41,24 @@ duration_ms 161.787458
 exit 0
 ```
 
+## 2026-08-07 local release re-verification
+
+Automated gates passed with the bundled Node runtime:
+
+- `node --test tests/*.test.mjs`: 316 tests passed, 0 failed.
+- `tsc --noEmit --incremental false`: passed with no diagnostics.
+- `vinext build`: passed; Vinext repeated only its non-failing client chunk-size advisory.
+- `bash scripts/validate-artifact.sh`: passed; ESM Worker `default.fetch` and hosting manifest are present.
+- `git diff --check`: passed with no whitespace errors.
+
+Campaign audio: a visible Start Campaign gesture showed `AUDIO ON`; toggling showed `AUDIO OFF`, and reload retained `AUDIO OFF`. Blocked playback did not occur in this browser session, so `TAP TO ENABLE AUDIO` was not rendered.
+
+Watch Mode: selected 4X simulation and 4X cinema speed and expanded the live log. At Wave 4 (survival 105s), the panel showed 72 C, 6/8 agents, and Core 8/180; subsequent samples showed Core repair to 33/180 and alternating repair/director events. At Wave 5 (survival 228s), it showed 114 C, 7/8 agents, Core 84/180, 3 Components, and 17 Shards, with `WARDEN RECRUITED BY THE NETWORK` and `NETWORK SALVAGE +3 COMPONENTS`. The captured Wave 4 visual showed `CORE HIT 10`, repair/route events, both selected 4X controls, and `WATCH RECOVERY PULSE`; the Wave 5 visual showed the active battlefield and post-wave roster/income growth. `tab.dev.logs({levels:["error","warn"]})` returned `[]`.
+
+Mobile 390 x 844 verification found and corrected a concrete overlap: before the fix, `AUDIO OFF` occupied x=319.16..372, y=10..37, while the z-index 60 Co-op entry occupied x=324.31..378, y=10..58. Audio-center hit-testing returned `CO-OP`, which opened the lobby. The mobile Co-op entry now occupies y=98..142, with the advisor at y=145..205 and the audio control unchanged at y=10..37. Added the focused layout contract `keeps the mobile co-op entry clear of the audio recovery action`; it failed before the CSS adjustment and passed after it. Post-fix taps changed `AUDIO OFF` to `AUDIO ON` without leaving Campaign, dismissed `EMP PULSE`, and left Warband collapsed by default; browser error/warning logs remained empty.
+
+`tsconfig.tsbuildinfo` was already unstaged before this pass and remains intentionally excluded from the verification-fix commit.
+
 ## Lint
 
 Command:

@@ -16,6 +16,15 @@ test("uses the full safe mobile viewport", () => {
   assert.match(styles, /env\(safe-area-inset-bottom\)/);
 });
 
+test("keeps the mobile co-op entry clear of the audio recovery action", () => {
+  assert.match(page, /className="co-op-entry"/);
+  assert.match(game, /TAP TO ENABLE AUDIO/);
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*?\.co-op-entry\s*\{[\s\S]*?top:\s*calc\(env\(safe-area-inset-top\) \+ 98px\)[\s\S]*?min-height:\s*44px/,
+  );
+});
+
 test("keeps mobile gameplay clear by collapsing secondary controls", () => {
   assert.match(game, /mobile-squad-toggle/);
   assert.match(game, /aria-expanded=\{mobilePanel === "command" && mobileSquadOpen\}/);
