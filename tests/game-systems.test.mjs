@@ -190,6 +190,7 @@ import {
 } from "../app/game/battlefield-rules.mjs";
 import {
   WAR_LAYER_GLOBAL_CAP,
+  WAR_SQUAD_COMPONENT_COST,
   createWarLayerState,
   damageWarSquad,
   requestSupportEvent,
@@ -197,14 +198,40 @@ import {
   tickWarSquads,
 } from "../app/game/war-layer-rules.mjs";
 
+test("war squad deployment spends one Component from the request", () => {
+  const state = createWarLayerState({ components: 2 });
+  const deployed = spawnWarSquad(state, {
+    parentId: "agent-1",
+    role: "screen",
+    x: 0,
+    z: 0,
+    components: 2,
+  });
+
+  assert.equal(WAR_SQUAD_COMPONENT_COST, 1);
+  assert.equal(deployed.accepted, true);
+  assert.equal(deployed.state.components, 1);
+  assert.equal(
+    spawnWarSquad(createWarLayerState(), {
+      parentId: "agent-1",
+      role: "screen",
+      x: 0,
+      z: 0,
+      components: 0,
+    }).reason,
+    "components",
+  );
+});
+
 test("war squads honor parent and global caps", () => {
-  let state = createWarLayerState({ globalCap: 4 });
+  let state = createWarLayerState({ globalCap: 4, components: 8 });
   for (let index = 0; index < 4; index += 1) {
     const result = spawnWarSquad(state, {
       parentId: "agent-1",
       role: "screen",
       x: 0,
       z: 0,
+      components: state.components,
     });
     state = result.state;
   }
@@ -230,11 +257,12 @@ test("war squads honor parent and global caps", () => {
 });
 
 test("war squads move toward threats, deal damage, and expire", () => {
-  let state = spawnWarSquad(createWarLayerState(), {
+  let state = spawnWarSquad(createWarLayerState({ components: 1 }), {
     parentId: "agent-1",
     role: "screen",
     x: 0,
     z: 0,
+    components: 1,
   }).state;
   state = tickWarSquads(
     state,
@@ -247,11 +275,12 @@ test("war squads move toward threats, deal damage, and expire", () => {
 });
 
 test("war squad damage is immutable and removes destroyed squads", () => {
-  const spawned = spawnWarSquad(createWarLayerState(), {
+  const spawned = spawnWarSquad(createWarLayerState({ components: 1 }), {
     parentId: "agent-1",
     role: "repair",
     x: 2,
     z: -1,
+    components: 1,
   });
   const damaged = damageWarSquad(spawned.state, spawned.squad.id, 100);
   assert.equal(damaged.squads.length, 0);

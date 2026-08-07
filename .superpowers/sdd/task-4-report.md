@@ -41,5 +41,33 @@
 
 ## Concerns
 
-- The current gameplay exposes direct hostile damage only for the Core, sentries, Repair Bay, and agents. Assembly Pad and Compute Relay now render from the shared battlefield state and drive war-layer eligibility, but need a future node-targeting combat pass before they can become hostile-damage targets.
+- Superseded by the review-finding fix below: all non-Core strategic nodes now participate in hostile targeting, projectile collisions, damage, and war-squad repair synchronization.
 - `tsconfig.tsbuildinfo` was already modified when this task began and is intentionally excluded from this task’s commit.
+
+## Review-finding fix — war-layer integration
+
+### Fixed
+
+- `spawnWarSquad` now requires one Component, rejects unaffordable requests with `reason: "components"`, and returns the deducted material state. Both renderer paths pass live loot Components into the request and keep the returned balance.
+- Every non-Core battlefield node is now eligible for hostile proximity targeting and hostile-projectile collision in WebGL and Canvas. Node damage uses the shared battlefield rule; the Core remains on its existing protect-only loss path.
+- War-layer repair results now synchronize every returned non-Core node snapshot into live battlefield state, rather than copying back only the Repair Bay.
+- Added an active convoy/air-strike marker at the Assembly Pad in the command map, and increased the shared WebGL temporary-marker pool to the valid maximum of temporary sub-agents plus war squads (16 + 24).
+- Added focused pure and source-contract regression tests for squad Component spending, material handoff in both renderers, and full non-Core node targeting/damage/repair routing.
+
+### Verification
+
+1. `/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node node_modules/typescript/bin/tsc --noEmit`
+
+   Output: exit 0.
+
+2. `/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs`
+
+   Output: 214 tests passed, 0 failed.
+
+3. `git diff --check`
+
+   Output: exit 0; no whitespace errors.
+
+### Remaining concern
+
+- `tsconfig.tsbuildinfo` remains an unrelated pre-existing modification and is intentionally excluded from the commit.

@@ -859,7 +859,8 @@ test("both renderers consume bounded war squads and compact Assembly support", (
     assert.match(engine, /private battlefieldState = createBattlefieldState\(\);/);
     assert.match(engine, /private warLayerState(?:\s*:\s*[^=]+)? = createWarLayerState\(/);
     assert.match(engine, /private maybeSpawnWarSquad\(/);
-    assert.match(engine, /spawnWarSquad\(/);
+    assert.match(engine, /spawnWarSquad\([\s\S]*?components: this\.loot\.components/);
+    assert.match(engine, /this\.loot\.components = spawned\.state\.components/);
     assert.match(engine, /private updateWarLayer\([\s\S]*?tickWarSquads\(/);
     assert.match(engine, /requestSupportEvent\(/);
     assert.match(engine, /AIR STRIKE INBOUND/);
@@ -868,6 +869,19 @@ test("both renderers consume bounded war squads and compact Assembly support", (
   assert.match(canvasGame, /private drawWarSquad/);
   assert.match(canvasGame, /private drawBattlefieldNode/);
   assert.match(game, /"assembly-pad"/);
+  assert.equal((game.match(/id: "support-event"/g) ?? []).length, 2);
+  assert.match(game, /"support-event",\n\s+"assembly-pad"/);
+});
+
+test("both renderers target, damage, and repair non-Core battlefield nodes", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /const battlefieldNodeTarget = this\.battlefieldState\.nodes/);
+    assert.match(engine, /targetKind === "battlefield-node"/);
+    assert.match(engine, /kind: "battlefield-node"/);
+    assert.match(engine, /this\.damageBattlefieldNode\(hit\.id, projectile\.damage\)/);
+    assert.match(engine, /this\.warLayerState\.nodes\?\.map/);
+    assert.doesNotMatch(engine, /damageBattlefieldNode\("core"/);
+  }
 });
 
 test("Canvas fallback owns the same repair-bay, retreat, and hostile-target contracts as WebGL", () => {

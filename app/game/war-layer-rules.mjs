@@ -1,5 +1,6 @@
 export const WAR_LAYER_GLOBAL_CAP = 24;
 export const WAR_SQUAD_PARENT_CAP = 4;
+export const WAR_SQUAD_COMPONENT_COST = 1;
 export const WAR_SQUAD_ACTION_COOLDOWN_MS = 1_500;
 export const WAR_SUPPORT_COMPONENT_COST = 2;
 export const WAR_SUPPORT_COOLDOWN_MS = 6_000;
@@ -67,8 +68,10 @@ export function createWarLayerState(options = {}) {
 export function spawnWarSquad(state = createWarLayerState(), request = {}) {
   const squads = Array.isArray(state.squads) ? state.squads : [];
   const parentId = typeof request.parentId === "string" ? request.parentId : "";
+  const components = finiteNonNegative(request.components, state.components);
   const parentCount = squads.filter((squad) => squad.parentId === parentId).length;
   if (!parentId) return { accepted: false, reason: "parent", state };
+  if (components < WAR_SQUAD_COMPONENT_COST) return { accepted: false, reason: "components", state };
   if (parentCount >= boundedCap(state.parentCap, WAR_SQUAD_PARENT_CAP, WAR_SQUAD_PARENT_CAP)) {
     return { accepted: false, reason: "parent-cap", state };
   }
@@ -94,6 +97,7 @@ export function spawnWarSquad(state = createWarLayerState(), request = {}) {
     squad,
     state: {
       ...state,
+      components: components - WAR_SQUAD_COMPONENT_COST,
       squads: [...squads, squad],
       nextSquadId: finiteNonNegative(state.nextSquadId, 1) + 1,
     },
