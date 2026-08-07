@@ -1,160 +1,149 @@
-# Freeman Protocol
+<div align="center">
+  <img src="public/marketing/readme/freeman-protocol-hero.png" alt="Freeman Protocol cyber-defense battlefield" width="100%" />
 
-Freeman Protocol is a browser-based cyber-defense action game. The player loop
-is:
+  <h1>Freeman Protocol</h1>
 
-**gather → recruit/upgrade → repair → deploy skills → survive boss waves**
+  <p><strong>Build an autonomous AI warband. Defend the Core. Survive the breach.</strong></p>
 
-Destroy threats and collect their materials, then recruit the persistent
-eight-slot warband and install upgrades between waves. Keep agents and sentries
-operational through the separate repair bay and field kits, deploy each
-specialist’s cooldown skill at the right moment, and use the visible EMP charge
-to disrupt encounters. From wave three onward, armored warbosses telegraph
-their strikes and drop rare Components and Shards that fund the final recruits.
-The Covenant Core is protect-only: defend it, but do not treat it as a repair
-target.
+  <p>
+    <a href="https://freeman.skillrivals.com/">Play the live game</a>
+    &nbsp;·&nbsp;
+    <a href="https://youtu.be/SesS1bd7b4c">Watch the trailer</a>
+    &nbsp;·&nbsp;
+    <a href="https://freeman-protocol.vercel.app/asset-catalog">Browse the asset catalog</a>
+  </p>
+</div>
 
-## Runtime and Sites Notes
+Freeman Protocol is a cinematic browser strategy-action game about turning a handful of resources into a living AI defense network. You fight when you want to, manage the warband when you need to, and can hand the whole operation to your agents in Watch Mode.
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+## The five-minute loop
 
-## Optional co-op multiplayer deployment
+<table>
+  <tr>
+    <td align="center" width="20%"><strong>01<br />GATHER</strong><br /><sub>Collect Compute, Components, and Shards.</sub></td>
+    <td align="center" width="20%"><strong>02<br />RECRUIT</strong><br /><sub>Fill the eight-slot warband with specialists.</sub></td>
+    <td align="center" width="20%"><strong>03<br />REPAIR</strong><br /><sub>Keep agents, sentries, and the Core online.</sub></td>
+    <td align="center" width="20%"><strong>04<br />DEPLOY</strong><br /><sub>Use skills, EMP, loot, and temporary sub-agents.</sub></td>
+    <td align="center" width="20%"><strong>05<br />SURVIVE</strong><br /><sub>Hold the breach through escalating boss waves.</sub></td>
+  </tr>
+</table>
 
-Co-op is intentionally feature-flagged. The browser only enables the room
-lobby when a public WebSocket endpoint is injected at build time. Set the
-canonical `CO_OP_WS_URL` environment variable to the `wss://` origin of the
-Worker that serves `/api/co-op/rooms/:roomCode` (for example,
-`wss://freeman-rooms.example.workers.dev`). The Vite config also accepts
-`NEXT_PUBLIC_CO_OP_WS_URL` for deployments that only expose framework-prefixed
-client variables. Never put a token or credential in either value, and do not
-commit `.env*` files or secret values.
+## Why it feels different
 
-The room Worker needs a Cloudflare Durable Object namespace binding named
-`CO_OP_ROOMS` pointing to the `MultiplayerRoom` class, plus the first Durable
-Object migration for that class. The local preview binding and migration are
-declared in `vite.config.ts`; provision the equivalent binding and migration in
-the production Worker before pointing the frontend at it. Keep
-`.openai/hosting.json` unchanged until the real production binding has been
-provisioned by the hosting platform.
+<table>
+  <tr>
+    <td width="33%"><strong>Autonomous AI warband</strong><br /><sub>Recruit distinct agents, give them a broad priority, and watch them gather, fight, repair, and improvise.</sub></td>
+    <td width="33%"><strong>Living battlefield</strong><br /><sub>Defend a meaningful Core while breach lanes, compute nodes, repair bays, loot, and boss portals pull the action outward.</sub></td>
+    <td width="33%"><strong>Watch Mode</strong><br /><sub>Let your network run itself, earn income, spawn support, and turn a campaign into an endless idle-farming command view.</sub></td>
+  </tr>
+</table>
 
-If `CO_OP_WS_URL` (or its `NEXT_PUBLIC_` compatibility name) is absent, the
-lobby remains safely disabled and displays **CO-OP COMING SOON**. If a Worker
-is reached without `CO_OP_ROOMS`, its WebSocket room route returns `503` rather
-than attempting a broken upgrade. Campaign and Watch Mode continue to run
-without a network endpoint.
+## See the network in action
 
-### Production checklist
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <strong>Recruit a specialist warband</strong><br />
+      <img src="public/marketing/product-hunt/02-recruitment.png" alt="Freeman Protocol recruitment screen with eight AI agent portraits" width="100%" />
+    </td>
+    <td align="center" width="50%">
+      <strong>Watch the AI run the operation</strong><br />
+      <img src="public/marketing/product-hunt/04-watch-mode.png" alt="Freeman Protocol Watch Mode battlefield and autonomous controls" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <strong>Fight across meaningful zones</strong><br />
+      <img src="public/marketing/product-hunt/03-living-battlefield.png" alt="Freeman Protocol battlefield with Core, compute extraction, repair bay, and boss portal" width="100%" />
+    </td>
+    <td align="center" width="50%">
+      <strong>Play on a phone without the clutter</strong><br />
+      <img src="public/marketing/product-hunt/05-mobile-play.png" alt="Freeman Protocol mobile gameplay with large touch controls" width="100%" />
+    </td>
+  </tr>
+</table>
 
-1. Deploy `worker/index.ts` and `worker/multiplayer-room.ts` with the
-   `CO_OP_ROOMS` Durable Object binding and migration.
-2. Confirm the Worker responds to `GET /api/co-op/rooms/ABC123` with a WebSocket
-   upgrade only after the binding is present.
-3. Set `CO_OP_WS_URL` in the frontend build environment, redeploy, and verify
-   that the lobby no longer shows **CO-OP COMING SOON**.
-4. Keep all credentials in the hosting provider's secret store; do not commit
-   them to Git or place them in source code.
+## Trailer
 
-## Prerequisites
+<div align="center">
+  <a href="https://youtu.be/SesS1bd7b4c">
+    <img src="public/video/freeman-protocol-trailer-poster.jpg" alt="Watch the Freeman Protocol cinematic trailer on YouTube" width="85%" />
+  </a>
+  <p><sub>Click the poster to watch the cinematic trailer on YouTube.</sub></p>
+</div>
+
+## Current build
+
+| Surface | Status |
+| --- | --- |
+| Campaign | Playable through escalating breach waves and boss encounters |
+| Watch Mode | Playable; agents gather, repair, fight, and generate income autonomously |
+| Desktop + mobile | Supported with simplified touch controls and readable HUD states |
+| Co-op | Coming soon; the lobby activates after a production WebSocket room Worker is configured |
+
+## Developer setup
+
+<details>
+<summary>Runtime, prerequisites, and local commands</summary>
+
+Freeman Protocol is a full-stack browser app running on [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and Drizzle support.
+
+**Prerequisites**
 
 - Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
+- Linux with `flock`, `curl`, and GNU `timeout` for the Sites lifecycle scripts
 
-## Sites Lifecycle
+**Commands**
 
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
-
-This starter does not use `wrangler.jsonc`.
-
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout and then validates the Sites artifact. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
-
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
-
-## Included Shape
-
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm run install:ci       # locked dependency install
+npm run dev              # local Vite/Vinext preview
+npm run build            # build and validate the deployable artifact
+npm test                 # build, validate, and run the test suite
+npm run validate:artifact
+npm run db:generate
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+The Sites lifecycle runs the locked install before returning a checkout. Edit source under `app/`; the remote Sites builder runs `npm run build` against the pushed commit. The generated `.sites-runtime/` directory is disposable and ignored by Git.
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+</details>
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+<details>
+<summary>Optional co-op multiplayer deployment</summary>
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+Co-op is intentionally feature-flagged. The browser enables the room lobby only when a public WebSocket endpoint is injected at build time. Set the canonical `CO_OP_WS_URL` environment variable to the `wss://` origin of the Worker serving `/api/co-op/rooms/:roomCode`. Deployments that only expose framework-prefixed client variables may use `NEXT_PUBLIC_CO_OP_WS_URL` instead. Never put a token or credential in either value. Do not commit `.env*` files or secret values.
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+The room Worker needs a Cloudflare Durable Object namespace binding named `CO_OP_ROOMS` pointing to the `MultiplayerRoom` class, plus the first Durable Object migration for that class. Provision the equivalent binding and migration in production before pointing the frontend at it. Keep `.openai/hosting.json` unchanged until the real production binding has been provisioned by the hosting platform.
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+If the WebSocket variable is absent, the lobby safely shows **CO-OP COMING SOON**. If a Worker is reached without `CO_OP_ROOMS`, its WebSocket room route returns `503` rather than attempting a broken upgrade. Campaign and Watch Mode continue to run without a network endpoint.
 
-## Diagnostic Commands
+**Production checklist**
 
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build and validate the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build, validate, and verify the rendered development-preview metadata
-- `npm run validate:artifact`: recheck an existing artifact's manifest and ESM `default.fetch` export
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+1. Deploy `worker/index.ts` and `worker/multiplayer-room.ts` with the `CO_OP_ROOMS` Durable Object binding and migration.
+2. Confirm `GET /api/co-op/rooms/ABC123` upgrades to WebSocket only after the binding is present.
+3. Set `CO_OP_WS_URL` in the frontend build environment, redeploy, and verify the lobby no longer shows **CO-OP COMING SOON**.
+4. Keep all credentials in the hosting provider's secret store.
 
-Use build and validation commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
+</details>
 
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
+<details>
+<summary>Included project shape and authentication notes</summary>
 
-## Learn More
+- Edit site code under `app/`.
+- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers.
+- `.openai/hosting.json` declares optional Sites D1 and R2 bindings.
+- `vite.config.ts` simulates declared bindings for local development.
+- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment.
+- `db/schema.ts` starts intentionally empty; `examples/d1/` contains an optional D1 example surface.
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+OpenAI workspace Sites can read the current user's email from `oai-authenticated-user-email`. SIWC-authenticated Sites may also receive `oai-authenticated-user-full-name` and `oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`. Use `getChatGPTUser()` for optional signed-in UI or `requireChatGPTUser(returnTo)` for protected pages; leave public game content anonymous.
+
+</details>
+
+## Learn more
+
+- [Live game](https://freeman.skillrivals.com/)
+- [Asset catalog](https://freeman-protocol.vercel.app/asset-catalog)
+- [Freeman Protocol trailer](https://youtu.be/SesS1bd7b4c)
+- [vinext documentation](https://github.com/cloudflare/vinext)
+- [Drizzle D1 guide](https://orm.drizzle.team/docs/get-started/d1-new)
