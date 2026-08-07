@@ -197,6 +197,38 @@ export function spawnTemporarySubAgent(agent, context = {}) {
   return subAgent;
 }
 
+export function deployTemporaryReserve(agent, context = {}) {
+  const subAgents = Array.isArray(context.subAgents)
+    ? [...context.subAgents]
+    : [];
+  const materials = {
+    components: Number.isFinite(context.materials?.components)
+      ? context.materials.components
+      : 0,
+    shards: Number.isFinite(context.materials?.shards)
+      ? context.materials.shards
+      : 0,
+  };
+  const deployed = [];
+  const batchSize = Math.min(
+    PLAYER_RESERVE_BATCH_SIZE,
+    validNonNegativeInteger(context.batchSize, PLAYER_RESERVE_BATCH_SIZE),
+  );
+
+  for (let index = 0; index < batchSize; index += 1) {
+    const spawned = spawnTemporarySubAgent(agent, {
+      ...context,
+      subAgents,
+      materials,
+    });
+    if (!spawned) break;
+    subAgents.push(spawned);
+    deployed.push(spawned);
+  }
+
+  return { deployed, materials };
+}
+
 export function tickSubAgents(subAgents, elapsedMs) {
   const elapsed = Math.max(0, elapsedMs);
   return subAgents.reduce((active, subAgent) => {

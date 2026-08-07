@@ -77,6 +77,28 @@ export const BATTLEFIELD_NODES = Object.freeze([
   }),
 ]);
 
+export const BATTLEFIELD_NODE_PRESENTATIONS = Object.freeze({
+  core: Object.freeze({ color: 0xfff0e2, cssColor: "#fff0e2", silhouette: "diamond" }),
+  command: Object.freeze({ color: 0xffc857, cssColor: "#ffc857", silhouette: "uplink" }),
+  repair: Object.freeze({ color: 0x7fd8ff, cssColor: "#7fd8ff", silhouette: "cross" }),
+  assembly: Object.freeze({ color: 0xff8f4c, cssColor: "#ff8f4c", silhouette: "hex-pad" }),
+  compute: Object.freeze({ color: 0xb38cff, cssColor: "#b38cff", silhouette: "crystal" }),
+});
+
+export function getBattlefieldNodePresentation(node) {
+  const presentation = BATTLEFIELD_NODE_PRESENTATIONS[node?.kind] ??
+    BATTLEFIELD_NODE_PRESENTATIONS.core;
+  const maxHealth = Math.max(1, finite(node?.maxHealth, DEFAULT_MAX_HEALTH));
+  const health = clamp(finite(node?.health, maxHealth), 0, maxHealth);
+  const status = node?.status ?? statusForHealth(health, maxHealth);
+  return {
+    ...presentation,
+    healthRatio: health / maxHealth,
+    showHealthCue: status !== "online",
+    offline: status === "offline",
+  };
+}
+
 export function createBattlefieldState() {
   return { nodes: BATTLEFIELD_NODES.map(runtimeNode) };
 }

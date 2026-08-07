@@ -17,7 +17,12 @@ const compiled = ts.transpileModule(source, {
 }).outputText
   .replaceAll('"./playlist.mjs"', `"${playlistPath}"`)
   .replaceAll('"./storage.mjs"', `"${storagePath}"`);
-const { AudioManager, getStoredAudioSettings } = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
+const {
+  AudioManager,
+  getAudioControlLabel,
+  getServerAudioSettings,
+  getStoredAudioSettings,
+} = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
 
 function createAudioTestManager({ playRejects = false } = {}) {
   let rejectPlayback = playRejects;
@@ -118,6 +123,21 @@ test("stored audio settings can hydrate React before an engine creates Audio pla
     sfxVolume: 0.6,
     playback: "idle",
   });
+});
+
+test("server audio initialization is storage-free and never emits a false AUDIO ON label", () => {
+  writeStoredValue("freeman-audio-muted", "false");
+  writeStoredValue("freeman-music-volume", "0.9");
+  const serverSnapshot = getServerAudioSettings();
+
+  assert.deepEqual(serverSnapshot, {
+    muted: true,
+    musicVolume: 0.42,
+    sfxVolume: 0.72,
+    playback: "idle",
+  });
+  assert.equal(getAudioControlLabel(serverSnapshot, false), "AUDIO …");
+  assert.equal(getAudioControlLabel(getStoredAudioSettings(), true), "AUDIO ON");
 });
 
 test("audio settings subscribers observe blocked playback and its retry", async () => {

@@ -149,12 +149,84 @@ export function markEngagementAttack(state, enemyId) {
 
 export function resolveEngagementAttackTarget(record, targets, fallback) {
   const target = (Array.isArray(targets) ? targets : []).find(
-    (candidate) => candidate?.id === record?.attackTargetId,
+    (candidate) =>
+      candidate?.id === record?.attackTargetId &&
+      candidate?.status !== "offline" &&
+      (!Number.isFinite(candidate?.health) || candidate.health > 0),
   ) ?? fallback;
   return {
     id: target?.id ?? "core",
     x: finite(target?.x),
     z: finite(target?.z),
+  };
+}
+
+/**
+ * @param {{
+ *   wave?: number,
+ *   engagement?: EngagementRecord | null,
+ *   battlefieldNodes?: Array<{ id?: string, x?: number, z?: number, health?: number, status?: string }>,
+ *   fallbackTarget?: { id?: string, x?: number, z?: number } | null,
+ *   playerDistance?: number,
+ *   warSquadDistance?: number,
+ *   agentDistance?: number,
+ *   turretDistance?: number,
+ *   repairBayDistance?: number,
+ *   repairBayTarget?: { id?: string, x?: number, z?: number } | null,
+ *   genericNodeDistance?: number,
+ *   genericNodeTarget?: { id?: string, x?: number, z?: number } | null,
+ * }} options
+ */
+export function selectEnemyTarget({
+  wave = 1,
+  engagement,
+  battlefieldNodes,
+  fallbackTarget,
+  playerDistance = Infinity,
+  warSquadDistance = Infinity,
+  agentDistance = Infinity,
+  turretDistance = Infinity,
+  repairBayDistance = Infinity,
+  repairBayTarget = null,
+  genericNodeDistance = Infinity,
+  genericNodeTarget = null,
+} = {}) {
+  if (playerDistance < 4.2) return { kind: "player", target: null };
+  if (warSquadDistance < 6.5) return { kind: "war-squad", target: null };
+  if (agentDistance < 6.5) return { kind: "agent", target: null };
+  if (turretDistance < 6.5) return { kind: "turret", target: null };
+
+  if (wave >= 4 && engagement) {
+    const assigned = resolveEngagementAttackTarget(
+      engagement,
+      battlefieldNodes,
+      null,
+    );
+    if (assigned.id === engagement.attackTargetId) {
+      return { kind: "engagement", target: assigned };
+    }
+  }
+
+  if (repairBayDistance < 6.5 && repairBayTarget) {
+    return { kind: "repair-bay", target: repairBayTarget };
+  }
+  if (genericNodeDistance < 6.5 && genericNodeTarget) {
+    return {
+      kind: "battlefield-node",
+      target: {
+        id: genericNodeTarget.id,
+        x: finite(genericNodeTarget.x),
+        z: finite(genericNodeTarget.z),
+      },
+    };
+  }
+  return {
+    kind: "core",
+    target: {
+      id: fallbackTarget?.id ?? "core",
+      x: finite(fallbackTarget?.x),
+      z: finite(fallbackTarget?.z),
+    },
   };
 }
 

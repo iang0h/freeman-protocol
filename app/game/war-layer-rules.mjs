@@ -289,6 +289,24 @@ export function tickWarSquads(state = createWarLayerState(), context = {}, elaps
   };
 }
 
+export function orchestrateWarLayerTick(
+  state = createWarLayerState(),
+  context = {},
+  elapsedMs = 0,
+) {
+  const warLayerState = tickWarSquads(state, context, elapsedMs);
+  const battlefieldState = warLayerState.battlefieldState ??
+    cloneBattlefieldState(context.battlefieldState);
+  const materials = { ...(warLayerState.materials ?? {}) };
+  return {
+    warLayerState,
+    battlefieldState,
+    materials,
+    components: finiteNonNegative(materials.components),
+    supportActions: [...(warLayerState.supportActions ?? [])],
+  };
+}
+
 export function requestSupportEvent(state = createWarLayerState(), request = {}) {
   const components = finiteNonNegative(request.components, state.components);
   const type = request.type === "air-strike" ? "air-strike" : request.type === "convoy" ? "convoy" : null;
@@ -296,6 +314,10 @@ export function requestSupportEvent(state = createWarLayerState(), request = {})
   if (state.supportEvent) return { accepted: false, reason: "active-event", state };
   if (finiteNonNegative(state.supportCooldownMs) > 0) return { accepted: false, reason: "cooldown", state };
   if (components < WAR_SUPPORT_COMPONENT_COST) return { accepted: false, reason: "components", state };
+  const targetIds = (Array.isArray(request.targetIds) ? request.targetIds : [])
+    .filter((targetId) => typeof targetId === "string" && targetId.length > 0)
+    .slice(0, type === "air-strike" ? 3 : 1);
+  if (targetIds.length === 0) return { accepted: false, reason: "targets", state };
   const originX = Number.isFinite(request.origin?.x) ? request.origin.x : 3.2;
   const originZ = Number.isFinite(request.origin?.z) ? request.origin.z : -2.4;
   const targetX = Number.isFinite(request.target?.x) ? request.target.x : originX;
@@ -312,9 +334,7 @@ export function requestSupportEvent(state = createWarLayerState(), request = {})
     originZ,
     targetX,
     targetZ,
-    targetIds: (Array.isArray(request.targetIds) ? request.targetIds : [])
-      .filter((targetId) => typeof targetId === "string")
-      .slice(0, type === "air-strike" ? 3 : 1),
+    targetIds,
     x: originX,
     z: originZ,
     actionApplied: false,

@@ -595,7 +595,10 @@ test("streams a shuffled soundtrack through a crossfading audio manager", () => 
   assert.match(audioManager, /startMusic\(\)/);
   assert.match(audioManager, /"blocked"/);
   assert.match(game, /engine\.enableAudio\(\)/);
-  assert.match(game, /useState\(\(\) => getStoredAudioSettings\(\)\)/);
+  assert.match(game, /useState\(\(\) => getServerAudioSettings\(\)\)/);
+  assert.doesNotMatch(game, /useState\(\(\) => getStoredAudioSettings\(\)\)/);
+  assert.match(game, /setAudioSettingsHydrated\(true\)/);
+  assert.match(game, /getAudioControlLabel\(audioSettings, audioSettingsHydrated\)/);
   assert.match(
     game,
     /if \(audioSettings\.muted \|\| audioSettings\.playback === "blocked"\) \{\s*engine\.enableAudio\(\);/,
@@ -881,7 +884,7 @@ test("both renderers consume bounded war squads and compact Assembly support", (
     assert.match(engine, /private maybeSpawnWarSquad\(/);
     assert.match(engine, /spawnWarSquad\([\s\S]*?components: this\.loot\.components/);
     assert.match(engine, /this\.loot\.components = spawned\.state\.components/);
-    assert.match(engine, /private updateWarLayer\([\s\S]*?tickWarSquads\(/);
+    assert.match(engine, /private updateWarLayer\([\s\S]*?orchestrateWarLayerTick\(/);
     assert.match(engine, /requestSupportEvent\(/);
     assert.match(engine, /AIR STRIKE INBOUND/);
   }
@@ -898,7 +901,7 @@ test("both renderers price node repairs, share temporary caps, damage squads, an
     assert.match(engine, /externalTemporaryUnits:/);
     assert.match(engine, /battlefieldState:\s*this\.battlefieldState/);
     assert.match(engine, /materials:\s*\{ components: this\.loot\.components \}/);
-    assert.match(engine, /this\.loot\.components = ticked\.materials\.components/);
+    assert.match(engine, /this\.loot\.components = orchestration\.components/);
     assert.match(engine, /kind:\s*"war-squad"/);
     assert.match(engine, /this\.damageWarSquad\(/);
     assert.match(engine, /supportActions/);
@@ -921,6 +924,52 @@ test("both renderers price node repairs, share temporary caps, damage squads, an
   assert.match(canvasGame, /private drawSupportEvent\(/);
 });
 
+test("both manual reserve adapters hand live war squads into the combined cap", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const reserve = engine.slice(
+      engine.indexOf("deployReserve()"),
+      engine.indexOf("setSquadCommand", engine.indexOf("deployReserve()")) > -1
+        ? engine.indexOf("setSquadCommand", engine.indexOf("deployReserve()"))
+        : engine.indexOf("private placeDefenseAt", engine.indexOf("deployReserve()")),
+    );
+    assert.match(reserve, /deployTemporaryReserve\(/);
+    assert.match(reserve, /externalParentChildren:\s*this\.warLayerState\.squads\.filter/);
+    assert.match(reserve, /externalTemporaryUnits:\s*this\.warLayerState\.squads\.length/);
+  }
+});
+
+test("both late-wave target adapters resolve assigned lane nodes before generic nodes", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /selectEnemyTarget\(\{/);
+    assert.match(engine, /battlefieldNodes:\s*this\.battlefieldState\.nodes/);
+    assert.match(engine, /genericNodeTarget:\s*battlefieldNodeTarget/);
+  }
+});
+
+test("both war-layer adapters synchronize priced repairs and support sequences", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /orchestrateWarLayerTick\(/);
+    assert.match(engine, /this\.battlefieldState = orchestration\.battlefieldState/);
+    assert.match(engine, /this\.loot\.components = orchestration\.components/);
+    assert.match(engine, /for \(const action of orchestration\.supportActions\)/);
+  }
+});
+
+test("strategic node visuals retain renderer-parity colors, silhouettes, and health cues", () => {
+  assert.match(threeResources, /kind === "command"[\s\S]*?ConeGeometry/);
+  assert.match(threeResources, /kind === "assembly"[\s\S]*?BoxGeometry/);
+  assert.match(threeResources, /kind === "compute"[\s\S]*?OctahedronGeometry/);
+  assert.match(threeResources, /battlefield-node-health-fill/);
+  assert.match(webglGame, /getBattlefieldNodePresentation\(node\)/);
+  assert.match(canvasGame, /case "command"[\s\S]*?case "assembly"[\s\S]*?case "compute"/);
+  assert.match(canvasGame, /presentation\.showHealthCue/);
+  assert.match(canvasGame, /presentation\.healthRatio/);
+  assert.match(webglGame, /private buildCore\([\s\S]*?color: 0xffeee0[\s\S]*?emissive: 0xf07d3e/);
+  assert.match(webglGame, /private buildRepairBay\([\s\S]*?0x7fd8ff[\s\S]*?repair-bay-cross-horizontal/);
+  assert.match(canvasGame, /private drawCore\([\s\S]*?#fff0e2[\s\S]*?#ff9a5d/);
+  assert.match(canvasGame, /private drawRepairBay\([\s\S]*?const crossArm[\s\S]*?#7fd8ff/);
+});
+
 test("renderer parity keeps battlefield, engagement, and war HUD state compact and focusable", () => {
   assert.match(game, /type StrategicHud = \{/);
   assert.match(game, /nodes: Array<\{[\s\S]*?id: string;[\s\S]*?status: string;[\s\S]*?health: number;[\s\S]*?maxHealth: number;/);
@@ -933,7 +982,7 @@ test("renderer parity keeps battlefield, engagement, and war HUD state compact a
     assert.match(engine, /private engagementState(?:\s*:\s*[^=]+)? = createEngagementState\(1\);/);
     assert.match(engine, /private warLayerState(?:\s*:\s*[^=]+)? = createWarLayerState\(/);
     assert.match(engine, /this\.engagementState = tickEngagement\(/);
-    assert.match(engine, /private updateWarLayer\([\s\S]*?tickWarSquads\([\s\S]*?nodes: this\.battlefieldState\.nodes/);
+    assert.match(engine, /private updateWarLayer\([\s\S]*?orchestrateWarLayerTick\([\s\S]*?battlefieldState: this\.battlefieldState/);
     assert.match(engine, /private updateWarLayer\([\s\S]*?maybeRequestWarSupport\(\);/);
     assert.match(engine, /const strategicHud = createStrategicHud\(\s*this\.battlefieldState,\s*this\.warLayerState,\s*\);/);
     assert.match(engine, /strategicHud,/);
@@ -963,7 +1012,7 @@ test("both renderers target, damage, and repair non-Core battlefield nodes", () 
     assert.match(engine, /targetKind === "battlefield-node"/);
     assert.match(engine, /kind: "battlefield-node"/);
     assert.match(engine, /this\.damageBattlefieldNode\(hit\.id, projectile\.damage\)/);
-    assert.match(engine, /ticked\.battlefieldState/);
+    assert.match(engine, /orchestration\.battlefieldState/);
     assert.doesNotMatch(engine, /damageBattlefieldNode\("core"/);
   }
 });

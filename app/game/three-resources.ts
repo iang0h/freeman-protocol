@@ -377,37 +377,94 @@ export function resetTemporarySubAgentMarker(
   marker.removeFromParent();
 }
 
-export function createBattlefieldNodeMarker(color: number) {
+function createBattlefieldNodeSignal(kind: string, color: number) {
+  if (kind === "command") {
+    return new THREE.Mesh(
+      new THREE.ConeGeometry(0.24, 0.48, 4),
+      new THREE.MeshBasicMaterial({ color }),
+    );
+  }
+  if (kind === "assembly") {
+    const signal = new THREE.Mesh(
+      new THREE.BoxGeometry(0.36, 0.22, 0.36),
+      new THREE.MeshBasicMaterial({ color }),
+    );
+    signal.rotation.y = Math.PI / 4;
+    return signal;
+  }
+  if (kind === "compute") {
+    return new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.24, 0),
+      new THREE.MeshBasicMaterial({ color }),
+    );
+  }
+  return new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.2, 0),
+    new THREE.MeshBasicMaterial({ color }),
+  );
+}
+
+export function createBattlefieldNodeMarker(kind: string, color: number) {
   const marker = new THREE.Group();
-  marker.name = "battlefield-node-marker";
+  marker.name = `battlefield-node-marker-${kind}`;
   const base = new THREE.Mesh(
     new THREE.CylinderGeometry(0.34, 0.44, 0.1, 6),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.48 }),
   );
   base.name = "battlefield-node-base";
   base.position.y = 0.05;
-  const signal = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.2, 0),
-    new THREE.MeshBasicMaterial({ color }),
-  );
+  const signal = createBattlefieldNodeSignal(kind, color);
   signal.name = "battlefield-node-signal";
   signal.position.y = 0.34;
-  marker.add(base, signal);
-  resetBattlefieldNodeMarker(marker, color, true);
+  const healthCue = new THREE.Group();
+  healthCue.name = "battlefield-node-health-cue";
+  healthCue.position.y = 0.72;
+  const healthBack = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.72, 0.08),
+    new THREE.MeshBasicMaterial({ color: 0x080c0f, depthTest: false }),
+  );
+  const healthFill = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.66, 0.045),
+    new THREE.MeshBasicMaterial({ color, depthTest: false }),
+  );
+  healthFill.name = "battlefield-node-health-fill";
+  healthFill.position.z = 0.002;
+  healthCue.add(healthBack, healthFill);
+  const offlineCue = new THREE.Mesh(
+    new THREE.TorusGeometry(0.45, 0.035, 6, 24),
+    new THREE.MeshBasicMaterial({ color: 0xd94b3d, transparent: true, opacity: 0.8 }),
+  );
+  offlineCue.name = "battlefield-node-offline-cue";
+  offlineCue.rotation.x = Math.PI / 2;
+  offlineCue.position.y = 0.04;
+  marker.add(base, signal, healthCue, offlineCue);
+  resetBattlefieldNodeMarker(marker, color, "online", 1);
   return marker;
 }
 
 export function resetBattlefieldNodeMarker(
   marker: THREE.Group,
   color: number,
-  online = true,
+  status: string = "online",
+  healthRatio = 1,
 ) {
   const base = marker.getObjectByName("battlefield-node-base") as THREE.Mesh;
   const signal = marker.getObjectByName("battlefield-node-signal") as THREE.Mesh;
+  const healthCue = marker.getObjectByName("battlefield-node-health-cue") as THREE.Group;
+  const healthFill = marker.getObjectByName("battlefield-node-health-fill") as THREE.Mesh;
+  const offlineCue = marker.getObjectByName("battlefield-node-offline-cue") as THREE.Mesh;
+  const online = status === "online";
+  const offline = status === "offline";
+  const ratio = Math.min(1, Math.max(0, healthRatio));
   (base.material as THREE.MeshBasicMaterial).color.setHex(color);
   (base.material as THREE.MeshBasicMaterial).opacity = online ? 0.48 : 0.16;
-  (signal.material as THREE.MeshBasicMaterial).color.setHex(online ? color : 0x4a555b);
-  signal.visible = online;
+  (signal.material as THREE.MeshBasicMaterial).color.setHex(offline ? 0x4a555b : color);
+  (healthFill.material as THREE.MeshBasicMaterial).color.setHex(offline ? 0xd94b3d : color);
+  healthFill.scale.x = Math.max(0.001, ratio);
+  healthFill.position.x = -0.33 * (1 - ratio);
+  healthCue.visible = !online;
+  offlineCue.visible = offline;
+  signal.visible = true;
   marker.rotation.set(0, 0, 0);
   marker.scale.setScalar(1);
 }

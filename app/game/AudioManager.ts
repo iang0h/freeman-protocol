@@ -25,6 +25,25 @@ const storedNumber = (key: string, fallback: number) => {
   return Number.isFinite(value) ? clamp(value) : fallback;
 };
 
+export function getServerAudioSettings(): AudioSettingsSnapshot {
+  return {
+    muted: true,
+    musicVolume: 0.42,
+    sfxVolume: 0.72,
+    playback: "idle",
+  };
+}
+
+export function getAudioControlLabel(
+  settings: AudioSettingsSnapshot,
+  hydrated = true,
+) {
+  if (!hydrated) return "AUDIO …";
+  if (settings.muted) return "AUDIO OFF";
+  if (settings.playback === "blocked") return "TAP TO ENABLE AUDIO";
+  return "AUDIO ON";
+}
+
 export function getStoredAudioSettings(): AudioSettingsSnapshot {
   return {
     muted: readStoredValue("freeman-audio-muted") === "true",

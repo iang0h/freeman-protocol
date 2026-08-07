@@ -109,6 +109,7 @@ import {
   clearSubAgents,
   createSubAgentSpawnState,
   decideAgentIntent,
+  deployTemporaryReserve,
   getSubAgentSpawnDecision,
   spawnTemporarySubAgent,
   tickSubAgentSpawnState,
@@ -141,6 +142,7 @@ import {
   resolveEngagementAdvance,
   resolveEngagementAttackTarget,
   resolveEnemyAdvance,
+  selectEnemyTarget,
   tickEngagement,
 } from "./game/enemy-movement-rules.mjs";
 import {
@@ -170,18 +172,20 @@ import {
   createBattlefieldState,
   damageBattlefieldNode,
   getBattlefieldEffects,
+  getBattlefieldNodePresentation,
   tickBattlefieldResources,
 } from "./game/battlefield-rules.mjs";
 import {
   createWarLayerState,
   damageWarSquad,
+  orchestrateWarLayerTick,
   requestSupportEvent,
   spawnWarSquad,
-  tickWarSquads,
 } from "./game/war-layer-rules.mjs";
 import {
   AudioManager,
-  getStoredAudioSettings,
+  getAudioControlLabel,
+  getServerAudioSettings,
   type AudioSettingsSnapshot,
 } from "./game/AudioManager";
 import {
@@ -429,6 +433,7 @@ const TOTAL_WAVES = 8;
 const ARENA_RADIUS = 17.5;
 const SPAWN_RADIUS = 15.2;
 const TUTORIAL_STORAGE_KEY = "freeman-tutorial-complete";
+const AUDIO_RETRY_A11Y_LABEL = "TAP TO ENABLE AUDIO";
 const MAX_TEMPORARY_SUB_AGENTS_PER_PARENT = 4;
 const TOUCH_SAFE_PICKUP_RADIUS = 0.75;
 const MAX_COMBAT_EFFECTS = 96;
@@ -2072,25 +2077,27 @@ class FreemanEngine {
       });
       return;
     }
-    let deployed = 0;
-    for (let index = 0; index < PLAYER_RESERVE_BATCH_SIZE; index += 1) {
-      const materials = { components: this.loot.components, shards: this.loot.shards };
-      const spawned = spawnTemporarySubAgent(
-        { id: parent.id, role: AUTONOMY_ROLES[parent.id] },
-        {
-          enemyDensity: Math.max(6, this.enemies.length),
-          playerHealthRatio: this.player.hp / this.player.maxHp,
-          coreHealthRatio: this.core.hp / this.core.maxHp,
-          wavePressure: 1,
-          subAgents: this.temporarySubAgents,
-          maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
-          materials,
-          upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
-        },
-      );
-      if (!spawned) break;
-      this.loot.components = materials.components;
-      this.loot.shards = materials.shards;
+    const reserve = deployTemporaryReserve(
+      { id: parent.id, role: AUTONOMY_ROLES[parent.id] },
+      {
+        batchSize: PLAYER_RESERVE_BATCH_SIZE,
+        enemyDensity: Math.max(6, this.enemies.length),
+        playerHealthRatio: this.player.hp / this.player.maxHp,
+        coreHealthRatio: this.core.hp / this.core.maxHp,
+        wavePressure: 1,
+        subAgents: this.temporarySubAgents,
+        externalParentChildren: this.warLayerState.squads.filter(
+          (squad) => squad.parentId === parent.id,
+        ).length,
+        externalTemporaryUnits: this.warLayerState.squads.length,
+        maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
+        materials: { components: this.loot.components, shards: this.loot.shards },
+        upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
+      },
+    );
+    this.loot.components = reserve.materials.components;
+    this.loot.shards = reserve.materials.shards;
+    for (const spawned of reserve.deployed) {
       const marker = this.temporarySubAgentPool.acquire(() =>
         createTemporarySubAgentMarker(parent.color),
       );
@@ -2105,8 +2112,8 @@ class FreemanEngine {
         healthRatio: 1,
         lifetimeRatio: 1,
       });
-      deployed += 1;
     }
+    const deployed = reserve.deployed.length;
     if (deployed > 0) {
       this.callbacks.onToast({
         eyebrow: "RESERVE ARMY DEPLOYED",
@@ -3163,8 +3170,8 @@ class FreemanEngine {
   private buildBattlefieldNodeMarkers() {
     for (const node of this.battlefieldState.nodes) {
       if (node.id === "core" || node.id === "repair-bay") continue;
-      const color = node.kind === "assembly" ? 0xffc857 : node.kind === "compute" ? 0x7fd8ff : 0x8fe0c1;
-      const marker = createBattlefieldNodeMarker(color);
+      const presentation = getBattlefieldNodePresentation(node);
+      const marker = createBattlefieldNodeMarker(node.kind, presentation.color);
       marker.position.set(node.x, 0.02, node.z);
       this.scene.add(marker);
       this.battlefieldNodeMarkers.set(node.id, marker);
@@ -3556,11 +3563,24 @@ class FreemanEngine {
     group.add(shell);
     const beacon = new THREE.Mesh(
       new THREE.CylinderGeometry(0.09, 0.13, 0.7, 8),
-      new THREE.MeshBasicMaterial({ color: 0x76c6c1 }),
+      new THREE.MeshBasicMaterial({ color: 0x7fd8ff }),
     );
     beacon.position.y = 1.05;
-    group.add(beacon);
-    const health = this.createWorldHealthBar(1.28, 0x76c6c1);
+    const crossMaterial = new THREE.MeshBasicMaterial({ color: 0x7fd8ff });
+    const crossHorizontal = new THREE.Mesh(
+      new THREE.BoxGeometry(0.62, 0.13, 0.13),
+      crossMaterial,
+    );
+    crossHorizontal.name = "repair-bay-cross-horizontal";
+    crossHorizontal.position.set(0, 1.08, -0.02);
+    const crossVertical = new THREE.Mesh(
+      new THREE.BoxGeometry(0.13, 0.62, 0.13),
+      crossMaterial,
+    );
+    crossVertical.name = "repair-bay-cross-vertical";
+    crossVertical.position.copy(crossHorizontal.position);
+    group.add(beacon, crossHorizontal, crossVertical);
+    const health = this.createWorldHealthBar(1.28, 0x7fd8ff);
     health.group.name = "repair-bay-health";
     health.group.position.y = 1.58;
     group.add(health.group);
@@ -5276,13 +5296,12 @@ class FreemanEngine {
       )
       .slice(0, type === "air-strike" ? 3 : 1);
     const primaryTarget = targets[0];
+    if (!primaryTarget) return;
     const requested = requestSupportEvent(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
       type,
       components: this.loot.components,
       origin: { x: this.assemblyPadPosition.x, z: this.assemblyPadPosition.z },
-      target: primaryTarget
-        ? { x: primaryTarget.group.position.x, z: primaryTarget.group.position.z }
-        : { x: this.core.group.position.x, z: this.core.group.position.z },
+      target: { x: primaryTarget.group.position.x, z: primaryTarget.group.position.z },
       targetIds: targets.map((enemy) => String(enemy.id)),
     });
     if (!requested.accepted || !requested.event) return;
@@ -5313,7 +5332,7 @@ class FreemanEngine {
     };
     const repairBayWasDamaged = this.repairBay.hp < this.repairBay.maxHp;
     const previousHp = new Map(enemies.map((enemy) => [enemy.id, enemy.hp]));
-    const ticked = tickWarSquads(
+    const orchestration = orchestrateWarLayerTick(
       this.warLayerState as unknown as ReturnType<typeof createWarLayerState>,
       {
         enemies,
@@ -5322,10 +5341,13 @@ class FreemanEngine {
         repairMultiplier: getBattlefieldEffects(this.battlefieldState).repairMultiplier,
       },
       delta * 1_000,
-    ) as WarLayerState;
+    );
+    const ticked = orchestration.warLayerState as WarLayerState;
     this.warLayerState = ticked;
-    if (ticked.battlefieldState) this.battlefieldState = ticked.battlefieldState;
-    this.loot.components = ticked.materials.components;
+    if (orchestration.battlefieldState) {
+      this.battlefieldState = orchestration.battlefieldState;
+    }
+    this.loot.components = orchestration.components;
     for (const snapshot of this.warLayerState.enemies ?? []) {
       const previous = previousHp.get(snapshot.id) ?? snapshot.hp;
       const enemy = this.enemies.find((candidate) => String(candidate.id) === snapshot.id);
@@ -5344,7 +5366,7 @@ class FreemanEngine {
         });
       }
     }
-    for (const action of ticked.supportActions) {
+    for (const action of orchestration.supportActions) {
       if (action.type !== "damage") continue;
       const enemy = this.enemies.find((candidate) => String(candidate.id) === action.targetId);
       if (enemy) this.damageEnemy(enemy, action.amount, enemy.group.position, true);
@@ -5400,7 +5422,16 @@ class FreemanEngine {
     }
     for (const node of this.battlefieldState.nodes) {
       const marker = this.battlefieldNodeMarkers.get(node.id);
-      if (marker) resetBattlefieldNodeMarker(marker, node.kind === "assembly" ? 0xffc857 : 0x7fd8ff, node.status === "online");
+      if (!marker) continue;
+      const presentation = getBattlefieldNodePresentation(node);
+      resetBattlefieldNodeMarker(
+        marker,
+        presentation.color,
+        node.status,
+        presentation.healthRatio,
+      );
+      const healthCue = marker.getObjectByName("battlefield-node-health-cue");
+      healthCue?.quaternion.copy(this.camera.quaternion);
     }
     this.maybeRequestWarSupport();
   }
@@ -6075,22 +6106,29 @@ class FreemanEngine {
         ? position.distanceTo(new THREE.Vector3(battlefieldNodeTarget.x, 0, battlefieldNodeTarget.z))
         : Infinity;
       let engagement = this.engagementState.records[String(enemy.id)];
-      const targetKind =
-        playerDistance < 4.2
-          ? "player"
-          : warSquadDistance < 6.5
-            ? "war-squad"
-          : agentDistance < 6.5
-            ? "agent"
-            : turretDistance < 6.5
-              ? "turret"
-              : repairBayDistance < 6.5
-                ? "repair-bay"
-                : battlefieldNodeDistance < 6.5
-                  ? "battlefield-node"
-                : this.wave >= 4 && engagement
-                  ? "engagement"
-                  : "core";
+      const targetSelection = selectEnemyTarget({
+        wave: this.wave,
+        engagement,
+        battlefieldNodes: this.battlefieldState.nodes,
+        fallbackTarget: {
+          id: "core",
+          x: this.core.group.position.x,
+          z: this.core.group.position.z,
+        },
+        playerDistance,
+        warSquadDistance,
+        agentDistance,
+        turretDistance,
+        repairBayDistance,
+        repairBayTarget: {
+          id: "repair-bay",
+          x: this.repairBay.group.position.x,
+          z: this.repairBay.group.position.z,
+        },
+        genericNodeDistance: battlefieldNodeDistance,
+        genericNodeTarget: battlefieldNodeTarget,
+      });
+      const targetKind = targetSelection.kind;
       const engagementLane = engagement
         ? ENGAGEMENT_LANES.find((lane) => lane.id === engagement.laneId)
         : null;
@@ -6110,11 +6148,13 @@ class FreemanEngine {
           },
         };
       }
-      const engagementAttackTarget = resolveEngagementAttackTarget(
-        engagement,
-        this.battlefieldState.nodes,
-        { id: "core", x: this.core.group.position.x, z: this.core.group.position.z },
-      );
+      const engagementAttackTarget = targetKind === "engagement" && targetSelection.target
+        ? targetSelection.target
+        : resolveEngagementAttackTarget(
+            engagement,
+            this.battlefieldState.nodes,
+            { id: "core", x: this.core.group.position.x, z: this.core.group.position.z },
+          );
       const targetPosition = targetKind === "player"
         ? this.player.group.position
         : targetKind === "war-squad" && warSquadTarget
@@ -10169,13 +10209,12 @@ class FreemanCanvasEngine implements GameController {
       )
       .slice(0, type === "air-strike" ? 3 : 1);
     const primaryTarget = targets[0];
+    if (!primaryTarget) return;
     const requested = requestSupportEvent(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
       type,
       components: this.loot.components,
       origin: { x: 3.2, z: -2.4 },
-      target: primaryTarget
-        ? { x: primaryTarget.x, z: primaryTarget.z }
-        : { x: this.core.x, z: this.core.z },
+      target: { x: primaryTarget.x, z: primaryTarget.z },
       targetIds: targets.map((enemy) => String(enemy.id)),
     });
     if (!requested.accepted || !requested.event) return;
@@ -10206,7 +10245,7 @@ class FreemanCanvasEngine implements GameController {
     };
     const repairBayWasDamaged = this.repairBay.hp < this.repairBay.maxHp;
     const previousHp = new Map(enemies.map((enemy) => [enemy.id, enemy.hp]));
-    const ticked = tickWarSquads(
+    const orchestration = orchestrateWarLayerTick(
       this.warLayerState as unknown as ReturnType<typeof createWarLayerState>,
       {
         enemies,
@@ -10215,10 +10254,13 @@ class FreemanCanvasEngine implements GameController {
         repairMultiplier: getBattlefieldEffects(this.battlefieldState).repairMultiplier,
       },
       delta * 1_000,
-    ) as WarLayerState;
+    );
+    const ticked = orchestration.warLayerState as WarLayerState;
     this.warLayerState = ticked;
-    if (ticked.battlefieldState) this.battlefieldState = ticked.battlefieldState;
-    this.loot.components = ticked.materials.components;
+    if (orchestration.battlefieldState) {
+      this.battlefieldState = orchestration.battlefieldState;
+    }
+    this.loot.components = orchestration.components;
     for (const snapshot of this.warLayerState.enemies ?? []) {
       const previous = previousHp.get(snapshot.id) ?? snapshot.hp;
       const enemy = this.enemies.find((candidate) => String(candidate.id) === snapshot.id);
@@ -10235,7 +10277,7 @@ class FreemanCanvasEngine implements GameController {
         });
       }
     }
-    for (const action of ticked.supportActions) {
+    for (const action of orchestration.supportActions) {
       if (action.type !== "damage") continue;
       const enemy = this.enemies.find((candidate) => String(candidate.id) === action.targetId);
       if (enemy) this.damageEnemy(enemy, action.amount, true);
@@ -10812,22 +10854,25 @@ class FreemanCanvasEngine implements GameController {
         ? this.distance(enemy.x, enemy.z, battlefieldNodeTarget.x, battlefieldNodeTarget.z)
         : Infinity;
       let engagement = this.engagementState.records[String(enemy.id)];
-      const targetKind =
-        playerDistance < 4.2
-          ? "player"
-          : warSquadDistance < 6.5
-            ? "war-squad"
-          : agentDistance < 6.5
-            ? "agent"
-            : turretDistance < 6.5
-              ? "turret"
-              : repairBayDistance < 6.5
-                ? "repair-bay"
-                : battlefieldNodeDistance < 6.5
-                  ? "battlefield-node"
-                : this.wave >= 4 && engagement
-                  ? "engagement"
-                  : "core";
+      const targetSelection = selectEnemyTarget({
+        wave: this.wave,
+        engagement,
+        battlefieldNodes: this.battlefieldState.nodes,
+        fallbackTarget: { id: "core", x: this.core.x, z: this.core.z },
+        playerDistance,
+        warSquadDistance,
+        agentDistance,
+        turretDistance,
+        repairBayDistance,
+        repairBayTarget: {
+          id: "repair-bay",
+          x: this.repairBay.x,
+          z: this.repairBay.z,
+        },
+        genericNodeDistance: battlefieldNodeDistance,
+        genericNodeTarget: battlefieldNodeTarget,
+      });
+      const targetKind = targetSelection.kind;
       const engagementLane = engagement
         ? ENGAGEMENT_LANES.find((lane) => lane.id === engagement.laneId)
         : null;
@@ -10847,11 +10892,13 @@ class FreemanCanvasEngine implements GameController {
           },
         };
       }
-      const engagementAttackTarget = resolveEngagementAttackTarget(
-        engagement,
-        this.battlefieldState.nodes,
-        { id: "core", x: this.core.x, z: this.core.z },
-      );
+      const engagementAttackTarget = targetKind === "engagement" && targetSelection.target
+        ? targetSelection.target
+        : resolveEngagementAttackTarget(
+            engagement,
+            this.battlefieldState.nodes,
+            { id: "core", x: this.core.x, z: this.core.z },
+          );
       const targetX = targetKind === "player"
         ? this.player.x
         : targetKind === "war-squad" && warSquadTarget
@@ -12270,25 +12317,27 @@ class FreemanCanvasEngine implements GameController {
       });
       return;
     }
-    let deployed = 0;
-    for (let index = 0; index < PLAYER_RESERVE_BATCH_SIZE; index += 1) {
-      const materials = { components: this.loot.components, shards: this.loot.shards };
-      const spawned = spawnTemporarySubAgent(
-        { id: parent.id, role: AUTONOMY_ROLES[parent.id] },
-        {
-          enemyDensity: Math.max(6, this.enemies.length),
-          playerHealthRatio: this.player.hp / this.player.maxHp,
-          coreHealthRatio: this.core.hp / this.core.maxHp,
-          wavePressure: 1,
-          subAgents: this.temporarySubAgents,
-          maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
-          materials,
-          upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
-        },
-      );
-      if (!spawned) break;
-      this.loot.components = materials.components;
-      this.loot.shards = materials.shards;
+    const reserve = deployTemporaryReserve(
+      { id: parent.id, role: AUTONOMY_ROLES[parent.id] },
+      {
+        batchSize: PLAYER_RESERVE_BATCH_SIZE,
+        enemyDensity: Math.max(6, this.enemies.length),
+        playerHealthRatio: this.player.hp / this.player.maxHp,
+        coreHealthRatio: this.core.hp / this.core.maxHp,
+        wavePressure: 1,
+        subAgents: this.temporarySubAgents,
+        externalParentChildren: this.warLayerState.squads.filter(
+          (squad) => squad.parentId === parent.id,
+        ).length,
+        externalTemporaryUnits: this.warLayerState.squads.length,
+        maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
+        materials: { components: this.loot.components, shards: this.loot.shards },
+        upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
+      },
+    );
+    this.loot.components = reserve.materials.components;
+    this.loot.shards = reserve.materials.shards;
+    for (const spawned of reserve.deployed) {
       this.temporarySubAgents.push({
         ...spawned,
         canSpawn: false as const,
@@ -12300,8 +12349,8 @@ class FreemanCanvasEngine implements GameController {
         healthRatio: 1,
         lifetimeRatio: 1,
       });
-      deployed += 1;
     }
+    const deployed = reserve.deployed.length;
     this.callbacks.onToast({
       eyebrow: deployed > 0 ? "RESERVE ARMY DEPLOYED" : "RESERVE UNAVAILABLE",
       title: deployed > 0 ? `${deployed} TEMPORARY UNITS ONLINE` : "GATHER MORE COMPONENTS AND SHARDS",
@@ -12988,16 +13037,23 @@ class FreemanCanvasEngine implements GameController {
     const operational = this.repairBay.hp > 0;
     context.save();
     context.fillStyle = operational ? "#1a3435" : "#291719";
-    context.strokeStyle = operational ? "#76c6c1" : "#b7422e";
+    context.strokeStyle = operational ? "#7fd8ff" : "#b7422e";
     context.lineWidth = 2;
     context.beginPath();
     context.ellipse(base.x, base.y, size, size * 0.35, 0, 0, Math.PI * 2);
     context.fill();
     context.stroke();
-    context.shadowColor = operational ? "#76c6c1" : "#b7422e";
+    context.shadowColor = operational ? "#7fd8ff" : "#b7422e";
     context.shadowBlur = 16;
     context.fillStyle = operational ? "#b8fffa" : "#54252a";
+    const crossArm = size * 0.82;
     context.fillRect(beacon.x - size * 0.15, beacon.y, size * 0.3, size * 0.82);
+    context.fillRect(
+      beacon.x - crossArm / 2,
+      beacon.y + size * 0.25,
+      crossArm,
+      size * 0.22,
+    );
     context.shadowBlur = 0;
     this.drawWorldHealthBar(
       this.repairBay.x,
@@ -13005,7 +13061,7 @@ class FreemanCanvasEngine implements GameController {
       1.72,
       54,
       this.repairBay.hp / this.repairBay.maxHp,
-      operational ? "#76c6c1" : "#b7422e",
+      operational ? "#7fd8ff" : "#b7422e",
     );
     context.restore();
   }
@@ -13325,18 +13381,87 @@ class FreemanCanvasEngine implements GameController {
     context.restore();
   }
 
-  private drawBattlefieldNode(node: { x: number; z: number; kind: string; status: string }) {
+  private drawBattlefieldNode(node: {
+    x: number;
+    z: number;
+    kind: string;
+    status: string;
+    health: number;
+    maxHealth: number;
+  }) {
     const point = this.project(node.x, node.z, 0.18);
-    const color = node.status === "online"
-      ? node.kind === "assembly" ? "#ffc857" : "#7fd8ff"
-      : "#536067";
+    const presentation = getBattlefieldNodePresentation(node);
+    const color = presentation.offline ? "#536067" : presentation.cssColor;
+    const size = point.scale * 0.22;
     const context = this.context;
     context.save();
-    context.fillStyle = color;
     context.globalAlpha = node.status === "online" ? 0.86 : 0.38;
+    context.fillStyle = "rgba(8, 16, 20, 0.88)";
+    context.strokeStyle = color;
+    context.lineWidth = 2;
     context.beginPath();
-    context.arc(point.x, point.y, point.scale * 0.18, 0, Math.PI * 2);
+    context.ellipse(point.x, point.y + size * 0.7, size * 1.6, size * 0.55, 0, 0, Math.PI * 2);
     context.fill();
+    context.stroke();
+    context.fillStyle = color;
+    context.shadowColor = color;
+    context.shadowBlur = node.status === "online" ? 14 : 4;
+    switch (node.kind) {
+      case "command":
+        context.fillRect(point.x - size * 0.12, point.y - size * 1.25, size * 0.24, size * 1.55);
+        context.beginPath();
+        context.moveTo(point.x, point.y - size * 1.75);
+        context.lineTo(point.x + size * 0.65, point.y - size * 0.95);
+        context.lineTo(point.x - size * 0.65, point.y - size * 0.95);
+        context.closePath();
+        context.fill();
+        break;
+      case "assembly":
+        context.beginPath();
+        for (let index = 0; index < 6; index += 1) {
+          const angle = Math.PI / 6 + index * Math.PI / 3;
+          const x = point.x + Math.cos(angle) * size;
+          const y = point.y - size * 0.35 + Math.sin(angle) * size * 0.72;
+          if (index === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        }
+        context.closePath();
+        context.fill();
+        break;
+      case "compute":
+        context.beginPath();
+        context.moveTo(point.x, point.y - size * 1.7);
+        context.lineTo(point.x + size * 0.8, point.y - size * 0.35);
+        context.lineTo(point.x, point.y + size * 0.55);
+        context.lineTo(point.x - size * 0.8, point.y - size * 0.35);
+        context.closePath();
+        context.fill();
+        break;
+      default:
+        context.beginPath();
+        context.arc(point.x, point.y, size, 0, Math.PI * 2);
+        context.fill();
+    }
+    context.shadowBlur = 0;
+    if (presentation.showHealthCue) {
+      this.drawWorldHealthBar(
+        node.x,
+        node.z,
+        1.05,
+        44,
+        presentation.healthRatio,
+        presentation.offline ? "#d94b3d" : presentation.cssColor,
+      );
+    }
+    if (presentation.offline) {
+      context.strokeStyle = "#d94b3d";
+      context.beginPath();
+      context.moveTo(point.x - size, point.y - size);
+      context.lineTo(point.x + size, point.y + size);
+      context.moveTo(point.x + size, point.y - size);
+      context.lineTo(point.x - size, point.y + size);
+      context.stroke();
+    }
     context.restore();
   }
 
@@ -14295,7 +14420,8 @@ export default function FreemanProtocol({
   const [mode, setMode] = useState<GameMode>("intro");
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [audioSettings, setAudioSettings] = useState(() => getStoredAudioSettings());
+  const [audioSettings, setAudioSettings] = useState(() => getServerAudioSettings());
+  const [audioSettingsHydrated, setAudioSettingsHydrated] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel | "closed">("closed");
@@ -14650,8 +14776,10 @@ export default function FreemanProtocol({
     engineRef.current = engine;
     const unsubscribeAudioSettings = engine.subscribeAudioSettings((settings) => {
       setAudioSettings(settings);
+      setAudioSettingsHydrated(true);
     });
     setAudioSettings(engine.getAudioSettings());
+    setAudioSettingsHydrated(true);
     return () => {
       unsubscribeAudioSettings();
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -15156,12 +15284,17 @@ export default function FreemanProtocol({
           <button type="button" onClick={openHelp}>
             CONTROLS
           </button>
-          <button type="button" onClick={toggleAudio} aria-pressed={audioSettings.muted}>
-            {audioSettings.muted
-              ? "AUDIO OFF"
-              : audioSettings.playback === "blocked"
-                ? "TAP TO ENABLE AUDIO"
-                : "AUDIO ON"}
+          <button
+            type="button"
+            onClick={toggleAudio}
+            aria-pressed={audioSettings.muted}
+            aria-label={
+              audioSettings.playback === "blocked"
+                ? AUDIO_RETRY_A11Y_LABEL
+                : undefined
+            }
+          >
+            {getAudioControlLabel(audioSettings, audioSettingsHydrated)}
           </button>
           <button
             type="button"

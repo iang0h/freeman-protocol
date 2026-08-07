@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import * as autonomyRules from "../app/game/autonomy-rules.mjs";
+import * as battlefieldRules from "../app/game/battlefield-rules.mjs";
+import * as enemyMovementRules from "../app/game/enemy-movement-rules.mjs";
+import * as warLayerRules from "../app/game/war-layer-rules.mjs";
 import {
   CORE_REPAIR_AMOUNT,
   CORE_REPAIR_COMPONENT_COST,
@@ -299,6 +302,44 @@ test("temporary sub-agents and war squads share parent and global caps", () => {
   assert.equal(WAR_LAYER_GLOBAL_CAP, TEMPORARY_UNIT_GLOBAL_CAP);
 });
 
+test("manual reserve deployment hands live war squads into both combined caps", () => {
+  const parent = { id: "kairos", role: "assault" };
+  const localChildren = [1, 2].map((index) => ({
+    id: `subagent-kairos-${index}`,
+    parentId: parent.id,
+  }));
+  const warSquads = [{ id: "war-squad-1", parentId: parent.id }];
+  const nearParentCap = autonomyRules.deployTemporaryReserve(parent, {
+    batchSize: 3,
+    enemyDensity: 6,
+    subAgents: localChildren,
+    externalParentChildren: warSquads.filter(
+      (squad) => squad.parentId === parent.id,
+    ).length,
+    externalTemporaryUnits: warSquads.length,
+    materials: { components: 5, shards: 5 },
+  });
+
+  assert.equal(nearParentCap.deployed.length, 1);
+  assert.deepEqual(nearParentCap.materials, { components: 4, shards: 4 });
+
+  const otherChildren = Array.from({ length: TEMPORARY_UNIT_GLOBAL_CAP - 3 }, (_, index) => ({
+    id: `war-squad-${index + 2}`,
+    parentId: "other-agent",
+  }));
+  const atGlobalCap = autonomyRules.deployTemporaryReserve(parent, {
+    batchSize: 3,
+    enemyDensity: 6,
+    subAgents: localChildren,
+    externalParentChildren: warSquads.length,
+    externalTemporaryUnits: [...warSquads, ...otherChildren].length,
+    materials: { components: 5, shards: 5 },
+  });
+
+  assert.equal(atGlobalCap.deployed.length, 0);
+  assert.deepEqual(atGlobalCap.materials, { components: 5, shards: 5 });
+});
+
 test("war squads move toward threats, deal damage, and expire", () => {
   let state = spawnWarSquad(createWarLayerState({ components: 1 }), {
     parentId: "agent-1",
@@ -377,6 +418,37 @@ test("repair squads use battlefield repair pricing and the live Repair Bay multi
   assert.equal(disabled.materials.components, 0);
 });
 
+test("war-layer orchestration synchronizes priced repairs and Components", () => {
+  const battlefieldState = damageBattlefieldNode(
+    createBattlefieldState(),
+    "command-uplink",
+    100,
+  );
+  const spawned = spawnWarSquad(createWarLayerState({ components: 3 }), {
+    parentId: "relay",
+    role: "repair",
+    x: -4,
+    z: -2.5,
+    components: 3,
+  });
+
+  const result = warLayerRules.orchestrateWarLayerTick(
+    spawned.state,
+    {
+      enemies: [],
+      battlefieldState,
+      materials: { components: spawned.state.components },
+      repairMultiplier: getBattlefieldEffects(battlefieldState).repairMultiplier,
+    },
+    1_500,
+  );
+
+  assert.equal(result.components, 0);
+  assert.equal(result.materials.components, 0);
+  assert.equal(getNodeById(result.battlefieldState, "command-uplink").health, 8);
+  assert.equal(result.warLayerState.components, 0);
+});
+
 test("assembly support telegraphs, acts once, moves, and then enters cooldown", () => {
   const first = requestSupportEvent(createWarLayerState(), {
     type: "convoy",
@@ -414,9 +486,59 @@ test("assembly support telegraphs, acts once, moves, and then enters cooldown", 
   );
   const ready = tickWarSquads(expired, {}, 2_000);
   assert.equal(
-    requestSupportEvent(ready, { type: "air-strike", components: 2 }).accepted,
+    requestSupportEvent(ready, {
+      type: "air-strike",
+      components: 2,
+      targetIds: ["e2"],
+    }).accepted,
     true,
   );
+});
+
+test("war-layer orchestration emits each support action exactly once", () => {
+  const requested = requestSupportEvent(createWarLayerState(), {
+    type: "air-strike",
+    components: 2,
+    target: { x: 1, z: 1 },
+    targetIds: ["e1", "e2"],
+  });
+  const telegraph = warLayerRules.orchestrateWarLayerTick(
+    requested.state,
+    { enemies: [{ id: "e1", x: 1, z: 1, hp: 30 }, { id: "e2", x: 1, z: 1, hp: 30 }] },
+    1_499,
+  );
+  const action = warLayerRules.orchestrateWarLayerTick(
+    telegraph.warLayerState,
+    { enemies: telegraph.warLayerState.enemies },
+    1,
+  );
+  const afterAction = warLayerRules.orchestrateWarLayerTick(
+    action.warLayerState,
+    { enemies: action.warLayerState.enemies },
+    500,
+  );
+
+  assert.deepEqual(telegraph.supportActions, []);
+  assert.deepEqual(action.supportActions, [
+    { type: "damage", targetId: "e1", amount: 12 },
+    { type: "damage", targetId: "e2", amount: 12 },
+  ]);
+  assert.deepEqual(afterAction.supportActions, []);
+});
+
+test("assembly support rejects requests without live targets before spending", () => {
+  const state = createWarLayerState({ components: 4 });
+  const requested = requestSupportEvent(state, {
+    type: "convoy",
+    components: 4,
+    target: { x: 0, z: 0 },
+    targetIds: [],
+  });
+
+  assert.equal(requested.accepted, false);
+  assert.equal(requested.reason, "targets");
+  assert.equal(requested.state.components, 4);
+  assert.equal(requested.state.supportEvent, null);
 });
 
 test("enemy route bias retains inward progress and fades near arrival", () => {
@@ -571,6 +693,65 @@ test("engagement attacks resolve their assigned strategic node", () => {
     ),
     { id: "compute-relay", x: 3.4, z: 2.2 },
   );
+});
+
+test("late-wave assigned nodes win over nearer generic strategic nodes", () => {
+  const battlefield = createBattlefieldState();
+  const engagement = {
+    ...assignEngagementLane("compute-raider", createEngagementState(4), "compute-relay"),
+    attackTargetId: "compute-relay",
+  };
+  const genericNode = getNodeById(battlefield, "command-uplink");
+  const selected = enemyMovementRules.selectEnemyTarget({
+    wave: 4,
+    engagement,
+    battlefieldNodes: battlefield.nodes,
+    genericNodeTarget: genericNode,
+    genericNodeDistance: 0.5,
+    fallbackTarget: { id: "core", x: 0, z: 0 },
+  });
+
+  assert.equal(selected.kind, "engagement");
+  assert.deepEqual(selected.target, { id: "compute-relay", x: 3.4, z: 2.2 });
+
+  const offlineCompute = damageBattlefieldNode(battlefield, "compute-relay", 999);
+  const retargeted = enemyMovementRules.selectEnemyTarget({
+    wave: 4,
+    engagement,
+    battlefieldNodes: offlineCompute.nodes,
+    genericNodeTarget: genericNode,
+    genericNodeDistance: 0.5,
+    fallbackTarget: { id: "core", x: 0, z: 0 },
+  });
+  assert.equal(retargeted.kind, "battlefield-node");
+  assert.equal(retargeted.target.id, "command-uplink");
+});
+
+test("strategic node presentation keeps five silhouettes, colors, and health cues distinct", () => {
+  const expected = new Map([
+    ["core", ["diamond", "#fff0e2"]],
+    ["command", ["uplink", "#ffc857"]],
+    ["repair", ["cross", "#7fd8ff"]],
+    ["assembly", ["hex-pad", "#ff8f4c"]],
+    ["compute", ["crystal", "#b38cff"]],
+  ]);
+  const battlefield = createBattlefieldState();
+
+  for (const node of battlefield.nodes) {
+    const presentation = battlefieldRules.getBattlefieldNodePresentation(node);
+    assert.deepEqual(
+      [presentation.silhouette, presentation.cssColor],
+      expected.get(node.kind),
+    );
+    assert.equal(presentation.showHealthCue, false);
+  }
+
+  const damaged = damageBattlefieldNode(battlefield, "command-uplink", 40);
+  const damagedPresentation = battlefieldRules.getBattlefieldNodePresentation(
+    getNodeById(damaged, "command-uplink"),
+  );
+  assert.equal(damagedPresentation.showHealthCue, true);
+  assert.equal(damagedPresentation.healthRatio, 0.6);
 });
 
 test("completed attacks reset only their own engagement watchdog", () => {
