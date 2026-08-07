@@ -77,6 +77,11 @@ export const BATTLEFIELD_NODES = Object.freeze([
   }),
 ]);
 
+export function getBattlefieldNodePosition(id) {
+  const node = BATTLEFIELD_NODES.find((candidate) => candidate.id === id);
+  return node ? Object.freeze({ x: node.x, z: node.z }) : null;
+}
+
 export const BATTLEFIELD_NODE_PRESENTATIONS = Object.freeze({
   core: Object.freeze({ color: 0xfff0e2, cssColor: "#fff0e2", silhouette: "diamond" }),
   command: Object.freeze({ color: 0xffc857, cssColor: "#ffc857", silhouette: "uplink" }),

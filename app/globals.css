@@ -3362,11 +3362,15 @@ canvas:focus-visible {
 }
 
 .command-map-layer__legend .is-core,
-.command-map-marker--core i { color: #f08a4b; }
+.command-map-marker--core i { color: #fff0e2; }
+.command-map-layer__legend .is-command,
+.command-map-marker--command i { color: #ffc857; }
 .command-map-layer__legend .is-repair,
-.command-map-marker--repair i { color: #9ed8dd; }
+.command-map-marker--repair i { color: #7fd8ff; }
+.command-map-layer__legend .is-assembly,
+.command-map-marker--assembly i { color: #ff8f4c; }
 .command-map-layer__legend .is-compute,
-.command-map-marker--compute i { color: #d6c27f; }
+.command-map-marker--compute i { color: #b38cff; }
 .command-map-layer__legend .is-breach,
 .command-map-marker--breach i { color: #ffb184; }
 .command-map-layer__legend .is-agent,

@@ -308,12 +308,15 @@ export function orchestrateWarLayerTick(
 }
 
 export function requestSupportEvent(state = createWarLayerState(), request = {}) {
-  const components = finiteNonNegative(request.components, state.components);
   const type = request.type === "air-strike" ? "air-strike" : request.type === "convoy" ? "convoy" : null;
   if (!type) return { accepted: false, reason: "type", state };
   if (state.supportEvent) return { accepted: false, reason: "active-event", state };
   if (finiteNonNegative(state.supportCooldownMs) > 0) return { accepted: false, reason: "cooldown", state };
+  const components = finiteNonNegative(request.components, state.components);
   if (components < WAR_SUPPORT_COMPONENT_COST) return { accepted: false, reason: "components", state };
+  if (!Array.isArray(request.targetIds) || request.targetIds.length === 0) {
+    return { accepted: false, reason: "targets", state };
+  }
   const targetIds = (Array.isArray(request.targetIds) ? request.targetIds : [])
     .filter((targetId) => typeof targetId === "string" && targetId.length > 0)
     .slice(0, type === "air-strike" ? 3 : 1);

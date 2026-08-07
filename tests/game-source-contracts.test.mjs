@@ -991,19 +991,61 @@ test("renderer parity keeps battlefield, engagement, and war HUD state compact a
   }
 });
 
-test("both renderer command-map builders keep a single Assembly Pad marker with support status", () => {
-  assert.match(combatPresentationRules, /id: "assembly-pad"/);
+test("both renderer command-map builders preserve one canonical marker per battlefield node", () => {
+  assert.match(combatPresentationRules, /BATTLEFIELD_NODES/);
+  assert.doesNotMatch(combatPresentationRules, /id: "compute-node"/);
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
       engine,
-      /const strategicHud = createStrategicHud\([\s\S]*?const supportEvent = this\.warLayerState\.supportEvent;[\s\S]*?getCommandMapMarkers\(simulationView\)\.map\([\s\S]*?marker\.id !== "assembly-pad"/,
+      /const strategicHud = createStrategicHud\([\s\S]*?const supportEvent = this\.warLayerState\.supportEvent;[\s\S]*?getCommandMapMarkers\(simulationView\)\.map\([\s\S]*?strategicHud\.nodes\.find\(\(node\) => node\.id === marker\.id\)/,
     );
-    assert.match(
-      engine,
-      /if \(node\.id === "core" \|\| node\.id === "repair-bay" \|\| node\.id === "assembly-pad"\) continue;/,
-    );
+    assert.doesNotMatch(engine, /kind: "compute",[\s\S]*?label: summary\.label/);
     assert.doesNotMatch(engine, /id: "support-event"/);
   }
+  assert.match(styles, /\.command-map-marker--command i \{ color: #ffc857; \}/);
+  assert.match(styles, /\.command-map-marker--assembly i \{ color: #ff8f4c; \}/);
+  assert.match(styles, /\.command-map-marker--compute i \{ color: #b38cff; \}/);
+});
+
+test("both renderer Repair Bay visuals and combat targets use the canonical node position", () => {
+  assert.match(game, /getBattlefieldNodePosition/);
+  assert.match(webglGame, /private buildRepairBay\(\)[\s\S]*?group\.position\.set\(REPAIR_BAY_POSITION\.x, 0, REPAIR_BAY_POSITION\.z\)/);
+  assert.match(canvasGame, /private readonly repairBay = \{ \.\.\.REPAIR_BAY_POSITION, hp: 70, maxHp: 70 \};/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /repairBayTarget: \{[\s\S]*?id: "repair-bay",[\s\S]*?x: this\.repairBay(?:\.group\.position)?\.x,[\s\S]*?z: this\.repairBay(?:\.group\.position)?\.z/,
+    );
+  }
+});
+
+test("support callers reject impossible requests before allocating or sorting targets", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const supportRequest = engine.slice(
+      engine.indexOf("private maybeRequestWarSupport()"),
+      engine.indexOf("private updateWarLayer(", engine.indexOf("private maybeRequestWarSupport()")),
+    );
+    const sortIndex = supportRequest.indexOf(".sort(");
+    assert.ok(sortIndex > 0);
+    for (const guard of [
+      "this.warLayerState.supportEvent",
+      "this.warLayerState.supportCooldownMs",
+      "WAR_SUPPORT_COMPONENT_COST",
+      "this.enemies.length === 0",
+    ]) {
+      const guardIndex = supportRequest.indexOf(guard);
+      assert.ok(guardIndex > 0 && guardIndex < sortIndex, `${guard} must gate target sorting`);
+    }
+  }
+});
+
+test("WebGL enemy target sorting uses scalar distance without comparator Vector3 allocations", () => {
+  const updateEnemies = webglGame.slice(
+    webglGame.indexOf("private updateEnemies("),
+    webglGame.indexOf("private updateProjectiles(", webglGame.indexOf("private updateEnemies(")),
+  );
+  assert.doesNotMatch(updateEnemies, /position\.distanceToSquared\(new THREE\.Vector3/);
+  assert.doesNotMatch(updateEnemies, /position\.distanceTo\(new THREE\.Vector3/);
 });
 
 test("both renderers target, damage, and repair non-Core battlefield nodes", () => {
@@ -1110,6 +1152,11 @@ test("Forge armor break uses magnitude, skills honor action state, and loot labe
 
 test("follow command overrides autonomous roles and Canvas disposal clears sub-agents", () => {
   assert.match(game, /this\.squadCommand === "follow"[\s\S]*?intent/);
+  const canvasReset = canvasGame.slice(
+    canvasGame.indexOf("private resetMissionState()"),
+    canvasGame.indexOf("private emitTutorialEvent(", canvasGame.indexOf("private resetMissionState()")),
+  );
+  assert.match(canvasReset, /this\.clearTemporarySubAgents\(\)/);
   const canvasDispose = canvasGame.slice(canvasGame.lastIndexOf("dispose()"));
   assert.match(canvasDispose, /clearTemporarySubAgents\(\)/);
 });

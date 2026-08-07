@@ -418,6 +418,39 @@ test("repair squads use battlefield repair pricing and the live Repair Bay multi
   assert.equal(disabled.materials.components, 0);
 });
 
+test("repair squad targets share the canonical rendered Repair Bay position", () => {
+  const renderedPosition = battlefieldRules.getBattlefieldNodePosition("repair-bay");
+  const battlefieldState = damageBattlefieldNode(
+    createBattlefieldState(),
+    "repair-bay",
+    100,
+  );
+  const target = getNodeById(battlefieldState, "repair-bay");
+  const spawned = spawnWarSquad(createWarLayerState({ components: 3 }), {
+    parentId: "relay",
+    role: "repair",
+    x: renderedPosition.x,
+    z: renderedPosition.z,
+    components: 3,
+  });
+  const repaired = tickWarSquads(
+    spawned.state,
+    {
+      battlefieldState,
+      materials: { components: spawned.state.components },
+      repairMultiplier: 1,
+    },
+    1_500,
+  );
+
+  assert.deepEqual(renderedPosition, { x: target.x, z: target.z });
+  assert.deepEqual(
+    { x: repaired.squads[0].x, z: repaired.squads[0].z },
+    renderedPosition,
+  );
+  assert.ok(getNodeById(repaired.battlefieldState, "repair-bay").health > 0);
+});
+
 test("war-layer orchestration synchronizes priced repairs and Components", () => {
   const battlefieldState = damageBattlefieldNode(
     createBattlefieldState(),
@@ -850,6 +883,14 @@ test("simulation view normalizes render-neutral state and projects command marke
   assert.equal(markers.some((marker) => marker.id === "sub-agent-subagent-kairos-1"), true);
   assert.equal(markers.some((marker) => marker.id === "north-breach"), true);
   assert.equal(markers.some((marker) => marker.id === "south-breach"), true);
+  const canonicalIds = BATTLEFIELD_NODES.map((node) => node.id);
+  const canonicalMarkers = markers.filter((marker) => canonicalIds.includes(marker.id));
+  assert.equal(new Set(canonicalMarkers.map((marker) => marker.id)).size, canonicalIds.length);
+  assert.deepEqual(
+    canonicalMarkers.map(({ id, kind, x, z }) => ({ id, kind, x, z })),
+    BATTLEFIELD_NODES.map(({ id, kind, x, z }) => ({ id, kind, x, z })),
+  );
+  assert.equal(markers.some((marker) => marker.id === "compute-node"), false);
   assert.equal(getCombatEffectBudget("low", true).hitStopMs, 0);
 });
 

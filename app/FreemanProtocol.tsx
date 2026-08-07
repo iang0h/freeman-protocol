@@ -173,9 +173,11 @@ import {
   damageBattlefieldNode,
   getBattlefieldEffects,
   getBattlefieldNodePresentation,
+  getBattlefieldNodePosition,
   tickBattlefieldResources,
 } from "./game/battlefield-rules.mjs";
 import {
+  WAR_SUPPORT_COMPONENT_COST,
   createWarLayerState,
   damageWarSquad,
   orchestrateWarLayerTick,
@@ -744,6 +746,17 @@ const STRATEGIC_NODE_LABELS: Record<string, string> = {
   "assembly-pad": "ASSEMBLY",
   "compute-relay": "COMPUTE",
 };
+const REPAIR_BAY_POSITION: { x: number; z: number } = (() => {
+  const position = getBattlefieldNodePosition("repair-bay");
+  if (
+    !position ||
+    typeof position.x !== "number" ||
+    typeof position.z !== "number"
+  ) {
+    throw new Error("Missing canonical Repair Bay node");
+  }
+  return { x: position.x, z: position.z };
+})();
 
 function createStrategicHud(
   battlefieldState: ReturnType<typeof createBattlefieldState>,
@@ -3548,7 +3561,7 @@ class FreemanEngine {
   private buildRepairBay() {
     const group = new THREE.Group();
     group.name = "separate-repair-bay";
-    group.position.set(-3.1, 0, 1.15);
+    group.position.set(REPAIR_BAY_POSITION.x, 0, REPAIR_BAY_POSITION.z);
     const shell = new THREE.Mesh(
       new THREE.CylinderGeometry(0.58, 0.72, 0.74, 8),
       new THREE.MeshStandardMaterial({
@@ -5286,7 +5299,11 @@ class FreemanEngine {
     if (
       !battlefieldEffects.assemblyEnabled ||
       !isWatchMode(this.sessionMode) ||
-      this.watchState.priority === "survive"
+      this.watchState.priority === "survive" ||
+      this.warLayerState.supportEvent ||
+      this.warLayerState.supportCooldownMs > 0 ||
+      this.loot.components < WAR_SUPPORT_COMPONENT_COST ||
+      this.enemies.length === 0
     ) return;
     const type = this.watchState.priority === "expand" ? "air-strike" : "convoy";
     const targets = [...this.enemies]
@@ -6081,8 +6098,8 @@ class FreemanEngine {
       const warSquadTarget = [...this.warLayerState.squads]
         .filter((squad) => squad.health > 0)
         .sort((left, right) =>
-          position.distanceToSquared(new THREE.Vector3(left.x, 0, left.z)) -
-          position.distanceToSquared(new THREE.Vector3(right.x, 0, right.z)),
+          (left.x - position.x) ** 2 + (left.z - position.z) ** 2 -
+          ((right.x - position.x) ** 2 + (right.z - position.z) ** 2),
         )[0];
       const agentDistance = agentTarget
         ? position.distanceTo(agentTarget.group.position)
@@ -6091,7 +6108,7 @@ class FreemanEngine {
         ? position.distanceTo(turretTarget.group.position)
         : Infinity;
       const warSquadDistance = warSquadTarget
-        ? position.distanceTo(new THREE.Vector3(warSquadTarget.x, 0, warSquadTarget.z))
+        ? Math.hypot(warSquadTarget.x - position.x, warSquadTarget.z - position.z)
         : Infinity;
       const repairBayDistance = this.repairBay.hp > 0
         ? position.distanceTo(this.repairBay.group.position)
@@ -6099,11 +6116,14 @@ class FreemanEngine {
       const battlefieldNodeTarget = this.battlefieldState.nodes
         .filter((node) => node.id !== "core" && node.id !== "repair-bay" && node.health > 0)
         .sort((left, right) =>
-          position.distanceToSquared(new THREE.Vector3(left.x, 0, left.z)) -
-          position.distanceToSquared(new THREE.Vector3(right.x, 0, right.z)),
+          (left.x - position.x) ** 2 + (left.z - position.z) ** 2 -
+          ((right.x - position.x) ** 2 + (right.z - position.z) ** 2),
         )[0];
       const battlefieldNodeDistance = battlefieldNodeTarget
-        ? position.distanceTo(new THREE.Vector3(battlefieldNodeTarget.x, 0, battlefieldNodeTarget.z))
+        ? Math.hypot(
+            battlefieldNodeTarget.x - position.x,
+            battlefieldNodeTarget.z - position.z,
+          )
         : Infinity;
       let engagement = this.engagementState.records[String(enemy.id)];
       const targetSelection = selectEnemyTarget({
@@ -6677,8 +6697,6 @@ class FreemanEngine {
     if (battlefieldNode) return new THREE.Vector3(battlefieldNode.x, 0, battlefieldNode.z);
     const warSquad = this.warLayerState.squads.find((squad) => squad.id === focusId);
     if (warSquad) return new THREE.Vector3(warSquad.x, 0, warSquad.z);
-    if (focusId === "compute-node") return new THREE.Vector3(3.1, 0, 1.15);
-    if (focusId === "assembly-pad") return new THREE.Vector3(3.2, 0, -2.4);
     if (focusId === "north-breach") return new THREE.Vector3(0, 0, -4);
     if (focusId === "south-breach") return new THREE.Vector3(0, 0, 4);
     if (focusId === "boss-portal") return new THREE.Vector3(0, 0, -6.45);
@@ -8080,32 +8098,18 @@ class FreemanEngine {
       this.warLayerState,
     );
     const supportEvent = this.warLayerState.supportEvent;
-    const assemblyPad = strategicHud.nodes.find((node) => node.id === "assembly-pad");
-    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView).map((marker) =>
-      marker.id !== "assembly-pad" || !assemblyPad
-        ? marker
-        : {
-            ...marker,
-            status: supportEvent
-              ? `${supportEvent.type.replace("-", " ").toUpperCase()} ACTIVE ${Math.ceil(supportEvent.remainingMs / 1_000)}S`
-              : `${assemblyPad.status.toUpperCase()} ${assemblyPad.health}/${assemblyPad.maxHealth}`,
-            priority: supportEvent ? 12 : assemblyPad.status === "online" ? 4 : 11,
-          },
-    );
-    for (const node of this.battlefieldState.nodes) {
-      if (node.id === "core" || node.id === "repair-bay" || node.id === "assembly-pad") continue;
-      const summary = strategicHud.nodes.find((item) => item.id === node.id);
-      if (!summary) continue;
-      commandMap.push({
-        id: summary.id,
-        kind: "compute",
-        label: summary.label,
-        x: node.x,
-        z: node.z,
-        status: `${summary.status.toUpperCase()} ${summary.health}/${summary.maxHealth}`,
-        priority: summary.status === "online" ? 4 : 11,
-      });
-    }
+    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView).map((marker) => {
+      const summary = strategicHud.nodes.find((node) => node.id === marker.id);
+      if (!summary) return marker;
+      const supportActive = marker.id === "assembly-pad" && supportEvent;
+      return {
+        ...marker,
+        status: supportActive
+          ? `${supportEvent.type.replace("-", " ").toUpperCase()} ACTIVE ${Math.ceil(supportEvent.remainingMs / 1_000)}S`
+          : `${summary.status.toUpperCase()} ${summary.health}/${summary.maxHealth}`,
+        priority: supportActive ? 12 : summary.status === "online" ? 4 : 11,
+      };
+    });
     for (const squad of this.warLayerState.squads) {
       const summary = strategicHud.squads.find((item) => item.id === squad.id);
       if (!summary) continue;
@@ -8406,7 +8410,7 @@ class FreemanCanvasEngine implements GameController {
     invulnerable: 0,
   };
   private readonly core = { x: 0, z: 0, hp: 180, maxHp: 180 };
-  private readonly repairBay = { x: -3.1, z: 1.15, hp: 70, maxHp: 70 };
+  private readonly repairBay = { ...REPAIR_BAY_POSITION, hp: 70, maxHp: 70 };
   private readonly buildings: Array<{
     x: number;
     z: number;
@@ -8605,6 +8609,7 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private resetMissionState() {
+    this.clearTemporarySubAgents();
     this.enemies.length = 0;
     this.engagementState = createEngagementState(this.wave);
     this.agents.length = 0;
@@ -10199,7 +10204,11 @@ class FreemanCanvasEngine implements GameController {
     if (
       !battlefieldEffects.assemblyEnabled ||
       !isWatchMode(this.sessionMode) ||
-      this.watchState.priority === "survive"
+      this.watchState.priority === "survive" ||
+      this.warLayerState.supportEvent ||
+      this.warLayerState.supportCooldownMs > 0 ||
+      this.loot.components < WAR_SUPPORT_COMPONENT_COST ||
+      this.enemies.length === 0
     ) return;
     const type = this.watchState.priority === "expand" ? "air-strike" : "convoy";
     const targets = [...this.enemies]
@@ -11307,8 +11316,6 @@ class FreemanCanvasEngine implements GameController {
     if (battlefieldNode) return { x: battlefieldNode.x, z: battlefieldNode.z };
     const warSquad = this.warLayerState.squads.find((squad) => squad.id === focusId);
     if (warSquad) return { x: warSquad.x, z: warSquad.z };
-    if (focusId === "compute-node") return { x: 3.1, z: 1.15 };
-    if (focusId === "assembly-pad") return { x: 3.2, z: -2.4 };
     if (focusId === "north-breach") return { x: 0, z: -4 };
     if (focusId === "south-breach") return { x: 0, z: 4 };
     if (focusId === "boss-portal") return { x: 0, z: -6.45 };
@@ -14245,32 +14252,18 @@ class FreemanCanvasEngine implements GameController {
       this.warLayerState,
     );
     const supportEvent = this.warLayerState.supportEvent;
-    const assemblyPad = strategicHud.nodes.find((node) => node.id === "assembly-pad");
-    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView).map((marker) =>
-      marker.id !== "assembly-pad" || !assemblyPad
-        ? marker
-        : {
-            ...marker,
-            status: supportEvent
-              ? `${supportEvent.type.replace("-", " ").toUpperCase()} ACTIVE ${Math.ceil(supportEvent.remainingMs / 1_000)}S`
-              : `${assemblyPad.status.toUpperCase()} ${assemblyPad.health}/${assemblyPad.maxHealth}`,
-            priority: supportEvent ? 12 : assemblyPad.status === "online" ? 4 : 11,
-          },
-    );
-    for (const node of this.battlefieldState.nodes) {
-      if (node.id === "core" || node.id === "repair-bay" || node.id === "assembly-pad") continue;
-      const summary = strategicHud.nodes.find((item) => item.id === node.id);
-      if (!summary) continue;
-      commandMap.push({
-        id: summary.id,
-        kind: "compute",
-        label: summary.label,
-        x: node.x,
-        z: node.z,
-        status: `${summary.status.toUpperCase()} ${summary.health}/${summary.maxHealth}`,
-        priority: summary.status === "online" ? 4 : 11,
-      });
-    }
+    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView).map((marker) => {
+      const summary = strategicHud.nodes.find((node) => node.id === marker.id);
+      if (!summary) return marker;
+      const supportActive = marker.id === "assembly-pad" && supportEvent;
+      return {
+        ...marker,
+        status: supportActive
+          ? `${supportEvent.type.replace("-", " ").toUpperCase()} ACTIVE ${Math.ceil(supportEvent.remainingMs / 1_000)}S`
+          : `${summary.status.toUpperCase()} ${summary.health}/${summary.maxHealth}`,
+        priority: supportActive ? 12 : summary.status === "online" ? 4 : 11,
+      };
+    });
     for (const squad of this.warLayerState.squads) {
       const summary = strategicHud.squads.find((item) => item.id === squad.id);
       if (!summary) continue;
@@ -14943,9 +14936,10 @@ export default function FreemanProtocol({
   });
   const commandMapFixedIds = new Set([
     "core",
+    "command-uplink",
     "repair-bay",
     "assembly-pad",
-    "compute-node",
+    "compute-relay",
     "north-breach",
     "south-breach",
     "boss-portal",
@@ -15062,7 +15056,9 @@ export default function FreemanProtocol({
           </div>
           <div className="command-map-layer__legend" aria-label="Map legend">
             <span><i className="is-core" />CORE</span>
+            <span><i className="is-command" />UPLINK</span>
             <span><i className="is-repair" />REPAIR</span>
+            <span><i className="is-assembly" />ASSEMBLY</span>
             <span><i className="is-compute" />COMPUTE</span>
             <span><i className="is-breach" />BREACH</span>
             <span><i className="is-agent" />AGENT</span>

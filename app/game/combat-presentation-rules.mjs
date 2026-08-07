@@ -1,6 +1,7 @@
 export const OVERLAYS = Object.freeze(["closed", "intel", "warband", "actions"]);
 
 import { getQualitySettings } from "./quality-rules.mjs";
+import { BATTLEFIELD_NODES } from "./battlefield-rules.mjs";
 
 const ARENA_ZONES = Object.freeze({
   core: Object.freeze({
@@ -111,11 +112,24 @@ export function classifyCombatFeedback(event = {}) {
   return Object.freeze({ kind: "hit", emphasis: "standard", label });
 }
 
+const BATTLEFIELD_MARKER_LABELS = Object.freeze({
+  core: "CORE",
+  "command-uplink": "UPLINK",
+  "repair-bay": "REPAIR",
+  "assembly-pad": "ASSEMBLY",
+  "compute-relay": "COMPUTE",
+});
+
 const COMMAND_MAP_FIXED_MARKERS = Object.freeze([
-  Object.freeze({ id: "core", kind: "core", label: "CORE", x: 0, z: 0, status: "protected", priority: 4 }),
-  Object.freeze({ id: "repair-bay", kind: "repair", label: "REPAIR", x: -3.1, z: 1.15, status: "available", priority: 3 }),
-  Object.freeze({ id: "assembly-pad", kind: "assembly", label: "ASSEMBLY", x: 3.2, z: -2.4, status: "online", priority: 3 }),
-  Object.freeze({ id: "compute-node", kind: "compute", label: "COMPUTE", x: 3.1, z: 1.15, status: "available", priority: 2 }),
+  ...BATTLEFIELD_NODES.map((node) => Object.freeze({
+    id: node.id,
+    kind: node.kind,
+    label: BATTLEFIELD_MARKER_LABELS[node.id] ?? node.id.toUpperCase(),
+    x: node.x,
+    z: node.z,
+    status: node.id === "core" ? "protected" : "online",
+    priority: node.id === "core" ? 4 : 3,
+  })),
   Object.freeze({ id: "north-breach", kind: "breach", label: "NORTH BREACH", x: 0, z: -4, status: "active", priority: 2 }),
   Object.freeze({ id: "south-breach", kind: "breach", label: "SOUTH BREACH", x: 0, z: 4, status: "active", priority: 2 }),
   Object.freeze({ id: "boss-portal", kind: "portal", label: "PORTAL", x: 0, z: -6.45, status: "dormant", priority: 1 }),
