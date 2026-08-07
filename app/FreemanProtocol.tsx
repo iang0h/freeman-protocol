@@ -7934,13 +7934,25 @@ class FreemanEngine {
           }
         : null,
     });
-    const commandMap: HudState["commandMap"] = [...getCommandMapMarkers(simulationView)];
     const strategicHud = createStrategicHud(
       this.battlefieldState,
       this.warLayerState,
     );
+    const supportEvent = this.warLayerState.supportEvent;
+    const assemblyPad = strategicHud.nodes.find((node) => node.id === "assembly-pad");
+    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView).map((marker) =>
+      marker.id !== "assembly-pad" || !assemblyPad
+        ? marker
+        : {
+            ...marker,
+            status: supportEvent
+              ? `${supportEvent.type.replace("-", " ").toUpperCase()} ACTIVE ${Math.ceil(supportEvent.remainingMs / 1_000)}S`
+              : `${assemblyPad.status.toUpperCase()} ${assemblyPad.health}/${assemblyPad.maxHealth}`,
+            priority: supportEvent ? 12 : assemblyPad.status === "online" ? 4 : 11,
+          },
+    );
     for (const node of this.battlefieldState.nodes) {
-      if (node.id === "core" || node.id === "repair-bay") continue;
+      if (node.id === "core" || node.id === "repair-bay" || node.id === "assembly-pad") continue;
       const summary = strategicHud.nodes.find((item) => item.id === node.id);
       if (!summary) continue;
       commandMap.push({
@@ -7964,18 +7976,6 @@ class FreemanEngine {
         z: squad.z,
         status: `${summary.status.toUpperCase()} ${Math.ceil(summary.remainingMs / 1_000)}S`,
         priority: 7,
-      });
-    }
-    const supportEvent = this.warLayerState.supportEvent;
-    if (supportEvent) {
-      commandMap.push({
-        id: "support-event",
-        kind: "compute",
-        label: supportEvent.type.replace("-", " ").toUpperCase(),
-        x: 3.2,
-        z: -2.4,
-        status: `ACTIVE ${Math.ceil(supportEvent.remainingMs / 1_000)}S`,
-        priority: 12,
       });
     }
     this.callbacks.onHud({
@@ -13919,13 +13919,25 @@ class FreemanCanvasEngine implements GameController {
           }
         : null,
     });
-    const commandMap: HudState["commandMap"] = [...getCommandMapMarkers(simulationView)];
     const strategicHud = createStrategicHud(
       this.battlefieldState,
       this.warLayerState,
     );
+    const supportEvent = this.warLayerState.supportEvent;
+    const assemblyPad = strategicHud.nodes.find((node) => node.id === "assembly-pad");
+    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView).map((marker) =>
+      marker.id !== "assembly-pad" || !assemblyPad
+        ? marker
+        : {
+            ...marker,
+            status: supportEvent
+              ? `${supportEvent.type.replace("-", " ").toUpperCase()} ACTIVE ${Math.ceil(supportEvent.remainingMs / 1_000)}S`
+              : `${assemblyPad.status.toUpperCase()} ${assemblyPad.health}/${assemblyPad.maxHealth}`,
+            priority: supportEvent ? 12 : assemblyPad.status === "online" ? 4 : 11,
+          },
+    );
     for (const node of this.battlefieldState.nodes) {
-      if (node.id === "core" || node.id === "repair-bay") continue;
+      if (node.id === "core" || node.id === "repair-bay" || node.id === "assembly-pad") continue;
       const summary = strategicHud.nodes.find((item) => item.id === node.id);
       if (!summary) continue;
       commandMap.push({
@@ -13949,18 +13961,6 @@ class FreemanCanvasEngine implements GameController {
         z: squad.z,
         status: `${summary.status.toUpperCase()} ${Math.ceil(summary.remainingMs / 1_000)}S`,
         priority: 7,
-      });
-    }
-    const supportEvent = this.warLayerState.supportEvent;
-    if (supportEvent) {
-      commandMap.push({
-        id: "support-event",
-        kind: "compute",
-        label: supportEvent.type.replace("-", " ").toUpperCase(),
-        x: 3.2,
-        z: -2.4,
-        status: `ACTIVE ${Math.ceil(supportEvent.remainingMs / 1_000)}S`,
-        priority: 12,
       });
     }
     this.callbacks.onHud({
@@ -14620,7 +14620,6 @@ export default function FreemanProtocol({
   const commandMapFixedIds = new Set([
     "core",
     "repair-bay",
-    "support-event",
     "assembly-pad",
     "compute-node",
     "north-breach",

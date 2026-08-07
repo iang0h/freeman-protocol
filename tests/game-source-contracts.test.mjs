@@ -869,8 +869,7 @@ test("both renderers consume bounded war squads and compact Assembly support", (
   assert.match(canvasGame, /private drawWarSquad/);
   assert.match(canvasGame, /private drawBattlefieldNode/);
   assert.match(game, /"assembly-pad"/);
-  assert.equal((game.match(/id: "support-event"/g) ?? []).length, 2);
-  assert.match(game, /"support-event",\n\s+"assembly-pad"/);
+  assert.equal((game.match(/const supportEvent = this\.warLayerState\.supportEvent;/g) ?? []).length, 2);
 });
 
 test("renderer parity keeps battlefield, engagement, and war HUD state compact and focusable", () => {
@@ -891,6 +890,21 @@ test("renderer parity keeps battlefield, engagement, and war HUD state compact a
     assert.match(engine, /strategicHud,/);
     assert.match(engine, /this\.battlefieldState\.nodes\.find\(\(node\) => node\.id === focusId\)/);
     assert.match(engine, /dispose\(\)[\s\S]*?(?:temporarySubAgentPool\.clear|burstEffectPool\.clear)/);
+  }
+});
+
+test("both renderer command-map builders keep a single Assembly Pad marker with support status", () => {
+  assert.match(combatPresentationRules, /id: "assembly-pad"/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(
+      engine,
+      /const strategicHud = createStrategicHud\([\s\S]*?const supportEvent = this\.warLayerState\.supportEvent;[\s\S]*?getCommandMapMarkers\(simulationView\)\.map\([\s\S]*?marker\.id !== "assembly-pad"/,
+    );
+    assert.match(
+      engine,
+      /if \(node\.id === "core" \|\| node\.id === "repair-bay" \|\| node\.id === "assembly-pad"\) continue;/,
+    );
+    assert.doesNotMatch(engine, /id: "support-event"/);
   }
 });
 
