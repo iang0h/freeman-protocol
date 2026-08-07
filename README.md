@@ -12,7 +12,7 @@
     &nbsp;·&nbsp;
     <a href="https://youtu.be/SesS1bd7b4c">YouTube</a>
     &nbsp;·&nbsp;
-    <a href="https://freeman-protocol.vercel.app/asset-catalog">Browse the asset catalog</a>
+    <a href="https://freeman.skillrivals.com/asset-catalog">Browse the asset catalog</a>
   </p>
 
   <p>
@@ -152,7 +152,7 @@ OpenAI workspace Sites can read the current user's email from `oai-authenticated
 ## Learn more
 
 - [Live game](https://freeman.skillrivals.com/)
-- [Asset catalog](https://freeman-protocol.vercel.app/asset-catalog)
+- [Asset catalog](https://freeman.skillrivals.com/asset-catalog)
 - [Freeman Protocol trailer](https://youtu.be/SesS1bd7b4c)
 - [vinext documentation](https://github.com/cloudflare/vinext)
 - [Drizzle D1 guide](https://orm.drizzle.team/docs/get-started/d1-new)
