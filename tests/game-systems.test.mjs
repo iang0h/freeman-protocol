@@ -173,6 +173,15 @@ import {
   getCommandMapMarkers,
   getCombatEffectBudget,
 } from "../app/game/combat-presentation-rules.mjs";
+import {
+  BATTLEFIELD_NODES,
+  createBattlefieldState,
+  damageBattlefieldNode,
+  getBattlefieldEffects,
+  getNodeById,
+  getNodeRepairCost,
+  repairBattlefieldNode,
+} from "../app/game/battlefield-rules.mjs";
 
 test("enemy route bias retains inward progress and fades near arrival", () => {
   const far = resolveEnemyAdvance(
@@ -2846,6 +2855,44 @@ test("warboss rewards include bounded rare Shards and reinforcements cannot grow
   }
   assert.ok(spawned <= encounter.reinforcementCap);
   assert.ok(spawned <= BOSS_CAPS.maxReinforcements);
+});
+
+test("battlefield metadata fixes the five strategic-node locations and repair cost", () => {
+  assert.deepEqual(
+    BATTLEFIELD_NODES.map(({ id, kind, x, z }) => ({ id, kind, x, z })),
+    [
+      { id: "core", kind: "core", x: 0, z: 0 },
+      { id: "command-uplink", kind: "command", x: -4, z: -2.5 },
+      { id: "repair-bay", kind: "repair", x: -3, z: 2.6 },
+      { id: "assembly-pad", kind: "assembly", x: 3.2, z: -2.4 },
+      { id: "compute-relay", kind: "compute", x: 3.4, z: 2.2 },
+    ],
+  );
+  assert.equal(getNodeRepairCost(BATTLEFIELD_NODES[2]), 2);
+  assert.equal(Object.isFrozen(BATTLEFIELD_NODES), true);
+});
+
+test("battlefield nodes transition online, damaged, and offline", () => {
+  let state = createBattlefieldState();
+  state = damageBattlefieldNode(state, "assembly-pad", 60);
+  assert.equal(getNodeById(state, "assembly-pad").status, "damaged");
+  state = damageBattlefieldNode(state, "assembly-pad", 100);
+  assert.equal(getNodeById(state, "assembly-pad").status, "offline");
+});
+
+test("repair consumes components and restores an offline node", () => {
+  let state = damageBattlefieldNode(createBattlefieldState(), "repair-bay", 999);
+  const repaired = repairBattlefieldNode(state, "repair-bay", 45, { components: 3 });
+  assert.equal(repaired.materials.components, 1);
+  assert.equal(getNodeById(repaired.state, "repair-bay").status, "damaged");
+  assert.equal(getBattlefieldEffects(repaired.state).repairMultiplier, 0);
+});
+
+test("online command and compute nodes expose bounded strategic effects", () => {
+  const effects = getBattlefieldEffects(createBattlefieldState());
+  assert.equal(effects.commandRadius, 8);
+  assert.equal(effects.computePerSecond, 1);
+  assert.equal(effects.repairMultiplier, 1);
 });
 
 function sequence(values) {
