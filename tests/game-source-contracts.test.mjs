@@ -686,7 +686,7 @@ test("both engines retain workshop recruitment through wave seven before wave ei
     );
     assert.match(
       engine,
-      /recruit\(id: AgentId\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, `recruit-\$\{id\}`\)\) return;\s*if \(!canRecruitPersistentWarband\(this\.mode\)\) return;[\s\S]*?this\.addAgent/,
+      /recruit\(id: AgentId\) \{\s*if \(!canPerformTutorialAction\(this\.tutorialStep, `recruit-\$\{id\}`\)\) return;\s*if \([\s\S]*?canRecruitPersistentWarband\(this\.mode, \{[\s\S]*?allowPausedOverlay: this\.combatOverlayOpen && this\.sessionMode === "campaign"[\s\S]*?\}\)[\s\S]*?return;[\s\S]*?this\.addAgent/,
     );
     assert.match(
       engine,
@@ -694,7 +694,7 @@ test("both engines retain workshop recruitment through wave seven before wave ei
     );
     assert.doesNotMatch(engine, /canPerformTutorialAction\(this\.tutorialStep, "guard-core"\)/);
   }
-  assert.match(game, /const canRecruitWarband = canRecruitPersistentWarband\(mode\);/);
+  assert.match(game, /const canRecruitWarband = canRecruitPersistentWarband\(mode, \{[\s\S]*?allowPausedOverlay:/);
   assert.match(game, /disabled=\{recruited \|\| \(coOpActive \? !coOpCanAct \|\| !affordable : !canRecruitWarband\)\}/);
   assert.match(
     game,

@@ -101,8 +101,13 @@ export function getWarbandStrength(roster = []) {
   );
 }
 
-export function canRecruitPersistentWarband(mode) {
-  return mode === "playing" || mode === "upgrade" || mode === "evolution";
+export function canRecruitPersistentWarband(mode, options = {}) {
+  return (
+    mode === "playing" ||
+    mode === "upgrade" ||
+    mode === "evolution" ||
+    (mode === "paused" && options.allowPausedOverlay === true)
+  );
 }
 
 export function advanceWarbandWorkshopMode(mode, event) {

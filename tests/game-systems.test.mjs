@@ -1589,6 +1589,18 @@ test("renderer workshop lifecycle recruits slots five through eight before wave 
   assert.deepEqual(rendererCampaigns.canvas, rendererCampaigns.webgl);
 });
 
+test("allows campaign recruitment while the paused Warband overlay is open", () => {
+  assert.equal(canRecruitPersistentWarband("paused"), false);
+  assert.equal(
+    canRecruitPersistentWarband("paused", { allowPausedOverlay: true }),
+    true,
+  );
+  assert.equal(
+    canRecruitPersistentWarband("paused", { allowPausedOverlay: false }),
+    false,
+  );
+});
+
 test("warband recruitment is atomic and rejects an unavailable ninth slot", () => {
   const state = {
     compute: 500,

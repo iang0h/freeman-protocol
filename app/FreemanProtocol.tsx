@@ -2260,7 +2260,11 @@ class FreemanEngine {
 
   recruit(id: AgentId) {
     if (!canPerformTutorialAction(this.tutorialStep, `recruit-${id}`)) return;
-    if (!canRecruitPersistentWarband(this.mode)) return;
+    if (
+      !canRecruitPersistentWarband(this.mode, {
+        allowPausedOverlay: this.combatOverlayOpen && this.sessionMode === "campaign",
+      })
+    ) return;
     if (this.addAgent(id, { charge: true, notify: true }) && id === "kairos") {
       this.emitTutorialEvent("kairos-recruited");
     }
@@ -8882,7 +8886,11 @@ class FreemanCanvasEngine implements GameController {
 
   recruit(id: AgentId) {
     if (!canPerformTutorialAction(this.tutorialStep, `recruit-${id}`)) return;
-    if (!canRecruitPersistentWarband(this.mode)) return;
+    if (
+      !canRecruitPersistentWarband(this.mode, {
+        allowPausedOverlay: this.combatOverlayOpen && this.sessionMode === "campaign",
+      })
+    ) return;
     if (this.addAgent(id, { charge: true, notify: true }) && id === "kairos") {
       this.emitTutorialEvent("kairos-recruited");
     }
@@ -14875,7 +14883,13 @@ export default function FreemanProtocol({
   ]);
 
   const isOverlay = mode !== "playing";
-  const canRecruitWarband = canRecruitPersistentWarband(mode);
+  const canRecruitFromPausedOverlay =
+    mode === "paused" &&
+    overlayState.active === "warband" &&
+    hud.sessionMode === "campaign";
+  const canRecruitWarband = canRecruitPersistentWarband(mode, {
+    allowPausedOverlay: canRecruitFromPausedOverlay,
+  });
   const workshopActive = mode === "upgrade" || mode === "evolution";
   const canBuildSentry = coOpActive
     ? Boolean(
@@ -14890,7 +14904,9 @@ export default function FreemanProtocol({
   const canRecruitAgent = Boolean(
     coOpActive
       ? coOpCanAct && coOpRecruited.size < coOpWarbandLimit
-      : mode === "playing" && canRecruitWarband && hud.nextRecruitCost,
+      : (mode === "playing" || canRecruitFromPausedOverlay) &&
+        canRecruitWarband &&
+        hud.nextRecruitCost,
   );
   const getAgentStatus = (agentId: AgentId) => {
     if (coOpActive) return coOpRecruited.has(agentId) ? "ACTIVE" : "AVAILABLE";
