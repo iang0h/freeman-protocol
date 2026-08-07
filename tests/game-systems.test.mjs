@@ -286,6 +286,26 @@ test("engagement watchdog forces a reposition after a stationary attack radius",
   assert.ok(advance.vector.z > 0);
 });
 
+test("engagement returns to its lane approach after a reposition expires", () => {
+  let state = createEngagementState(4);
+  const record = assignEngagementLane("return-to-lane", state, "core");
+  state = {
+    ...state,
+    records: {
+      ["return-to-lane"]: {
+        ...record,
+        repositionLeftMs: 50,
+        lastAction: "reposition",
+      },
+    },
+  };
+
+  state = tickEngagement(state, 60);
+
+  assert.equal(state.records["return-to-lane"].repositionLeftMs, 0);
+  assert.equal(state.records["return-to-lane"].lastAction, "advance");
+});
+
 test("wave-four engagement records keep an attack or reposition cadence", () => {
   let state = createEngagementState(4);
   const record = assignEngagementLane("watch-4", state, "core");

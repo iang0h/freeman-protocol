@@ -77,6 +77,15 @@ test("both renderers create, assign, and tick late-wave engagement lanes", () =>
   }
 });
 
+test("both renderers approach lane staging and reposition even inside Core arrival range", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /engagement\?\.lastAction === "repath"/);
+    assert.match(engine, /const useStagingTarget\s*=\s*[\s\S]*?engagement\.lastAction !== "attack"/);
+    assert.match(engine, /const shouldAdvance\s*=\s*[\s\S]*?engagement\?\.repositionLeftMs > 0/);
+    assert.match(engine, /target:\s*[\s\S]{0,160}movementTarget/);
+  }
+});
+
 test("WebGL battleground theme narrows the arena grid before reading its material", () => {
   assert.match(
     webglGame,

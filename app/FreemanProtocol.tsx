@@ -674,6 +674,7 @@ type EngagementRecord = {
   repathLeftMs: number;
   repositionLeftMs: number;
   lastAction: string;
+  repathAction?: string;
 };
 
 type EngagementState = {
@@ -5664,7 +5665,7 @@ class FreemanEngine {
       const repairBayDistance = this.repairBay.hp > 0
         ? position.distanceTo(this.repairBay.group.position)
         : Infinity;
-      const engagement = this.engagementState.records[String(enemy.id)];
+      let engagement = this.engagementState.records[String(enemy.id)];
       const targetKind =
         playerDistance < 4.2
           ? "player"
@@ -5689,13 +5690,48 @@ class FreemanEngine {
       const engagementLane = engagement
         ? ENGAGEMENT_LANES.find((lane) => lane.id === engagement.laneId)
         : null;
+      if (targetKind === "engagement" && engagement?.lastAction === "repath") {
+        engagement = {
+          ...engagement,
+          staging: { ...(engagementLane?.staging ?? engagement.staging) },
+          attackTargetId: engagementLane?.attackTargetId ?? engagement.attackTargetId,
+          lastAction: engagement.repathAction ?? "advance",
+          repathAction: undefined,
+        };
+        this.engagementState = {
+          ...this.engagementState,
+          records: {
+            ...this.engagementState.records,
+            [String(enemy.id)]: engagement,
+          },
+        };
+      }
       const stagingTargetPosition = engagement
         ? new THREE.Vector3(engagement.staging.x, 0, engagement.staging.z)
         : targetPosition;
-      const movementTargetPosition =
-        targetKind === "engagement" && engagement?.repositionLeftMs > 0
-          ? stagingTargetPosition
-          : targetPosition;
+      const arrivalDistance = Math.max(0.75, enemy.range * 0.86);
+      const stagingDistance = position.distanceTo(stagingTargetPosition);
+      if (
+        targetKind === "engagement" &&
+        engagement?.lastAction === "advance" &&
+        stagingDistance <= arrivalDistance
+      ) {
+        engagement = { ...engagement, lastAction: "attack" };
+        this.engagementState = {
+          ...this.engagementState,
+          records: {
+            ...this.engagementState.records,
+            [String(enemy.id)]: engagement,
+          },
+        };
+      }
+      const useStagingTarget =
+        targetKind === "engagement" &&
+        Boolean(engagement) &&
+        engagement.lastAction !== "attack";
+      const movementTargetPosition = useStagingTarget
+        ? stagingTargetPosition
+        : targetPosition;
       const distance = position.distanceTo(targetPosition);
 
       if (Math.floor(this.elapsed * 60) % getQualitySettings(this.qualityPreset).robotAnimationStride === 0) {
@@ -5912,8 +5948,11 @@ class FreemanEngine {
         continue;
       }
 
-      const arrivalDistance = Math.max(0.75, enemy.range * 0.86);
-      if (distance > arrivalDistance) {
+      const shouldAdvance =
+        distance > arrivalDistance ||
+        (targetKind === "engagement" && engagement?.repositionLeftMs > 0) ||
+        (useStagingTarget && stagingDistance > arrivalDistance);
+      if (shouldAdvance) {
         const slowFactor = getSlowMovementMultiplier(
           enemy.slow * 1_000,
           enemy.slowMultiplier,
@@ -10073,7 +10112,7 @@ class FreemanCanvasEngine implements GameController {
       const repairBayDistance = this.repairBay.hp > 0
         ? this.distance(enemy.x, enemy.z, this.repairBay.x, this.repairBay.z)
         : Infinity;
-      const engagement = this.engagementState.records[String(enemy.id)];
+      let engagement = this.engagementState.records[String(enemy.id)];
       const targetKind =
         playerDistance < 4.2
           ? "player"
@@ -10107,13 +10146,53 @@ class FreemanCanvasEngine implements GameController {
       const engagementLane = engagement
         ? ENGAGEMENT_LANES.find((lane) => lane.id === engagement.laneId)
         : null;
+      if (targetKind === "engagement" && engagement?.lastAction === "repath") {
+        engagement = {
+          ...engagement,
+          staging: { ...(engagementLane?.staging ?? engagement.staging) },
+          attackTargetId: engagementLane?.attackTargetId ?? engagement.attackTargetId,
+          lastAction: engagement.repathAction ?? "advance",
+          repathAction: undefined,
+        };
+        this.engagementState = {
+          ...this.engagementState,
+          records: {
+            ...this.engagementState.records,
+            [String(enemy.id)]: engagement,
+          },
+        };
+      }
       const stagingTarget = engagement
         ? { x: engagement.staging.x, z: engagement.staging.z }
         : { x: targetX, z: targetZ };
-      const movementTarget =
-        targetKind === "engagement" && engagement?.repositionLeftMs > 0
-          ? stagingTarget
-          : { x: targetX, z: targetZ };
+      const arrivalDistance = Math.max(0.75, enemy.range * 0.86);
+      const stagingDistance = this.distance(
+        enemy.x,
+        enemy.z,
+        stagingTarget.x,
+        stagingTarget.z,
+      );
+      if (
+        targetKind === "engagement" &&
+        engagement?.lastAction === "advance" &&
+        stagingDistance <= arrivalDistance
+      ) {
+        engagement = { ...engagement, lastAction: "attack" };
+        this.engagementState = {
+          ...this.engagementState,
+          records: {
+            ...this.engagementState.records,
+            [String(enemy.id)]: engagement,
+          },
+        };
+      }
+      const useStagingTarget =
+        targetKind === "engagement" &&
+        Boolean(engagement) &&
+        engagement.lastAction !== "attack";
+      const movementTarget = useStagingTarget
+        ? stagingTarget
+        : { x: targetX, z: targetZ };
       const distance = this.distance(enemy.x, enemy.z, targetX, targetZ);
 
       if (
@@ -10291,8 +10370,11 @@ class FreemanCanvasEngine implements GameController {
         continue;
       }
 
-      const arrivalDistance = Math.max(0.75, enemy.range * 0.86);
-      if (distance > arrivalDistance) {
+      const shouldAdvance =
+        distance > arrivalDistance ||
+        (targetKind === "engagement" && engagement?.repositionLeftMs > 0) ||
+        (useStagingTarget && stagingDistance > arrivalDistance);
+      if (shouldAdvance) {
         const slowFactor = getSlowMovementMultiplier(
           enemy.slow * 1_000,
           enemy.slowMultiplier,
