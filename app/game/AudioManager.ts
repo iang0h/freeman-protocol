@@ -5,6 +5,13 @@ export type AudioCue =
   | "attack" | "hit" | "kill" | "dash" | "recruit"
   | "wave" | "damage" | "ultimate" | "victory" | "defeat";
 
+export type AudioSettingsSnapshot = {
+  muted: boolean;
+  musicVolume: number;
+  sfxVolume: number;
+  playback: "idle" | "playing" | "blocked";
+};
+
 const CROSSFADE_SECONDS = 4;
 const TRACKS = [
   { id: "protocol", title: "Freeman Protocol", url: "/audio/freeman-protocol.mp3" },
@@ -31,6 +38,7 @@ export class AudioManager {
   private muted = readStoredValue("freeman-audio-muted") === "true";
   private musicVolume = storedNumber("freeman-music-volume", 0.42);
   private sfxVolume = storedNumber("freeman-sfx-volume", 0.72);
+  private playback: AudioSettingsSnapshot["playback"] = "idle";
   private paused = false;
   private crossfading = false;
   private frame = 0;
@@ -44,13 +52,32 @@ export class AudioManager {
     document.addEventListener("visibilitychange", this.handleVisibility);
   }
 
-  unlock() {
+  getSettings(): AudioSettingsSnapshot {
+    return {
+      muted: this.muted,
+      musicVolume: this.musicVolume,
+      sfxVolume: this.sfxVolume,
+      playback: this.playback,
+    };
+  }
+
+  startMusic() {
     if (!this.context) this.createGraph();
     void this.context?.resume();
     if (!this.players[this.activePlayer].src) this.loadNext(this.activePlayer);
-    if (!this.paused && !document.hidden) {
-      this.players[this.activePlayer].play().catch(() => undefined);
-    }
+    if (this.muted || this.paused || document.hidden) return;
+    this.playPlayer(this.activePlayer);
+  }
+
+  enableAudio() {
+    this.muted = false;
+    writeStoredValue("freeman-audio-muted", "false");
+    this.applyVolumes();
+    this.startMusic();
+  }
+
+  unlock() {
+    this.startMusic();
   }
 
   setMuted(value: boolean) {
@@ -158,7 +185,29 @@ export class AudioManager {
     const result = takeNextTrack(this.playlist);
     this.playlist = result.state;
     const track = TRACKS.find((item) => item.id === result.track) ?? TRACKS[0];
-    this.players[index].src = track.url;
+    const player = this.players[index];
+    player.src = track.url;
+    player.load();
+    player.addEventListener("canplay", () => {
+      if (index === this.activePlayer) this.startMusic();
+    }, { once: true });
+  }
+
+  private playPlayer(index: number, onBlocked?: () => void) {
+    try {
+      void this.players[index].play().then(
+        () => {
+          this.playback = "playing";
+        },
+        () => {
+          this.playback = "blocked";
+          onBlocked?.();
+        },
+      );
+    } catch {
+      this.playback = "blocked";
+      onBlocked?.();
+    }
   }
 
   private checkCrossfade = () => {
@@ -175,7 +224,7 @@ export class AudioManager {
       this.playerGains[incomingIndex].gain.value = 0;
     }
     incoming.currentTime = 0;
-    incoming.play().catch(() => {
+    this.playPlayer(incomingIndex, () => {
       this.crossfading = false;
     });
     const started = performance.now();

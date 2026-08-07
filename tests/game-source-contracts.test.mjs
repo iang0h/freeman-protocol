@@ -546,7 +546,12 @@ test("streams a shuffled soundtrack through a crossfading audio manager", () => 
   assert.match(audioManager, /freeman-audio-muted/);
   assert.match(audioManager, /freeman-music-volume/);
   assert.match(audioManager, /freeman-sfx-volume/);
-  assert.match(audioManager, /\.play\(\)\.catch/);
+  assert.match(audioManager, /\.load\(\)/);
+  assert.match(audioManager, /canplay/);
+  assert.match(audioManager, /getSettings\(\): AudioSettingsSnapshot/);
+  assert.match(audioManager, /startMusic\(\)/);
+  assert.match(audioManager, /"blocked"/);
+  assert.match(game, /engine\.enableAudio\(\)/);
 });
 
 test("both engines clear latched input across lifecycle boundaries", () => {

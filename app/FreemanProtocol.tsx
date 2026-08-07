@@ -156,7 +156,7 @@ import {
   resetTemporarySubAgentMarker,
   updateTemporarySubAgentHealthCue,
 } from "./game/three-resources";
-import { AudioManager } from "./game/AudioManager";
+import { AudioManager, type AudioSettingsSnapshot } from "./game/AudioManager";
 import {
   createWatchState,
   creditWatchWaveReward,
@@ -523,6 +523,13 @@ type ToastState = {
   detail: string;
 };
 
+const INITIAL_AUDIO_SETTINGS: AudioSettingsSnapshot = {
+  muted: false,
+  musicVolume: 0.42,
+  sfxVolume: 0.72,
+  playback: "idle",
+};
+
 type GameCallbacks = {
   onMode: (mode: GameMode) => void;
   onHud: (hud: HudState) => void;
@@ -543,6 +550,8 @@ interface GameController {
   setVisibilityPaused(hidden: boolean): void;
   skipTutorial(): void;
   retryWave(): void;
+  getAudioSettings(): AudioSettingsSnapshot;
+  enableAudio(): void;
   setMuted(muted: boolean): void;
   setMusicVolume(value: number): void;
   setSfxVolume(value: number): void;
@@ -1620,7 +1629,7 @@ class FreemanEngine {
 
   start(options: StartOptions = { tutorial: false, mode: "campaign" }) {
     this.resetInput();
-    this.audio.unlock();
+    this.audio.startMusic();
     this.sessionMode = options.mode ?? "campaign";
     this.watchState = createWatchState();
     this.cinemaState = createCinemaState();
@@ -2020,6 +2029,14 @@ class FreemanEngine {
 
   setMuted(muted: boolean) {
     this.audio.setMuted(muted);
+  }
+
+  getAudioSettings() {
+    return this.audio.getSettings();
+  }
+
+  enableAudio() {
+    this.audio.enableAudio();
   }
 
   setMusicVolume(value: number) {
@@ -7818,7 +7835,7 @@ class FreemanCanvasEngine implements GameController {
 
   start(options: StartOptions = { tutorial: false, mode: "campaign" }) {
     this.resetInput();
-    this.audio.unlock();
+    this.audio.startMusic();
     this.sessionMode = options.mode ?? "campaign";
     this.watchState = createWatchState();
     this.cinemaState = createCinemaState();
@@ -8124,6 +8141,14 @@ class FreemanCanvasEngine implements GameController {
 
   setMuted(muted: boolean) {
     this.audio.setMuted(muted);
+  }
+
+  getAudioSettings() {
+    return this.audio.getSettings();
+  }
+
+  enableAudio() {
+    this.audio.enableAudio();
   }
 
   setMusicVolume(value: number) {
@@ -13124,9 +13149,7 @@ export default function FreemanProtocol({
   const [mode, setMode] = useState<GameMode>("intro");
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [muted, setMuted] = useState(false);
-  const [musicVolume, setMusicVolume] = useState(0.42);
-  const [sfxVolume, setSfxVolume] = useState(0.72);
+  const [audioSettings, setAudioSettings] = useState(INITIAL_AUDIO_SETTINGS);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel | "closed">("closed");
@@ -13448,6 +13471,7 @@ export default function FreemanProtocol({
       onMode: setMode,
       onHud: (nextHud) => {
         setHud(nextHud);
+        setAudioSettings(engineRef.current?.getAudioSettings() ?? INITIAL_AUDIO_SETTINGS);
         recruitmentAdvisorChangeRef.current({
           recruitmentAdvice: nextHud.recruitmentAdvice,
           resources: {
@@ -13479,7 +13503,11 @@ export default function FreemanProtocol({
       engine = new FreemanCanvasEngine(canvas, callbacks);
     }
     engineRef.current = engine;
+    const audioSettingsTimer = window.setTimeout(() => {
+      setAudioSettings(engine.getAudioSettings());
+    }, 0);
     return () => {
+      window.clearTimeout(audioSettingsTimer);
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
       engine.dispose();
       engineRef.current = null;
@@ -13501,10 +13529,15 @@ export default function FreemanProtocol({
     engineRef.current.start({ tutorial: false });
   }, [coOpPlayerId]);
 
-  const toggleMute = () => {
-    const next = !muted;
-    setMuted(next);
-    engineRef.current?.setMuted(next);
+  const toggleAudio = () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (audioSettings.playback === "blocked") {
+      engine.enableAudio();
+    } else {
+      engine.setMuted(!audioSettings.muted);
+    }
+    setAudioSettings(engine.getAudioSettings());
   };
 
   const openHelp = () => {
@@ -13977,8 +14010,12 @@ export default function FreemanProtocol({
           <button type="button" onClick={openHelp}>
             CONTROLS
           </button>
-          <button type="button" onClick={toggleMute} aria-pressed={muted}>
-            AUDIO {muted ? "OFF" : "ON"}
+          <button type="button" onClick={toggleAudio} aria-pressed={audioSettings.muted}>
+            {audioSettings.muted
+              ? "AUDIO OFF"
+              : audioSettings.playback === "blocked"
+                ? "TAP TO ENABLE AUDIO"
+                : "AUDIO ON"}
           </button>
           <button
             type="button"
@@ -15426,11 +15463,11 @@ export default function FreemanProtocol({
                 min="0"
                 max="1"
                 step="0.01"
-                value={musicVolume}
+                value={audioSettings.musicVolume}
                 onChange={(event) => {
                   const value = Number(event.target.value);
-                  setMusicVolume(value);
                   engineRef.current?.setMusicVolume(value);
+                  setAudioSettings((settings) => ({ ...settings, musicVolume: value }));
                 }}
               />
             </label>
@@ -15441,11 +15478,11 @@ export default function FreemanProtocol({
                 min="0"
                 max="1"
                 step="0.01"
-                value={sfxVolume}
+                value={audioSettings.sfxVolume}
                 onChange={(event) => {
                   const value = Number(event.target.value);
-                  setSfxVolume(value);
                   engineRef.current?.setSfxVolume(value);
+                  setAudioSettings((settings) => ({ ...settings, sfxVolume: value }));
                 }}
               />
             </label>
