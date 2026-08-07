@@ -8,7 +8,9 @@
   <p>
     <a href="https://freeman.skillrivals.com/">Play the live game</a>
     &nbsp;·&nbsp;
-    <a href="https://youtu.be/SesS1bd7b4c">Watch the trailer</a>
+    <a href="https://freeman.skillrivals.com/video/freeman-protocol-trailer.mp4">Play the trailer</a>
+    &nbsp;·&nbsp;
+    <a href="https://youtu.be/SesS1bd7b4c">YouTube</a>
     &nbsp;·&nbsp;
     <a href="https://freeman-protocol.vercel.app/asset-catalog">Browse the asset catalog</a>
   </p>
@@ -50,21 +52,17 @@ Freeman Protocol is a cinematic browser strategy-action game about turning a han
   <tr>
     <td align="center" width="50%">
       <strong>Recruit a specialist warband</strong><br />
-      <img src="public/marketing/product-hunt/02-recruitment.png" alt="Freeman Protocol recruitment screen with eight AI agent portraits" width="100%" />
+      <img src="public/marketing/readme/screenshots/warband-recruitment.jpg" alt="Freeman Protocol warband recruitment screen with eight AI agent portraits" width="100%" />
     </td>
     <td align="center" width="50%">
-      <strong>Watch the AI run the operation</strong><br />
-      <img src="public/marketing/product-hunt/04-watch-mode.png" alt="Freeman Protocol Watch Mode battlefield and autonomous controls" width="100%" />
+      <strong>Hold the Core under pressure</strong><br />
+      <img src="public/marketing/readme/screenshots/core-danger.jpg" alt="Freeman Protocol Core in danger during a crowded breach wave" width="100%" />
     </td>
   </tr>
   <tr>
-    <td align="center" width="50%">
-      <strong>Fight across meaningful zones</strong><br />
-      <img src="public/marketing/product-hunt/03-living-battlefield.png" alt="Freeman Protocol battlefield with Core, compute extraction, repair bay, and boss portal" width="100%" />
-    </td>
-    <td align="center" width="50%">
-      <strong>Play on a phone without the clutter</strong><br />
-      <img src="public/marketing/product-hunt/05-mobile-play.png" alt="Freeman Protocol mobile gameplay with large touch controls" width="100%" />
+    <td align="center" colspan="2">
+      <strong>Time the EMP and let the autonomous network push the lanes</strong><br />
+      <img src="public/marketing/readme/screenshots/emp-ready.jpg" alt="Freeman Protocol battlefield with EMP ready, repaired sentries, and advancing enemy lanes" width="100%" />
     </td>
   </tr>
 </table>
@@ -73,13 +71,14 @@ Freeman Protocol is a cinematic browser strategy-action game about turning a han
 
 <div align="center">
   <a href="https://freeman.skillrivals.com/video/freeman-protocol-trailer.mp4">
-    <img src="public/video/freeman-protocol-trailer-poster.jpg" alt="Watch the Freeman Protocol cinematic trailer" width="85%" />
+    <img src="public/video/freeman-protocol-trailer-preview.gif" alt="Animated preview of the Freeman Protocol cinematic trailer" width="85%" />
   </a>
   <p>
-    <a href="https://freeman.skillrivals.com/video/freeman-protocol-trailer.mp4"><strong>Watch the trailer</strong></a>
+    <a href="https://freeman.skillrivals.com/video/freeman-protocol-trailer.mp4"><strong>Play the full trailer</strong></a>
     &nbsp;·&nbsp;
     <a href="https://youtu.be/SesS1bd7b4c">YouTube</a>
   </p>
+  <p><sub>The animated preview plays inline. GitHub does not render YouTube iframes inside README files, so the full MP4 and YouTube versions are linked above.</sub></p>
 </div>
 
 ## Current build
