@@ -39,6 +39,7 @@ export class AudioManager {
   private musicVolume = storedNumber("freeman-music-volume", 0.42);
   private sfxVolume = storedNumber("freeman-sfx-volume", 0.72);
   private playback: AudioSettingsSnapshot["playback"] = "idle";
+  private readonly settingsListeners = new Set<(settings: AudioSettingsSnapshot) => void>();
   private paused = false;
   private crossfading = false;
   private frame = 0;
@@ -61,6 +62,11 @@ export class AudioManager {
     };
   }
 
+  subscribe(listener: (settings: AudioSettingsSnapshot) => void) {
+    this.settingsListeners.add(listener);
+    return () => this.settingsListeners.delete(listener);
+  }
+
   startMusic() {
     if (!this.context) this.createGraph();
     void this.context?.resume();
@@ -73,6 +79,7 @@ export class AudioManager {
     this.muted = false;
     writeStoredValue("freeman-audio-muted", "false");
     this.applyVolumes();
+    this.notifySettings();
     this.startMusic();
   }
 
@@ -84,18 +91,21 @@ export class AudioManager {
     this.muted = value;
     writeStoredValue("freeman-audio-muted", String(value));
     this.applyVolumes();
+    this.notifySettings();
   }
 
   setMusicVolume(value: number) {
     this.musicVolume = clamp(value);
     writeStoredValue("freeman-music-volume", String(this.musicVolume));
     this.applyVolumes();
+    this.notifySettings();
   }
 
   setSfxVolume(value: number) {
     this.sfxVolume = clamp(value);
     writeStoredValue("freeman-sfx-volume", String(this.sfxVolume));
     this.applyVolumes();
+    this.notifySettings();
   }
 
   setPaused(value: boolean) {
@@ -198,16 +208,24 @@ export class AudioManager {
       void this.players[index].play().then(
         () => {
           this.playback = "playing";
+          this.notifySettings();
         },
         () => {
           this.playback = "blocked";
+          this.notifySettings();
           onBlocked?.();
         },
       );
     } catch {
       this.playback = "blocked";
+      this.notifySettings();
       onBlocked?.();
     }
+  }
+
+  private notifySettings() {
+    const settings = this.getSettings();
+    this.settingsListeners.forEach((listener) => listener(settings));
   }
 
   private checkCrossfade = () => {

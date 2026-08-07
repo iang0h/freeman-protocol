@@ -107,18 +107,23 @@ test("audio settings snapshot reflects persisted mute and volume values", () => 
   });
 });
 
-test("blocked playback is observable and enableAudio retries the loaded player", async () => {
+test("audio settings subscribers observe blocked playback and its retry", async () => {
   writeStoredValue("freeman-audio-muted", "false");
   writeStoredValue("freeman-music-volume", "0.42");
   writeStoredValue("freeman-sfx-volume", "0.72");
   const { manager, setPlayRejects } = createAudioTestManager({ playRejects: true });
+  const snapshots = [];
+  const unsubscribe = manager.subscribe((settings) => snapshots.push(settings));
 
   manager.startMusic();
   await Promise.resolve();
   assert.equal(manager.getSettings().playback, "blocked");
+  assert.equal(snapshots.at(-1).playback, "blocked");
 
   setPlayRejects(false);
   manager.enableAudio();
   await Promise.resolve();
   assert.equal(manager.getSettings().playback, "playing");
+  assert.equal(snapshots.at(-1).playback, "playing");
+  unsubscribe();
 });

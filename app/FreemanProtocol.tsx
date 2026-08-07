@@ -551,6 +551,7 @@ interface GameController {
   skipTutorial(): void;
   retryWave(): void;
   getAudioSettings(): AudioSettingsSnapshot;
+  subscribeAudioSettings(listener: (settings: AudioSettingsSnapshot) => void): () => void;
   enableAudio(): void;
   setMuted(muted: boolean): void;
   setMusicVolume(value: number): void;
@@ -2033,6 +2034,10 @@ class FreemanEngine {
 
   getAudioSettings() {
     return this.audio.getSettings();
+  }
+
+  subscribeAudioSettings(listener: (settings: AudioSettingsSnapshot) => void) {
+    return this.audio.subscribe(listener);
   }
 
   enableAudio() {
@@ -8147,6 +8152,10 @@ class FreemanCanvasEngine implements GameController {
     return this.audio.getSettings();
   }
 
+  subscribeAudioSettings(listener: (settings: AudioSettingsSnapshot) => void) {
+    return this.audio.subscribe(listener);
+  }
+
   enableAudio() {
     this.audio.enableAudio();
   }
@@ -13471,7 +13480,6 @@ export default function FreemanProtocol({
       onMode: setMode,
       onHud: (nextHud) => {
         setHud(nextHud);
-        setAudioSettings(engineRef.current?.getAudioSettings() ?? INITIAL_AUDIO_SETTINGS);
         recruitmentAdvisorChangeRef.current({
           recruitmentAdvice: nextHud.recruitmentAdvice,
           resources: {
@@ -13503,11 +13511,12 @@ export default function FreemanProtocol({
       engine = new FreemanCanvasEngine(canvas, callbacks);
     }
     engineRef.current = engine;
-    const audioSettingsTimer = window.setTimeout(() => {
-      setAudioSettings(engine.getAudioSettings());
-    }, 0);
+    const unsubscribeAudioSettings = engine.subscribeAudioSettings((settings) => {
+      setAudioSettings(settings);
+    });
+    setAudioSettings(engine.getAudioSettings());
     return () => {
-      window.clearTimeout(audioSettingsTimer);
+      unsubscribeAudioSettings();
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
       engine.dispose();
       engineRef.current = null;
@@ -13532,12 +13541,11 @@ export default function FreemanProtocol({
   const toggleAudio = () => {
     const engine = engineRef.current;
     if (!engine) return;
-    if (audioSettings.playback === "blocked") {
+    if (audioSettings.muted || audioSettings.playback === "blocked") {
       engine.enableAudio();
     } else {
-      engine.setMuted(!audioSettings.muted);
+      engine.setMuted(true);
     }
-    setAudioSettings(engine.getAudioSettings());
   };
 
   const openHelp = () => {

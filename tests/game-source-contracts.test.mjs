@@ -549,9 +549,14 @@ test("streams a shuffled soundtrack through a crossfading audio manager", () => 
   assert.match(audioManager, /\.load\(\)/);
   assert.match(audioManager, /canplay/);
   assert.match(audioManager, /getSettings\(\): AudioSettingsSnapshot/);
+  assert.match(audioManager, /subscribe\(listener: \(settings: AudioSettingsSnapshot\) => void\)/);
   assert.match(audioManager, /startMusic\(\)/);
   assert.match(audioManager, /"blocked"/);
   assert.match(game, /engine\.enableAudio\(\)/);
+  assert.match(
+    game,
+    /if \(audioSettings\.muted \|\| audioSettings\.playback === "blocked"\) \{\s*engine\.enableAudio\(\);/,
+  );
 });
 
 test("both engines clear latched input across lifecycle boundaries", () => {
