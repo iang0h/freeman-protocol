@@ -17,7 +17,7 @@ const compiled = ts.transpileModule(source, {
 }).outputText
   .replaceAll('"./playlist.mjs"', `"${playlistPath}"`)
   .replaceAll('"./storage.mjs"', `"${storagePath}"`);
-const { AudioManager } = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
+const { AudioManager, getStoredAudioSettings } = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
 
 function createAudioTestManager({ playRejects = false } = {}) {
   let rejectPlayback = playRejects;
@@ -103,6 +103,19 @@ test("audio settings snapshot reflects persisted mute and volume values", () => 
     muted: true,
     musicVolume: 0.25,
     sfxVolume: 0.72,
+    playback: "idle",
+  });
+});
+
+test("stored audio settings can hydrate React before an engine creates Audio players", () => {
+  writeStoredValue("freeman-audio-muted", "true");
+  writeStoredValue("freeman-music-volume", "0.3");
+  writeStoredValue("freeman-sfx-volume", "0.6");
+
+  assert.deepEqual(getStoredAudioSettings(), {
+    muted: true,
+    musicVolume: 0.3,
+    sfxVolume: 0.6,
     playback: "idle",
   });
 });

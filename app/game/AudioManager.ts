@@ -25,6 +25,15 @@ const storedNumber = (key: string, fallback: number) => {
   return Number.isFinite(value) ? clamp(value) : fallback;
 };
 
+export function getStoredAudioSettings(): AudioSettingsSnapshot {
+  return {
+    muted: readStoredValue("freeman-audio-muted") === "true",
+    musicVolume: storedNumber("freeman-music-volume", 0.42),
+    sfxVolume: storedNumber("freeman-sfx-volume", 0.72),
+    playback: "idle",
+  };
+}
+
 export class AudioManager {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -35,9 +44,10 @@ export class AudioManager {
   private playerGains: GainNode[] = [];
   private activePlayer = 0;
   private playlist = { tracks: TRACKS.map((track) => track.id), bag: [] as string[], previous: null as string | null };
-  private muted = readStoredValue("freeman-audio-muted") === "true";
-  private musicVolume = storedNumber("freeman-music-volume", 0.42);
-  private sfxVolume = storedNumber("freeman-sfx-volume", 0.72);
+  private readonly initialSettings = getStoredAudioSettings();
+  private muted = this.initialSettings.muted;
+  private musicVolume = this.initialSettings.musicVolume;
+  private sfxVolume = this.initialSettings.sfxVolume;
   private playback: AudioSettingsSnapshot["playback"] = "idle";
   private readonly settingsListeners = new Set<(settings: AudioSettingsSnapshot) => void>();
   private paused = false;

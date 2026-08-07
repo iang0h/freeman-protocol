@@ -156,3 +156,12 @@ export function getBattlefieldEffects(state) {
     computePerSecond: isOnline("compute-relay") ? 1 : 0,
   };
 }
+
+export function tickBattlefieldResources(state, resources = {}, elapsedMs = 0) {
+  const elapsedSeconds = Math.max(0, finite(elapsedMs)) / 1_000;
+  const compute = Math.max(0, finite(resources.compute));
+  return {
+    ...resources,
+    compute: compute + getBattlefieldEffects(state).computePerSecond * elapsedSeconds,
+  };
+}

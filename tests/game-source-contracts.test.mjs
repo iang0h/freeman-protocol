@@ -86,6 +86,25 @@ test("both renderers approach lane staging and reposition even inside Core arriv
   }
 });
 
+test("both renderers consume online node effects and assigned engagement targets", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    const agents = engine.slice(
+      engine.indexOf("private updateAgents("),
+      engine.indexOf("private updateDefenses(", engine.indexOf("private updateAgents(")),
+    );
+    const enemies = engine.slice(
+      engine.indexOf("private updateEnemies("),
+      engine.indexOf("private updateProjectiles(", engine.indexOf("private updateEnemies(")),
+    );
+    assert.match(agents, /battlefieldEffects\.commandRadius/);
+    assert.match(agents, /battlefieldEffects\.repairMultiplier/);
+    assert.match(engine, /tickBattlefieldResources\(/);
+    assert.match(enemies, /resolveEngagementAttackTarget\(/);
+    assert.match(enemies, /engagementAttackTarget\.id/);
+    assert.doesNotMatch(enemies, /stationaryMs:\s*0,\s*repositionReady:\s*false,\s*records:/);
+  }
+});
+
 test("WebGL battleground theme narrows the arena grid before reading its material", () => {
   assert.match(
     webglGame,
@@ -576,6 +595,7 @@ test("streams a shuffled soundtrack through a crossfading audio manager", () => 
   assert.match(audioManager, /startMusic\(\)/);
   assert.match(audioManager, /"blocked"/);
   assert.match(game, /engine\.enableAudio\(\)/);
+  assert.match(game, /useState\(\(\) => getStoredAudioSettings\(\)\)/);
   assert.match(
     game,
     /if \(audioSettings\.muted \|\| audioSettings\.playback === "blocked"\) \{\s*engine\.enableAudio\(\);/,
@@ -869,7 +889,36 @@ test("both renderers consume bounded war squads and compact Assembly support", (
   assert.match(canvasGame, /private drawWarSquad/);
   assert.match(canvasGame, /private drawBattlefieldNode/);
   assert.match(game, /"assembly-pad"/);
-  assert.equal((game.match(/const supportEvent = this\.warLayerState\.supportEvent;/g) ?? []).length, 2);
+  assert.ok((game.match(/const supportEvent = this\.warLayerState\.supportEvent;/g) ?? []).length >= 2);
+});
+
+test("both renderers price node repairs, share temporary caps, damage squads, and animate support", () => {
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /externalParentChildren:/);
+    assert.match(engine, /externalTemporaryUnits:/);
+    assert.match(engine, /battlefieldState:\s*this\.battlefieldState/);
+    assert.match(engine, /materials:\s*\{ components: this\.loot\.components \}/);
+    assert.match(engine, /this\.loot\.components = ticked\.materials\.components/);
+    assert.match(engine, /kind:\s*"war-squad"/);
+    assert.match(engine, /this\.damageWarSquad\(/);
+    assert.match(engine, /supportActions/);
+    assert.match(engine, /supportEvent\.(?:x|phase)/);
+  }
+  assert.match(webglGame, /supportEventMarker/);
+  const supportMarkerUpdate = webglGame.slice(
+    webglGame.indexOf("if (supportEvent && !this.supportEventMarker)"),
+    webglGame.indexOf("for (const node of this.battlefieldState.nodes)", webglGame.indexOf("if (supportEvent && !this.supportEventMarker)")),
+  );
+  assert.match(supportMarkerUpdate, /resetTemporarySubAgentMarker\([\s\S]*?this\.scene\.add\(this\.supportEventMarker\)/);
+  const activeSupportMarkerUpdate = supportMarkerUpdate.slice(
+    supportMarkerUpdate.indexOf("if (supportEvent && this.supportEventMarker)"),
+    supportMarkerUpdate.indexOf("} else if (!supportEvent && this.supportEventMarker)"),
+  );
+  assert.doesNotMatch(
+    activeSupportMarkerUpdate,
+    /resetTemporarySubAgentMarker/,
+  );
+  assert.match(canvasGame, /private drawSupportEvent\(/);
 });
 
 test("renderer parity keeps battlefield, engagement, and war HUD state compact and focusable", () => {
@@ -914,7 +963,7 @@ test("both renderers target, damage, and repair non-Core battlefield nodes", () 
     assert.match(engine, /targetKind === "battlefield-node"/);
     assert.match(engine, /kind: "battlefield-node"/);
     assert.match(engine, /this\.damageBattlefieldNode\(hit\.id, projectile\.damage\)/);
-    assert.match(engine, /this\.warLayerState\.nodes\?\.map/);
+    assert.match(engine, /ticked\.battlefieldState/);
     assert.doesNotMatch(engine, /damageBattlefieldNode\("core"/);
   }
 });

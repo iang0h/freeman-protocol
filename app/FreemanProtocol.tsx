@@ -102,6 +102,7 @@ import {
 } from "./game/loot-rules.mjs";
 import {
   SUB_AGENT_GLOBAL_CAP,
+  TEMPORARY_UNIT_GLOBAL_CAP,
   SUB_AGENT_MATERIAL_COST,
   SUB_AGENT_SPAWN_COOLDOWN_MS,
   PLAYER_RESERVE_BATCH_SIZE,
@@ -136,7 +137,9 @@ import {
   assignEngagementLane,
   createEngagementState,
   createMovementWatchdogState,
+  markEngagementAttack,
   resolveEngagementAdvance,
+  resolveEngagementAttackTarget,
   resolveEnemyAdvance,
   tickEngagement,
 } from "./game/enemy-movement-rules.mjs";
@@ -167,15 +170,20 @@ import {
   createBattlefieldState,
   damageBattlefieldNode,
   getBattlefieldEffects,
+  tickBattlefieldResources,
 } from "./game/battlefield-rules.mjs";
 import {
-  WAR_LAYER_GLOBAL_CAP,
   createWarLayerState,
+  damageWarSquad,
   requestSupportEvent,
   spawnWarSquad,
   tickWarSquads,
 } from "./game/war-layer-rules.mjs";
-import { AudioManager, type AudioSettingsSnapshot } from "./game/AudioManager";
+import {
+  AudioManager,
+  getStoredAudioSettings,
+  type AudioSettingsSnapshot,
+} from "./game/AudioManager";
 import {
   createWatchState,
   creditWatchWaveReward,
@@ -543,13 +551,6 @@ type ToastState = {
   detail: string;
 };
 
-const INITIAL_AUDIO_SETTINGS: AudioSettingsSnapshot = {
-  muted: false,
-  musicVolume: 0.42,
-  sfxVolume: 0.72,
-  playback: "idle",
-};
-
 type GameCallbacks = {
   onMode: (mode: GameMode) => void;
   onHud: (hud: HudState) => void;
@@ -672,6 +673,7 @@ type WarSquad = {
   targetId: string | null;
   remainingMs: number;
   health: number;
+  hitFlashMs: number;
   cooldownMs: number;
   status: string;
 };
@@ -683,7 +685,26 @@ type WarLayerState = {
   squads: WarSquad[];
   enemies: Array<{ id: string; x: number; z: number; hp: number }>;
   nodes: Array<{ id: string; hp: number; maxHp?: number }>;
-  supportEvent: { id: string; type: string; remainingMs: number; status: string } | null;
+  battlefieldState: ReturnType<typeof createBattlefieldState> | null;
+  materials: { components: number };
+  supportEvent: {
+    id: string;
+    type: string;
+    remainingMs: number;
+    elapsedMs: number;
+    phase: string;
+    status: string;
+    progress: number;
+    originX: number;
+    originZ: number;
+    targetX: number;
+    targetZ: number;
+    targetIds: string[];
+    x: number;
+    z: number;
+    actionApplied: boolean;
+  } | null;
+  supportActions: Array<{ type: "damage"; targetId: string; amount: number }>;
   supportCooldownMs: number;
   nextSquadId: number;
   nextSupportId: number;
@@ -774,14 +795,14 @@ type EngagementRecord = {
   repathLeftMs: number;
   repositionLeftMs: number;
   lastAction: string;
+  stationaryMs: number;
+  repositionReady: boolean;
   repathAction?: string;
 };
 
 type EngagementState = {
   wave: number;
   records: Record<string, EngagementRecord>;
-  stationaryMs: number;
-  repositionReady: boolean;
 };
 
 type EnemyRuntime = {
@@ -1537,6 +1558,7 @@ class FreemanEngine {
   private warSquadToastCooldownMs = 0;
   private readonly battlefieldNodeMarkers = new Map<string, THREE.Group>();
   private readonly warSquadMarkers = new Map<string, THREE.Group>();
+  private supportEventMarker: THREE.Group | null = null;
   private readonly defenses: DefenseRuntime[] = [];
   private readonly projectiles: ProjectileRuntime[] = [];
   private readonly effects: EffectRuntime[] = [];
@@ -1546,7 +1568,7 @@ class FreemanEngine {
   private readonly damageNumberPool = new BoundedPool<THREE.Sprite>(32);
   private readonly lootPool = new BoundedPool<THREE.Group>(48);
   private readonly temporarySubAgentPool = new BoundedPool<THREE.Group>(
-    SUB_AGENT_GLOBAL_CAP + WAR_LAYER_GLOBAL_CAP,
+    TEMPORARY_UNIT_GLOBAL_CAP + 1,
   );
   private readonly bossTelegraphPool = new BoundedPool<THREE.Group>(2);
   private readonly pickups: LootRuntime[] = [];
@@ -4748,6 +4770,11 @@ class FreemanEngine {
 
   private updateGame(delta: number) {
     this.empState = tickEmp(this.empState, delta * 1_000) as EmpState;
+    this.data = tickBattlefieldResources(
+      this.battlefieldState,
+      { compute: this.data },
+      delta * 1_000,
+    ).compute;
     this.watchRecoveryClock = Math.max(0, this.watchRecoveryClock - delta);
     if (this.intermissionClock > 0) {
       this.intermissionClock = tickWaveIntermission(this.intermissionClock, delta * 1_000);
@@ -5118,8 +5145,10 @@ class FreemanEngine {
       pressure,
       activeChildren: this.temporarySubAgents.filter(
         (subAgent) => subAgent.parentId === agent.id,
+      ).length + this.warLayerState.squads.filter(
+        (squad) => squad.parentId === agent.id,
       ).length,
-      totalActive: this.temporarySubAgents.length,
+      totalActive: this.temporarySubAgents.length + this.warLayerState.squads.length,
       materials: spendableMaterials,
       cooldownLeftMs: spawnState.cooldownLeftMs,
       maxPerParent: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
@@ -5135,6 +5164,10 @@ class FreemanEngine {
         coreHealthRatio: this.core.hp / this.core.maxHp,
         wavePressure: this.enemies.length / this.activeEnemyLimit,
         subAgents: this.temporarySubAgents,
+        externalParentChildren: this.warLayerState.squads.filter(
+          (squad) => squad.parentId === agent.id,
+        ).length,
+        externalTemporaryUnits: this.warLayerState.squads.length,
         maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
         materials: spendableMaterials,
         upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
@@ -5199,6 +5232,10 @@ class FreemanEngine {
       x: agent.group.position.x,
       z: agent.group.position.z,
       components: this.loot.components,
+      externalParentChildren: this.temporarySubAgents.filter(
+        (subAgent) => subAgent.parentId === agent.id,
+      ).length,
+      externalTemporaryUnits: this.temporarySubAgents.length,
     });
     if (!spawned.accepted || !spawned.squad) return;
     this.warLayerState = spawned.state as WarLayerState;
@@ -5231,35 +5268,31 @@ class FreemanEngine {
       !isWatchMode(this.sessionMode) ||
       this.watchState.priority === "survive"
     ) return;
+    const type = this.watchState.priority === "expand" ? "air-strike" : "convoy";
+    const targets = [...this.enemies]
+      .sort((left, right) =>
+        left.group.position.distanceToSquared(this.assemblyPadPosition) -
+        right.group.position.distanceToSquared(this.assemblyPadPosition),
+      )
+      .slice(0, type === "air-strike" ? 3 : 1);
+    const primaryTarget = targets[0];
     const requested = requestSupportEvent(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
-      type: this.watchState.priority === "expand" ? "air-strike" : "convoy",
+      type,
       components: this.loot.components,
+      origin: { x: this.assemblyPadPosition.x, z: this.assemblyPadPosition.z },
+      target: primaryTarget
+        ? { x: primaryTarget.group.position.x, z: primaryTarget.group.position.z }
+        : { x: this.core.group.position.x, z: this.core.group.position.z },
+      targetIds: targets.map((enemy) => String(enemy.id)),
     });
     if (!requested.accepted || !requested.event) return;
     this.warLayerState = requested.state as WarLayerState;
     this.loot.components = requested.state.components;
-    if (requested.event.type === "air-strike") {
-      for (const enemy of [...this.enemies]
-        .sort((left, right) =>
-          left.group.position.distanceToSquared(this.assemblyPadPosition) -
-          right.group.position.distanceToSquared(this.assemblyPadPosition),
-        )
-        .slice(0, 3)) {
-        this.damageEnemy(enemy, 12, enemy.group.position, true);
-      }
-      this.callbacks.onToast({
-        eyebrow: "ASSEMBLY PAD",
-        title: "AIR STRIKE INBOUND",
-        detail: "Watch-priority support cleared the closest threat cluster.",
-      });
-    } else {
-      this.repairBay.hp = Math.min(this.repairBay.maxHp, this.repairBay.hp + 12);
-      this.callbacks.onToast({
-        eyebrow: "ASSEMBLY PAD",
-        title: "CONVOY DEPLOYED",
-        detail: "Support cargo restored the repair bay perimeter.",
-      });
-    }
+    this.callbacks.onToast({
+      eyebrow: "ASSEMBLY PAD",
+      title: requested.event.type === "air-strike" ? "AIR STRIKE INBOUND" : "CONVOY DEPLOYED",
+      detail: "Support is moving through its telegraph before engaging marked threats.",
+    });
   }
 
   private updateWarLayer(delta: number) {
@@ -5280,16 +5313,19 @@ class FreemanEngine {
     };
     const repairBayWasDamaged = this.repairBay.hp < this.repairBay.maxHp;
     const previousHp = new Map(enemies.map((enemy) => [enemy.id, enemy.hp]));
-    this.warLayerState = tickWarSquads(
+    const ticked = tickWarSquads(
       this.warLayerState as unknown as ReturnType<typeof createWarLayerState>,
       {
         enemies,
-        nodes: this.battlefieldState.nodes.filter((node) => node.id !== "core").map((node) => ({
-          ...node, hp: node.health, maxHp: node.maxHealth, online: node.status === "online",
-        })),
+        battlefieldState: this.battlefieldState,
+        materials: { components: this.loot.components },
+        repairMultiplier: getBattlefieldEffects(this.battlefieldState).repairMultiplier,
       },
       delta * 1_000,
     ) as WarLayerState;
+    this.warLayerState = ticked;
+    if (ticked.battlefieldState) this.battlefieldState = ticked.battlefieldState;
+    this.loot.components = ticked.materials.components;
     for (const snapshot of this.warLayerState.enemies ?? []) {
       const previous = previousHp.get(snapshot.id) ?? snapshot.hp;
       const enemy = this.enemies.find((candidate) => String(candidate.id) === snapshot.id);
@@ -5297,26 +5333,9 @@ class FreemanEngine {
         this.damageEnemy(enemy, previous - snapshot.hp, enemy.group.position);
       }
     }
-    const repairedNodesById = new Map(
-      this.warLayerState.nodes?.map((node: { id: string }) => [node.id, node]) ?? [],
-    );
-    this.battlefieldState = {
-      ...this.battlefieldState,
-      nodes: this.battlefieldState.nodes.map((node) => {
-        const repaired = repairedNodesById.get(node.id) as { hp?: number; maxHp?: number; online?: boolean } | undefined;
-        if (!repaired || node.id === "core") return node;
-        const health = Math.min(node.maxHealth, Math.max(0, repaired.hp ?? node.health));
-        return {
-          ...node,
-          health,
-          maxHealth: repaired.maxHp ?? node.maxHealth,
-          status: health <= 0 ? "offline" : repaired.online ? "online" : "damaged",
-        };
-      }),
-    };
-    const repairedBay = this.warLayerState.nodes?.find((node: { id: string }) => node.id === "repair-bay");
-    if (repairedBay && repairedBay.hp > this.repairBay.hp) {
-      this.repairBay.hp = Math.min(this.repairBay.maxHp, repairedBay.hp);
+    const repairedBay = this.battlefieldState.nodes.find((node) => node.id === "repair-bay");
+    if (repairedBay && repairedBay.health > this.repairBay.hp) {
+      this.repairBay.hp = Math.min(this.repairBay.maxHp, repairedBay.health);
       if (repairBayWasDamaged && this.repairBay.hp === this.repairBay.maxHp) {
         this.callbacks.onToast({
           eyebrow: "REPAIR BAY",
@@ -5324,6 +5343,11 @@ class FreemanEngine {
           detail: "Repair squads returned the strategic node to service.",
         });
       }
+    }
+    for (const action of ticked.supportActions) {
+      if (action.type !== "damage") continue;
+      const enemy = this.enemies.find((candidate) => String(candidate.id) === action.targetId);
+      if (enemy) this.damageEnemy(enemy, action.amount, enemy.group.position, true);
     }
     const activeIds = new Set(this.warLayerState.squads.map((squad: WarSquad) => squad.id));
     for (const [id, marker] of this.warSquadMarkers) {
@@ -5340,7 +5364,39 @@ class FreemanEngine {
       if (!marker) continue;
       marker.position.set(squad.x, 0.3, squad.z);
       marker.rotation.y += delta * 2.2;
+      marker.scale.setScalar(squad.hitFlashMs > 0 ? 1.24 : 1);
       updateTemporarySubAgentHealthCue(marker, squad.health / 30);
+    }
+    const supportEvent = this.warLayerState.supportEvent;
+    if (supportEvent && !this.supportEventMarker) {
+      this.supportEventMarker = this.temporarySubAgentPool.acquire(() =>
+        createTemporarySubAgentMarker(0xffc857),
+      );
+      resetTemporarySubAgentMarker(
+        this.supportEventMarker,
+        supportEvent.type === "air-strike" ? 0x7fd8ff : 0xffc857,
+        supportEvent.phase === "telegraph" ? 0.58 : 1,
+      );
+      this.scene.add(this.supportEventMarker);
+    }
+    if (supportEvent && this.supportEventMarker) {
+      updateTemporarySubAgentHealthCue(
+        this.supportEventMarker,
+        supportEvent.phase === "telegraph" ? 0.58 : 1,
+      );
+      this.supportEventMarker.position.set(
+        supportEvent.x,
+        supportEvent.type === "air-strike" ? 1.8 : 0.3,
+        supportEvent.z,
+      );
+      this.supportEventMarker.rotation.y += delta * 4;
+    } else if (!supportEvent && this.supportEventMarker) {
+      this.temporarySubAgentPool.release(
+        this.supportEventMarker,
+        (item) => resetTemporarySubAgentMarker(item, 0xffffff),
+        (item) => this.disposeDynamicObject(item),
+      );
+      this.supportEventMarker = null;
     }
     for (const node of this.battlefieldState.nodes) {
       const marker = this.battlefieldNodeMarkers.get(node.id);
@@ -5358,6 +5414,14 @@ class FreemanEngine {
       );
     }
     this.warSquadMarkers.clear();
+    if (this.supportEventMarker) {
+      this.temporarySubAgentPool.release(
+        this.supportEventMarker,
+        (item) => resetTemporarySubAgentMarker(item, 0xffffff),
+        (item) => this.disposeDynamicObject(item),
+      );
+      this.supportEventMarker = null;
+    }
     this.warLayerState = createWarLayerState() as WarLayerState;
     this.warSquadSpawnState = {};
     this.warSquadToastCooldownMs = 0;
@@ -5380,11 +5444,12 @@ class FreemanEngine {
   private updateAgents(delta: number) {
     const count = this.agents.length;
     const priority = this.getPriorityEnemy();
+    const battlefieldEffects = getBattlefieldEffects(this.battlefieldState);
     const repairBay = {
       hp: this.repairBay.hp,
       maxHp: this.repairBay.maxHp,
       isSeparate: true,
-      repairPerSecond: 18,
+      repairPerSecond: 18 * battlefieldEffects.repairMultiplier,
     };
     this.agents.forEach((agent, index) => {
       const roleIntent = decideAgentIntent(
@@ -5418,7 +5483,10 @@ class FreemanEngine {
         },
         {
           hostileTargetInRange: Boolean(
-            this.getNearestEnemy(agent.group.position, agent.range),
+            this.getNearestEnemy(
+              agent.group.position,
+              agent.range + battlefieldEffects.commandRadius,
+            ),
           ),
           retreating:
             agent.disabledLeft > 0 ||
@@ -5623,7 +5691,10 @@ class FreemanEngine {
       if (!gatheringPickup && (intent === "assault" || intent === "improvise")) {
         target = priority;
       } else if (!gatheringPickup && (intent === "follow" || intent === "support")) {
-        target = this.getNearestEnemy(agent.group.position, agent.range);
+        target = this.getNearestEnemy(
+          agent.group.position,
+          agent.range + battlefieldEffects.commandRadius,
+        );
       } else if (!gatheringPickup && intent === "defend") {
         const coreThreat = this.getNearestEnemy(this.core.group.position, 9.5);
         if (
@@ -5637,7 +5708,7 @@ class FreemanEngine {
       if (
         target &&
         target.group.position.distanceTo(agent.group.position) >
-          agent.range + 0.9
+          agent.range + battlefieldEffects.commandRadius + 0.9
       ) {
         target = null;
       }
@@ -5976,11 +6047,20 @@ class FreemanEngine {
         .sort((left, right) =>
           position.distanceTo(left.group.position) - position.distanceTo(right.group.position),
         )[0];
+      const warSquadTarget = [...this.warLayerState.squads]
+        .filter((squad) => squad.health > 0)
+        .sort((left, right) =>
+          position.distanceToSquared(new THREE.Vector3(left.x, 0, left.z)) -
+          position.distanceToSquared(new THREE.Vector3(right.x, 0, right.z)),
+        )[0];
       const agentDistance = agentTarget
         ? position.distanceTo(agentTarget.group.position)
         : Infinity;
       const turretDistance = turretTarget
         ? position.distanceTo(turretTarget.group.position)
+        : Infinity;
+      const warSquadDistance = warSquadTarget
+        ? position.distanceTo(new THREE.Vector3(warSquadTarget.x, 0, warSquadTarget.z))
         : Infinity;
       const repairBayDistance = this.repairBay.hp > 0
         ? position.distanceTo(this.repairBay.group.position)
@@ -5998,6 +6078,8 @@ class FreemanEngine {
       const targetKind =
         playerDistance < 4.2
           ? "player"
+          : warSquadDistance < 6.5
+            ? "war-squad"
           : agentDistance < 6.5
             ? "agent"
             : turretDistance < 6.5
@@ -6009,17 +6091,6 @@ class FreemanEngine {
                 : this.wave >= 4 && engagement
                   ? "engagement"
                   : "core";
-      const targetPosition = targetKind === "player"
-        ? this.player.group.position
-        : targetKind === "agent" && agentTarget
-          ? agentTarget.group.position
-          : targetKind === "turret" && turretTarget
-            ? turretTarget.group.position
-            : targetKind === "repair-bay"
-              ? this.repairBay.group.position
-              : targetKind === "battlefield-node" && battlefieldNodeTarget
-                ? new THREE.Vector3(battlefieldNodeTarget.x, 0, battlefieldNodeTarget.z)
-              : this.core.group.position;
       const engagementLane = engagement
         ? ENGAGEMENT_LANES.find((lane) => lane.id === engagement.laneId)
         : null;
@@ -6039,6 +6110,26 @@ class FreemanEngine {
           },
         };
       }
+      const engagementAttackTarget = resolveEngagementAttackTarget(
+        engagement,
+        this.battlefieldState.nodes,
+        { id: "core", x: this.core.group.position.x, z: this.core.group.position.z },
+      );
+      const targetPosition = targetKind === "player"
+        ? this.player.group.position
+        : targetKind === "war-squad" && warSquadTarget
+          ? new THREE.Vector3(warSquadTarget.x, 0, warSquadTarget.z)
+        : targetKind === "agent" && agentTarget
+          ? agentTarget.group.position
+          : targetKind === "turret" && turretTarget
+            ? turretTarget.group.position
+            : targetKind === "repair-bay"
+              ? this.repairBay.group.position
+              : targetKind === "battlefield-node" && battlefieldNodeTarget
+                ? new THREE.Vector3(battlefieldNodeTarget.x, 0, battlefieldNodeTarget.z)
+                : targetKind === "engagement"
+                  ? new THREE.Vector3(engagementAttackTarget.x, 0, engagementAttackTarget.z)
+                  : this.core.group.position;
       const stagingTargetPosition = engagement
         ? new THREE.Vector3(engagement.staging.x, 0, engagement.staging.z)
         : targetPosition;
@@ -6234,29 +6325,24 @@ class FreemanEngine {
             }
             if (targetKind === "agent" && agentTarget) {
               this.damageAgent(agentTarget, enemy.damage);
+            } else if (targetKind === "war-squad" && warSquadTarget) {
+              this.damageWarSquad(warSquadTarget.id, enemy.damage);
             } else if (targetKind === "turret" && turretTarget) {
               this.damageDefense(turretTarget, enemy.damage);
             } else if (targetKind === "repair-bay") {
               this.damageRepairBay(enemy.damage);
             } else if (targetKind === "battlefield-node" && battlefieldNodeTarget) {
               this.damageBattlefieldNode(battlefieldNodeTarget.id, enemy.damage);
+            } else if (targetKind === "engagement" && engagementAttackTarget.id !== "core") {
+              this.damageBattlefieldNode(engagementAttackTarget.id, enemy.damage);
             } else {
               this.damageTarget(targetKind === "player" ? "player" : "core", enemy.damage);
             }
             if (targetKind === "engagement" && engagement) {
-              this.engagementState = {
-                ...this.engagementState,
-                stationaryMs: 0,
-                repositionReady: false,
-                records: {
-                  ...this.engagementState.records,
-                  [String(enemy.id)]: {
-                    ...engagement,
-                    repositionLeftMs: 650,
-                    lastAction: "attack",
-                  },
-                },
-              };
+              this.engagementState = markEngagementAttack(
+                this.engagementState,
+                enemy.id,
+              ) as EngagementState;
             }
             this.addRing(
               targetPosition,
@@ -6354,10 +6440,13 @@ class FreemanEngine {
               .filter((node) => node.id !== "core" && node.id !== "repair-bay")
               .map((node) => ({ id: node.id, kind: "battlefield-node", x: node.x, z: node.z, radius: 0.7, hp: node.health })),
             ...this.agents.map((agent) => ({ id: agent.id, kind: "agent", x: agent.group.position.x, z: agent.group.position.z, radius: 0.52, hp: agent.hp })),
+            ...this.warLayerState.squads.map((squad) => ({ id: squad.id, kind: "war-squad", x: squad.x, z: squad.z, radius: 0.42, hp: squad.health })),
             ...this.defenses.map((defense) => ({ id: String(defense.index), kind: "turret", x: defense.group.position.x, z: defense.group.position.z, radius: 0.6, hp: defense.hp })),
           ],
         );
-        if (hit?.kind === "agent") {
+        if (hit?.kind === "war-squad") {
+          this.damageWarSquad(hit.id, projectile.damage);
+        } else if (hit?.kind === "agent") {
           const agent = this.agents.find((candidate) => candidate.id === hit.id);
           if (agent) this.damageAgent(agent, projectile.damage);
         } else if (hit?.kind === "turret") {
@@ -6748,6 +6837,18 @@ class FreemanEngine {
       absorbed > 0 ? 0x9ed8dd : 0xff8a68,
     );
     this.addBurst(agent.group.position.clone().add(new THREE.Vector3(0, 0.8, 0)), 0xb7422e, 6);
+  }
+
+  private damageWarSquad(id: string, damage: number) {
+    const squad = this.warLayerState.squads.find((candidate) => candidate.id === id);
+    if (!squad) return;
+    this.warLayerState = damageWarSquad(
+      this.warLayerState as unknown as ReturnType<typeof createWarLayerState>,
+      id,
+      damage,
+    ) as WarLayerState;
+    this.addBurst(new THREE.Vector3(squad.x, 0.35, squad.z), 0xb7422e, 6);
+    this.addRing(new THREE.Vector3(squad.x, 0, squad.z), 0xff8a68, 0.08, 0.85, 0.18);
   }
 
   private damageDefense(defense: DefenseRuntime, damage: number) {
@@ -9601,6 +9702,11 @@ class FreemanCanvasEngine implements GameController {
 
   private updateGame(delta: number) {
     this.empState = tickEmp(this.empState, delta * 1_000) as EmpState;
+    this.data = tickBattlefieldResources(
+      this.battlefieldState,
+      { compute: this.data },
+      delta * 1_000,
+    ).compute;
     this.watchRecoveryClock = Math.max(0, this.watchRecoveryClock - delta);
     if (this.intermissionClock > 0) {
       this.intermissionClock = tickWaveIntermission(this.intermissionClock, delta * 1_000);
@@ -9947,8 +10053,10 @@ class FreemanCanvasEngine implements GameController {
       pressure,
       activeChildren: this.temporarySubAgents.filter(
         (subAgent) => subAgent.parentId === agent.id,
+      ).length + this.warLayerState.squads.filter(
+        (squad) => squad.parentId === agent.id,
       ).length,
-      totalActive: this.temporarySubAgents.length,
+      totalActive: this.temporarySubAgents.length + this.warLayerState.squads.length,
       materials: spendableMaterials,
       cooldownLeftMs: spawnState.cooldownLeftMs,
       maxPerParent: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
@@ -9964,6 +10072,10 @@ class FreemanCanvasEngine implements GameController {
         coreHealthRatio: this.core.hp / this.core.maxHp,
         wavePressure: this.enemies.length / this.activeEnemyLimit,
         subAgents: this.temporarySubAgents,
+        externalParentChildren: this.warLayerState.squads.filter(
+          (squad) => squad.parentId === agent.id,
+        ).length,
+        externalTemporaryUnits: this.warLayerState.squads.length,
         maxSubAgents: MAX_TEMPORARY_SUB_AGENTS_PER_PARENT,
         materials: spendableMaterials,
         upgrades: { componentUpgradeRanks: this.componentUpgradeRanks },
@@ -10021,6 +10133,10 @@ class FreemanCanvasEngine implements GameController {
       x: agent.x,
       z: agent.z,
       components: this.loot.components,
+      externalParentChildren: this.temporarySubAgents.filter(
+        (subAgent) => subAgent.parentId === agent.id,
+      ).length,
+      externalTemporaryUnits: this.temporarySubAgents.length,
     });
     if (!spawned.accepted || !spawned.squad) return;
     this.warLayerState = spawned.state as WarLayerState;
@@ -10045,33 +10161,31 @@ class FreemanCanvasEngine implements GameController {
       !isWatchMode(this.sessionMode) ||
       this.watchState.priority === "survive"
     ) return;
+    const type = this.watchState.priority === "expand" ? "air-strike" : "convoy";
+    const targets = [...this.enemies]
+      .sort((left, right) =>
+        Math.hypot(left.x - 3.2, left.z + 2.4) -
+        Math.hypot(right.x - 3.2, right.z + 2.4),
+      )
+      .slice(0, type === "air-strike" ? 3 : 1);
+    const primaryTarget = targets[0];
     const requested = requestSupportEvent(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
-      type: this.watchState.priority === "expand" ? "air-strike" : "convoy",
+      type,
       components: this.loot.components,
+      origin: { x: 3.2, z: -2.4 },
+      target: primaryTarget
+        ? { x: primaryTarget.x, z: primaryTarget.z }
+        : { x: this.core.x, z: this.core.z },
+      targetIds: targets.map((enemy) => String(enemy.id)),
     });
     if (!requested.accepted || !requested.event) return;
     this.warLayerState = requested.state as WarLayerState;
     this.loot.components = requested.state.components;
-    if (requested.event.type === "air-strike") {
-      for (const enemy of [...this.enemies]
-        .sort((left, right) =>
-          Math.hypot(left.x - 3.2, left.z + 2.4) -
-          Math.hypot(right.x - 3.2, right.z + 2.4),
-        )
-        .slice(0, 3)) this.damageEnemy(enemy, 12, true);
-      this.callbacks.onToast({
-        eyebrow: "ASSEMBLY PAD",
-        title: "AIR STRIKE INBOUND",
-        detail: "Watch-priority support cleared the closest threat cluster.",
-      });
-    } else {
-      this.repairBay.hp = Math.min(this.repairBay.maxHp, this.repairBay.hp + 12);
-      this.callbacks.onToast({
-        eyebrow: "ASSEMBLY PAD",
-        title: "CONVOY DEPLOYED",
-        detail: "Support cargo restored the repair bay perimeter.",
-      });
-    }
+    this.callbacks.onToast({
+      eyebrow: "ASSEMBLY PAD",
+      title: requested.event.type === "air-strike" ? "AIR STRIKE INBOUND" : "CONVOY DEPLOYED",
+      detail: "Support is moving through its telegraph before engaging marked threats.",
+    });
   }
 
   private updateWarLayer(delta: number) {
@@ -10092,41 +10206,27 @@ class FreemanCanvasEngine implements GameController {
     };
     const repairBayWasDamaged = this.repairBay.hp < this.repairBay.maxHp;
     const previousHp = new Map(enemies.map((enemy) => [enemy.id, enemy.hp]));
-    this.warLayerState = tickWarSquads(
+    const ticked = tickWarSquads(
       this.warLayerState as unknown as ReturnType<typeof createWarLayerState>,
       {
         enemies,
-        nodes: this.battlefieldState.nodes.filter((node) => node.id !== "core").map((node) => ({
-          ...node, hp: node.health, maxHp: node.maxHealth, online: node.status === "online",
-        })),
+        battlefieldState: this.battlefieldState,
+        materials: { components: this.loot.components },
+        repairMultiplier: getBattlefieldEffects(this.battlefieldState).repairMultiplier,
       },
       delta * 1_000,
     ) as WarLayerState;
+    this.warLayerState = ticked;
+    if (ticked.battlefieldState) this.battlefieldState = ticked.battlefieldState;
+    this.loot.components = ticked.materials.components;
     for (const snapshot of this.warLayerState.enemies ?? []) {
       const previous = previousHp.get(snapshot.id) ?? snapshot.hp;
       const enemy = this.enemies.find((candidate) => String(candidate.id) === snapshot.id);
       if (enemy && previous > snapshot.hp) this.damageEnemy(enemy, previous - snapshot.hp);
     }
-    const repairedNodesById = new Map(
-      this.warLayerState.nodes?.map((node: { id: string }) => [node.id, node]) ?? [],
-    );
-    this.battlefieldState = {
-      ...this.battlefieldState,
-      nodes: this.battlefieldState.nodes.map((node) => {
-        const repaired = repairedNodesById.get(node.id) as { hp?: number; maxHp?: number; online?: boolean } | undefined;
-        if (!repaired || node.id === "core") return node;
-        const health = Math.min(node.maxHealth, Math.max(0, repaired.hp ?? node.health));
-        return {
-          ...node,
-          health,
-          maxHealth: repaired.maxHp ?? node.maxHealth,
-          status: health <= 0 ? "offline" : repaired.online ? "online" : "damaged",
-        };
-      }),
-    };
-    const repairedBay = this.warLayerState.nodes?.find((node: { id: string }) => node.id === "repair-bay");
-    if (repairedBay && repairedBay.hp > this.repairBay.hp) {
-      this.repairBay.hp = Math.min(this.repairBay.maxHp, repairedBay.hp);
+    const repairedBay = this.battlefieldState.nodes.find((node) => node.id === "repair-bay");
+    if (repairedBay && repairedBay.health > this.repairBay.hp) {
+      this.repairBay.hp = Math.min(this.repairBay.maxHp, repairedBay.health);
       if (repairBayWasDamaged && this.repairBay.hp === this.repairBay.maxHp) {
         this.callbacks.onToast({
           eyebrow: "REPAIR BAY",
@@ -10134,6 +10234,11 @@ class FreemanCanvasEngine implements GameController {
           detail: "Repair squads returned the strategic node to service.",
         });
       }
+    }
+    for (const action of ticked.supportActions) {
+      if (action.type !== "damage") continue;
+      const enemy = this.enemies.find((candidate) => String(candidate.id) === action.targetId);
+      if (enemy) this.damageEnemy(enemy, action.amount, true);
     }
     this.maybeRequestWarSupport();
   }
@@ -10150,10 +10255,11 @@ class FreemanCanvasEngine implements GameController {
   private updateAgents(delta: number) {
     const count = this.agents.length;
     const priority = this.getFlatPriorityEnemy();
+    const battlefieldEffects = getBattlefieldEffects(this.battlefieldState);
     const repairBay = {
       ...this.repairBay,
       isSeparate: true,
-      repairPerSecond: 18,
+      repairPerSecond: 18 * battlefieldEffects.repairMultiplier,
     };
     this.agents.forEach((agent, index) => {
       const roleIntent = decideAgentIntent(
@@ -10187,7 +10293,11 @@ class FreemanCanvasEngine implements GameController {
         },
         {
           hostileTargetInRange: Boolean(
-            this.getNearestEnemy(agent.x, agent.z, agent.range),
+            this.getNearestEnemy(
+              agent.x,
+              agent.z,
+              agent.range + battlefieldEffects.commandRadius,
+            ),
           ),
           retreating:
             agent.disabledLeft > 0 ||
@@ -10342,7 +10452,11 @@ class FreemanCanvasEngine implements GameController {
       if (!gatheringPickup && (intent === "assault" || intent === "improvise")) {
         target = priority;
       } else if (!gatheringPickup && (intent === "follow" || intent === "support")) {
-        target = this.getNearestEnemy(agent.x, agent.z, agent.range);
+        target = this.getNearestEnemy(
+          agent.x,
+          agent.z,
+          agent.range + battlefieldEffects.commandRadius,
+        );
       } else if (!gatheringPickup && intent === "defend") {
         const coreThreat = this.getNearestEnemy(this.core.x, this.core.z, 9.5);
         if (
@@ -10355,7 +10469,8 @@ class FreemanCanvasEngine implements GameController {
       }
       if (
         target &&
-        this.distance(target.x, target.z, agent.x, agent.z) > agent.range + 0.9
+        this.distance(target.x, target.z, agent.x, agent.z) >
+          agent.range + battlefieldEffects.commandRadius + 0.9
       ) {
         target = null;
       }
@@ -10668,11 +10783,21 @@ class FreemanCanvasEngine implements GameController {
             this.distance(enemy.x, enemy.z, left.x, left.z) -
             this.distance(enemy.x, enemy.z, right.x, right.z),
         )[0];
+      const warSquadTarget = [...this.warLayerState.squads]
+        .filter((squad) => squad.health > 0)
+        .sort(
+          (left, right) =>
+            this.distance(enemy.x, enemy.z, left.x, left.z) -
+            this.distance(enemy.x, enemy.z, right.x, right.z),
+        )[0];
       const agentDistance = agentTarget
         ? this.distance(enemy.x, enemy.z, agentTarget.x, agentTarget.z)
         : Infinity;
       const turretDistance = turretTarget
         ? this.distance(enemy.x, enemy.z, turretTarget.x, turretTarget.z)
+        : Infinity;
+      const warSquadDistance = warSquadTarget
+        ? this.distance(enemy.x, enemy.z, warSquadTarget.x, warSquadTarget.z)
         : Infinity;
       const repairBayDistance = this.repairBay.hp > 0
         ? this.distance(enemy.x, enemy.z, this.repairBay.x, this.repairBay.z)
@@ -10690,6 +10815,8 @@ class FreemanCanvasEngine implements GameController {
       const targetKind =
         playerDistance < 4.2
           ? "player"
+          : warSquadDistance < 6.5
+            ? "war-squad"
           : agentDistance < 6.5
             ? "agent"
             : turretDistance < 6.5
@@ -10701,28 +10828,6 @@ class FreemanCanvasEngine implements GameController {
                 : this.wave >= 4 && engagement
                   ? "engagement"
                   : "core";
-      const targetX = targetKind === "player"
-        ? this.player.x
-        : targetKind === "agent" && agentTarget
-          ? agentTarget.x
-          : targetKind === "turret" && turretTarget
-            ? turretTarget.x
-            : targetKind === "repair-bay"
-              ? this.repairBay.x
-              : targetKind === "battlefield-node" && battlefieldNodeTarget
-                ? battlefieldNodeTarget.x
-              : this.core.x;
-      const targetZ = targetKind === "player"
-        ? this.player.z
-        : targetKind === "agent" && agentTarget
-          ? agentTarget.z
-          : targetKind === "turret" && turretTarget
-            ? turretTarget.z
-            : targetKind === "repair-bay"
-              ? this.repairBay.z
-              : targetKind === "battlefield-node" && battlefieldNodeTarget
-                ? battlefieldNodeTarget.z
-              : this.core.z;
       const engagementLane = engagement
         ? ENGAGEMENT_LANES.find((lane) => lane.id === engagement.laneId)
         : null;
@@ -10742,6 +10847,41 @@ class FreemanCanvasEngine implements GameController {
           },
         };
       }
+      const engagementAttackTarget = resolveEngagementAttackTarget(
+        engagement,
+        this.battlefieldState.nodes,
+        { id: "core", x: this.core.x, z: this.core.z },
+      );
+      const targetX = targetKind === "player"
+        ? this.player.x
+        : targetKind === "war-squad" && warSquadTarget
+          ? warSquadTarget.x
+        : targetKind === "agent" && agentTarget
+          ? agentTarget.x
+          : targetKind === "turret" && turretTarget
+            ? turretTarget.x
+            : targetKind === "repair-bay"
+              ? this.repairBay.x
+              : targetKind === "battlefield-node" && battlefieldNodeTarget
+                ? battlefieldNodeTarget.x
+                : targetKind === "engagement"
+                  ? engagementAttackTarget.x
+                  : this.core.x;
+      const targetZ = targetKind === "player"
+        ? this.player.z
+        : targetKind === "war-squad" && warSquadTarget
+          ? warSquadTarget.z
+        : targetKind === "agent" && agentTarget
+          ? agentTarget.z
+          : targetKind === "turret" && turretTarget
+            ? turretTarget.z
+            : targetKind === "repair-bay"
+              ? this.repairBay.z
+              : targetKind === "battlefield-node" && battlefieldNodeTarget
+                ? battlefieldNodeTarget.z
+                : targetKind === "engagement"
+                  ? engagementAttackTarget.z
+                  : this.core.z;
       const stagingTarget = engagement
         ? { x: engagement.staging.x, z: engagement.staging.z }
         : { x: targetX, z: targetZ };
@@ -10902,29 +11042,24 @@ class FreemanCanvasEngine implements GameController {
             }
             if (targetKind === "agent" && agentTarget) {
               this.damageAgent(agentTarget, enemy.damage);
+            } else if (targetKind === "war-squad" && warSquadTarget) {
+              this.damageWarSquad(warSquadTarget.id, enemy.damage);
             } else if (targetKind === "turret" && turretTarget) {
               this.damageDefense(turretTarget, enemy.damage);
             } else if (targetKind === "repair-bay") {
               this.damageRepairBay(enemy.damage);
             } else if (targetKind === "battlefield-node" && battlefieldNodeTarget) {
               this.damageBattlefieldNode(battlefieldNodeTarget.id, enemy.damage);
+            } else if (targetKind === "engagement" && engagementAttackTarget.id !== "core") {
+              this.damageBattlefieldNode(engagementAttackTarget.id, enemy.damage);
             } else {
               this.damageTarget(targetKind === "player" ? "player" : "core", enemy.damage);
             }
             if (targetKind === "engagement" && engagement) {
-              this.engagementState = {
-                ...this.engagementState,
-                stationaryMs: 0,
-                repositionReady: false,
-                records: {
-                  ...this.engagementState.records,
-                  [String(enemy.id)]: {
-                    ...engagement,
-                    repositionLeftMs: 650,
-                    lastAction: "attack",
-                  },
-                },
-              };
+              this.engagementState = markEngagementAttack(
+                this.engagementState,
+                enemy.id,
+              ) as EngagementState;
             }
             this.addRing(
               targetX,
@@ -11019,10 +11154,13 @@ class FreemanCanvasEngine implements GameController {
               .filter((node) => node.id !== "core" && node.id !== "repair-bay")
               .map((node) => ({ id: node.id, kind: "battlefield-node", x: node.x, z: node.z, radius: 0.7, hp: node.health })),
             ...this.agents.map((agent) => ({ id: agent.id, kind: "agent", x: agent.x, z: agent.z, radius: 0.52, hp: agent.hp })),
+            ...this.warLayerState.squads.map((squad) => ({ id: squad.id, kind: "war-squad", x: squad.x, z: squad.z, radius: 0.42, hp: squad.health })),
             ...this.defenses.map((defense) => ({ id: String(defense.index), kind: "turret", x: defense.x, z: defense.z, radius: 0.6, hp: defense.hp })),
           ],
         );
-        if (hit?.kind === "agent") {
+        if (hit?.kind === "war-squad") {
+          this.damageWarSquad(hit.id, projectile.damage);
+        } else if (hit?.kind === "agent") {
           const agent = this.agents.find((candidate) => candidate.id === hit.id);
           if (agent) this.damageAgent(agent, projectile.damage);
         } else if (hit?.kind === "turret") {
@@ -11677,6 +11815,18 @@ class FreemanCanvasEngine implements GameController {
     agent.hp = damaged.hp;
     agent.disabledLeft = damaged.disabledLeftMs / 1_000;
     this.addBurst(agent.x, agent.z, 0xb7422e, 6);
+  }
+
+  private damageWarSquad(id: string, damage: number) {
+    const squad = this.warLayerState.squads.find((candidate) => candidate.id === id);
+    if (!squad) return;
+    this.warLayerState = damageWarSquad(
+      this.warLayerState as unknown as ReturnType<typeof createWarLayerState>,
+      id,
+      damage,
+    ) as WarLayerState;
+    this.addBurst(squad.x, squad.z, 0xb7422e, 6);
+    this.addRing(squad.x, squad.z, 0xff8a68, 0.08, 0.85, 0.18);
   }
 
   private damageDefense(defense: FlatDefense, damage: number) {
@@ -12416,6 +12566,13 @@ class FreemanCanvasEngine implements GameController {
         draw: () => this.drawWarSquad(squad),
       });
     }
+    const supportEvent = this.warLayerState.supportEvent;
+    if (supportEvent) {
+      drawables.push({
+        depth: this.project(supportEvent.x, supportEvent.z).depth,
+        draw: () => this.drawSupportEvent(supportEvent),
+      });
+    }
     for (const defense of this.defenses) {
       drawables.push({
         depth: this.project(defense.x, defense.z).depth,
@@ -13120,11 +13277,50 @@ class FreemanCanvasEngine implements GameController {
     context.beginPath();
     context.ellipse(floor.x, floor.y, size * 1.45, size * 0.52, 0, 0, Math.PI * 2);
     context.stroke();
-    context.fillStyle = color;
+    context.fillStyle = squad.hitFlashMs > 0 ? "#ffffff" : color;
     context.shadowColor = color;
     context.shadowBlur = 12;
     context.beginPath();
     context.arc(signal.x, signal.y, size, 0, Math.PI * 2);
+    context.fill();
+    context.shadowBlur = 0;
+    context.fillStyle = "#071015";
+    context.fillRect(signal.x - size, signal.y - size * 1.7, size * 2, 3);
+    context.fillStyle = color;
+    context.fillRect(
+      signal.x - size,
+      signal.y - size * 1.7,
+      size * 2 * Math.max(0, squad.health / 30),
+      3,
+    );
+    context.restore();
+  }
+
+  private drawSupportEvent(event: NonNullable<WarLayerState["supportEvent"]>) {
+    const point = this.project(
+      event.x,
+      event.z,
+      event.type === "air-strike" ? 1.8 : 0.35,
+    );
+    const size = point.scale * (event.type === "air-strike" ? 0.3 : 0.22);
+    const color = event.phase === "telegraph" ? "#ffffff" : event.type === "air-strike" ? "#7fd8ff" : "#ffc857";
+    const context = this.context;
+    context.save();
+    context.globalAlpha = event.phase === "telegraph" ? 0.58 : 0.95;
+    context.strokeStyle = color;
+    context.fillStyle = color;
+    context.shadowColor = color;
+    context.shadowBlur = 16;
+    context.setLineDash(event.phase === "telegraph" ? [5, 4] : []);
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(point.x, point.y, size * 1.7, 0, Math.PI * 2);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(point.x, point.y - size);
+    context.lineTo(point.x + size, point.y + size);
+    context.lineTo(point.x - size, point.y + size);
+    context.closePath();
     context.fill();
     context.restore();
   }
@@ -14099,7 +14295,7 @@ export default function FreemanProtocol({
   const [mode, setMode] = useState<GameMode>("intro");
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [audioSettings, setAudioSettings] = useState(INITIAL_AUDIO_SETTINGS);
+  const [audioSettings, setAudioSettings] = useState(() => getStoredAudioSettings());
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileSquadOpen, setMobileSquadOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel | "closed">("closed");

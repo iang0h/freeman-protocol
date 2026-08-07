@@ -57,8 +57,6 @@ export function createEngagementState(wave = 1) {
   return {
     wave: Math.max(1, Math.floor(finite(wave, 1))),
     records: {},
-    stationaryMs: 0,
-    repositionReady: false,
   };
 }
 
@@ -82,21 +80,23 @@ export function assignEngagementLane(enemyId, state, preferredNode = "core") {
     repathLeftMs: ENGAGEMENT_REPATH_INTERVAL_MS,
     repositionLeftMs: 0,
     lastAction: "advance",
+    stationaryMs: 0,
+    repositionReady: false,
   };
   return record;
 }
 
 /**
- * @param {{ wave: number, records: Record<string, EngagementRecord>, stationaryMs: number, repositionReady: boolean }} state
+ * @param {{ wave: number, records: Record<string, EngagementRecord> }} state
  * @param {number} [elapsedMs]
  */
 export function tickEngagement(state, elapsedMs = 0) {
   const elapsed = Math.max(0, finite(elapsedMs));
-  const stationaryMs = Math.max(0, finite(state?.stationaryMs)) + elapsed;
-  const repositionReady = stationaryMs >= ENGAGEMENT_REPOSITION_DELAY_MS;
   const records = {};
 
   for (const [enemyId, record] of Object.entries(state?.records ?? {})) {
+    const stationaryMs = Math.max(0, finite(record.stationaryMs)) + elapsed;
+    const repositionReady = stationaryMs >= ENGAGEMENT_REPOSITION_DELAY_MS;
     const repositionLeftMs = Math.max(0, finite(record.repositionLeftMs) - elapsed);
     const repathLeftMs = Math.max(0, finite(record.repathLeftMs) - elapsed);
     const repositioning = repositionReady || repositionLeftMs > 0;
@@ -109,6 +109,8 @@ export function tickEngagement(state, elapsedMs = 0) {
       repositionLeftMs: repositionReady
         ? ENGAGEMENT_REPOSITION_DURATION_MS
         : repositionLeftMs,
+      stationaryMs: repositionReady ? 0 : stationaryMs,
+      repositionReady,
       lastAction: repositioning
         ? "reposition"
         : repathDue
@@ -123,8 +125,36 @@ export function tickEngagement(state, elapsedMs = 0) {
   return {
     ...state,
     records,
-    stationaryMs: repositionReady ? 0 : stationaryMs,
-    repositionReady,
+  };
+}
+
+export function markEngagementAttack(state, enemyId) {
+  const recordId = String(enemyId);
+  const record = state?.records?.[recordId];
+  if (!record) return state;
+  return {
+    ...state,
+    records: {
+      ...state.records,
+      [recordId]: {
+        ...record,
+        stationaryMs: 0,
+        repositionReady: false,
+        repositionLeftMs: ENGAGEMENT_REPOSITION_DURATION_MS,
+        lastAction: "attack",
+      },
+    },
+  };
+}
+
+export function resolveEngagementAttackTarget(record, targets, fallback) {
+  const target = (Array.isArray(targets) ? targets : []).find(
+    (candidate) => candidate?.id === record?.attackTargetId,
+  ) ?? fallback;
+  return {
+    id: target?.id ?? "core",
+    x: finite(target?.x),
+    z: finite(target?.z),
   };
 }
 
@@ -179,7 +209,7 @@ export function resolveEngagementAdvance(
   };
 }
 
-/** @typedef {{ laneId: string, staging: { x: number, z: number }, attackTargetId: string, repathLeftMs: number, repositionLeftMs: number, lastAction: string, repathAction?: string }} EngagementRecord */
+/** @typedef {{ laneId: string, staging: { x: number, z: number }, attackTargetId: string, repathLeftMs: number, repositionLeftMs: number, lastAction: string, stationaryMs: number, repositionReady: boolean, repathAction?: string }} EngagementRecord */
 
 /** @param {string | number | null} [targetId] @returns {MovementWatchdogState} */
 export function createMovementWatchdogState(targetId = null) {

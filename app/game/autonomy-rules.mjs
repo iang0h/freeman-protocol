@@ -14,7 +14,8 @@ export const AGENT_ROLES = Object.freeze({
 });
 
 const DEFAULT_MAX_SUB_AGENTS = 4;
-export const SUB_AGENT_GLOBAL_CAP = 16;
+export const TEMPORARY_UNIT_GLOBAL_CAP = 24;
+export const SUB_AGENT_GLOBAL_CAP = TEMPORARY_UNIT_GLOBAL_CAP;
 export const SUB_AGENT_SPAWN_COOLDOWN_MS = 2_800;
 const MAX_SUB_AGENT_LIFETIME_TIER = 2;
 const SUB_AGENT_LIFETIME_MS = Object.freeze([10_000, 15_000, 20_000]);
@@ -78,12 +79,13 @@ function getRole(agent) {
 }
 
 function activeSubAgentCount(agent, context) {
+  const external = validNonNegativeInteger(context.externalParentChildren, 0);
   if (Array.isArray(context.subAgents)) {
-    return context.subAgents.filter(
+    return external + context.subAgents.filter(
       (subAgent) => subAgent.parentId === agent.id,
     ).length;
   }
-  return validNonNegativeInteger(context.activeSubAgents, 0);
+  return external + validNonNegativeInteger(context.activeSubAgents, 0);
 }
 
 function validNonNegativeInteger(value, fallback) {
@@ -167,11 +169,18 @@ export function spawnTemporarySubAgent(agent, context = {}) {
   );
   const maximum = Math.min(DEFAULT_MAX_SUB_AGENTS, requestedMaximum);
   const active = activeSubAgentCount(agent, context);
+  const localTemporaryUnits = Array.isArray(context.subAgents)
+    ? context.subAgents.length
+    : validNonNegativeInteger(context.activeSubAgents, 0);
+  const totalTemporaryUnits =
+    localTemporaryUnits +
+    validNonNegativeInteger(context.externalTemporaryUnits, 0);
   if (
     agent.canSpawn === false ||
     agent.parentId ||
     !shouldImprovise(agent, context) ||
     active >= maximum ||
+    totalTemporaryUnits >= TEMPORARY_UNIT_GLOBAL_CAP ||
     !canSpendTemporarySubAgent(context.materials)
   ) {
     return null;

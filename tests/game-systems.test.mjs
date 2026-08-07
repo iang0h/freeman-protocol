@@ -50,6 +50,7 @@ import {
 import {
   AGENT_ROLES,
   SUB_AGENT_GLOBAL_CAP,
+  TEMPORARY_UNIT_GLOBAL_CAP,
   SUB_AGENT_MATERIAL_COST,
   SUB_AGENT_SPAWN_COOLDOWN_MS,
   clearSubAgents,
@@ -73,7 +74,9 @@ import {
   resolveEmpDamage,
 } from "../app/game/encounter-rules.mjs";
 import {
+  markEngagementAttack,
   createMovementWatchdogState,
+  resolveEngagementAttackTarget,
   resolveEnemyAdvance,
 } from "../app/game/enemy-movement-rules.mjs";
 import {
@@ -187,6 +190,7 @@ import {
   getNodeById,
   getNodeRepairCost,
   repairBattlefieldNode,
+  tickBattlefieldResources,
 } from "../app/game/battlefield-rules.mjs";
 import {
   WAR_LAYER_GLOBAL_CAP,
@@ -256,6 +260,45 @@ test("war squads honor parent and global caps", () => {
   assert.equal(WAR_LAYER_GLOBAL_CAP, 24);
 });
 
+test("temporary sub-agents and war squads share parent and global caps", () => {
+  const parent = { id: "kairos", role: "assault" };
+  const ownChildren = [1, 2, 3].map((index) => ({
+    id: `subagent-kairos-${index}`,
+    parentId: "kairos",
+  }));
+  assert.equal(
+    spawnTemporarySubAgent(parent, {
+      enemyDensity: 6,
+      subAgents: ownChildren,
+      externalParentChildren: 1,
+      externalTemporaryUnits: 1,
+      materials: { components: 2, shards: 2 },
+    }),
+    null,
+  );
+
+  assert.equal(
+    spawnWarSquad(createWarLayerState({ components: 2 }), {
+      parentId: "kairos",
+      role: "screen",
+      components: 2,
+      externalParentChildren: 4,
+    }).reason,
+    "parent-cap",
+  );
+  assert.equal(
+    spawnWarSquad(createWarLayerState({ components: 2 }), {
+      parentId: "relay",
+      role: "screen",
+      components: 2,
+      externalTemporaryUnits: TEMPORARY_UNIT_GLOBAL_CAP,
+    }).reason,
+    "global-cap",
+  );
+  assert.equal(SUB_AGENT_GLOBAL_CAP, TEMPORARY_UNIT_GLOBAL_CAP);
+  assert.equal(WAR_LAYER_GLOBAL_CAP, TEMPORARY_UNIT_GLOBAL_CAP);
+});
+
 test("war squads move toward threats, deal damage, and expire", () => {
   let state = spawnWarSquad(createWarLayerState({ components: 1 }), {
     parentId: "agent-1",
@@ -282,17 +325,69 @@ test("war squad damage is immutable and removes destroyed squads", () => {
     z: -1,
     components: 1,
   });
-  const damaged = damageWarSquad(spawned.state, spawned.squad.id, 100);
+  const hit = damageWarSquad(spawned.state, spawned.squad.id, 8);
+  assert.equal(hit.squads[0].health, 22);
+  assert.ok(hit.squads[0].hitFlashMs > 0);
+  assert.equal(spawned.state.squads[0].health, 30);
+  const damaged = damageWarSquad(hit, spawned.squad.id, 100);
   assert.equal(damaged.squads.length, 0);
   assert.equal(spawned.state.squads.length, 1);
 });
 
-test("assembly support has one active event and a cooldown", () => {
+test("repair squads use battlefield repair pricing and the live Repair Bay multiplier", () => {
+  let battlefieldState = damageBattlefieldNode(
+    createBattlefieldState(),
+    "command-uplink",
+    100,
+  );
+  const spawned = spawnWarSquad(createWarLayerState({ components: 3 }), {
+    parentId: "relay",
+    role: "repair",
+    x: -4,
+    z: -2.5,
+    components: 3,
+  });
+  const repaired = tickWarSquads(
+    spawned.state,
+    {
+      battlefieldState,
+      materials: { components: spawned.state.components },
+      repairMultiplier: getBattlefieldEffects(battlefieldState).repairMultiplier,
+    },
+    1_500,
+  );
+  assert.equal(getNodeById(repaired.battlefieldState, "command-uplink").health, 8);
+  assert.equal(repaired.materials.components, 0);
+
+  battlefieldState = damageBattlefieldNode(
+    repaired.battlefieldState,
+    "repair-bay",
+    100,
+  );
+  const disabled = tickWarSquads(
+    { ...repaired, components: 2 },
+    {
+      battlefieldState,
+      materials: { components: 2 },
+      repairMultiplier: getBattlefieldEffects(battlefieldState).repairMultiplier,
+    },
+    1_500,
+  );
+  assert.equal(getNodeById(disabled.battlefieldState, "command-uplink").health, 12);
+  assert.equal(disabled.materials.components, 0);
+});
+
+test("assembly support telegraphs, acts once, moves, and then enters cooldown", () => {
   const first = requestSupportEvent(createWarLayerState(), {
     type: "convoy",
     components: 2,
+    origin: { x: 3.2, z: -2.4 },
+    target: { x: -2, z: 3 },
+    targetIds: ["e1"],
   });
   assert.equal(first.accepted, true);
+  assert.equal(first.event.phase, "telegraph");
+  assert.deepEqual({ x: first.event.x, z: first.event.z }, { x: 3.2, z: -2.4 });
   const second = requestSupportEvent(first.state, {
     type: "air-strike",
     components: 2,
@@ -300,7 +395,18 @@ test("assembly support has one active event and a cooldown", () => {
   assert.equal(second.accepted, false);
   assert.equal(second.reason, "active-event");
   assert.equal(first.state.components, 0);
-  const expired = tickWarSquads(first.state, {}, 4_000);
+  const telegraphed = tickWarSquads(first.state, {}, 999);
+  assert.equal(telegraphed.supportEvent.phase, "telegraph");
+  assert.deepEqual(telegraphed.supportActions, []);
+  assert.notEqual(telegraphed.supportEvent.x, first.event.x);
+  const acting = tickWarSquads(telegraphed, {}, 501);
+  assert.equal(acting.supportEvent.phase, "acting");
+  assert.deepEqual(acting.supportActions, [
+    { type: "damage", targetId: "e1", amount: 8 },
+  ]);
+  const noDuplicate = tickWarSquads(acting, {}, 500);
+  assert.deepEqual(noDuplicate.supportActions, []);
+  const expired = tickWarSquads(noDuplicate, {}, 2_000);
   assert.equal(expired.supportEvent, null);
   assert.equal(
     requestSupportEvent(expired, { type: "air-strike", components: 2 }).reason,
@@ -397,8 +503,10 @@ test("late waves distribute threats across breach lanes", () => {
 
 test("engagement watchdog forces a reposition after a stationary attack radius", () => {
   let state = createEngagementState(4);
+  const record = assignEngagementLane("stationary", state, "core");
+  state = { ...state, records: { stationary: record } };
   state = tickEngagement(state, 2_100);
-  assert.equal(state.repositionReady, true);
+  assert.equal(state.records.stationary.repositionReady, true);
   const advance = resolveEngagementAdvance({
     position: { x: 1, z: 0 },
     target: { x: 0, z: 0 },
@@ -448,6 +556,41 @@ test("wave-four engagement records keep an attack or reposition cadence", () => 
   for (let windowStart = 0; windowStart < 12_000; windowStart += 2_000) {
     assert.ok(actions.some((elapsedMs) => elapsedMs >= windowStart && elapsedMs < windowStart + 2_000));
   }
+});
+
+test("engagement attacks resolve their assigned strategic node", () => {
+  const record = {
+    ...assignEngagementLane("compute-raider", createEngagementState(4), "compute-relay"),
+    attackTargetId: "compute-relay",
+  };
+  assert.deepEqual(
+    resolveEngagementAttackTarget(
+      record,
+      createBattlefieldState().nodes,
+      { id: "core", x: 0, z: 0 },
+    ),
+    { id: "compute-relay", x: 3.4, z: 2.2 },
+  );
+});
+
+test("completed attacks reset only their own engagement watchdog", () => {
+  let state = createEngagementState(4);
+  state = {
+    ...state,
+    records: {
+      first: assignEngagementLane("first", state, "core"),
+      second: assignEngagementLane("second", state, "compute-relay"),
+    },
+  };
+  state = tickEngagement(state, 2_100);
+  assert.equal(state.records.first.repositionReady, true);
+  assert.equal(state.records.second.repositionReady, true);
+
+  state = markEngagementAttack(state, "first");
+  assert.equal(state.records.first.stationaryMs, 0);
+  assert.equal(state.records.first.repositionReady, false);
+  assert.equal(state.records.second.repositionReady, true);
+  assert.equal(state.records.second.lastAction, "reposition");
 });
 
 async function loadRepairRules() {
@@ -3091,6 +3234,19 @@ test("online command and compute nodes expose bounded strategic effects", () => 
   assert.equal(effects.commandRadius, 8);
   assert.equal(effects.computePerSecond, 1);
   assert.equal(effects.repairMultiplier, 1);
+});
+
+test("Compute Relay production advances only while the node is online", () => {
+  const online = createBattlefieldState();
+  assert.deepEqual(
+    tickBattlefieldResources(online, { compute: 10, components: 2 }, 2_500),
+    { compute: 12.5, components: 2 },
+  );
+  const offline = damageBattlefieldNode(online, "compute-relay", 100);
+  assert.deepEqual(
+    tickBattlefieldResources(offline, { compute: 10, components: 2 }, 2_500),
+    { compute: 10, components: 2 },
+  );
 });
 
 function sequence(values) {
