@@ -894,6 +894,43 @@ test("simulation view normalizes render-neutral state and projects command marke
   assert.equal(getCombatEffectBudget("low", true).hitStopMs, 0);
 });
 
+test("damaged runtime Core state reaches its canonical marker without changing other node kinds", () => {
+  assert.equal(typeof battlefieldRules.syncBattlefieldRuntimeCore, "function");
+
+  const initial = damageBattlefieldNode(
+    createBattlefieldState(),
+    "repair-bay",
+    25,
+  );
+  const synced = battlefieldRules.syncBattlefieldRuntimeCore(initial, {
+    health: 135,
+    maxHealth: 180,
+  });
+  const markers = getCommandMapMarkers(createSimulationView({
+    core: { hp: 135, maxHp: 180, x: 0, z: 0 },
+  }), synced);
+  const canonicalMarkers = markers.filter((marker) =>
+    BATTLEFIELD_NODES.some((node) => node.id === marker.id),
+  );
+
+  assert.deepEqual(
+    canonicalMarkers.map(({ id, kind }) => ({ id, kind })),
+    BATTLEFIELD_NODES.map(({ id, kind }) => ({ id, kind })),
+  );
+  assert.equal(
+    canonicalMarkers.find((marker) => marker.id === "core")?.status,
+    "DAMAGED 135/180",
+  );
+  assert.equal(
+    canonicalMarkers.find((marker) => marker.id === "repair-bay")?.status,
+    "DAMAGED 75/100",
+  );
+  assert.equal(
+    canonicalMarkers.find((marker) => marker.id === "command-uplink")?.status,
+    "ONLINE 100/100",
+  );
+});
+
 test("combat feedback keeps critical and kill cues when the low-quality pool is full", () => {
   const budget = getCombatEffectBudget("low", false);
   assert.equal(budget.maxEffects, 36);

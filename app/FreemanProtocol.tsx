@@ -174,6 +174,7 @@ import {
   getBattlefieldEffects,
   getBattlefieldNodePresentation,
   getBattlefieldNodePosition,
+  syncBattlefieldRuntimeCore,
   tickBattlefieldResources,
 } from "./game/battlefield-rules.mjs";
 import {
@@ -8093,12 +8094,16 @@ class FreemanEngine {
           }
         : null,
     });
+    this.battlefieldState = syncBattlefieldRuntimeCore(this.battlefieldState, {
+      health: this.core.hp,
+      maxHealth: this.core.maxHp,
+    });
     const strategicHud = createStrategicHud(
       this.battlefieldState,
       this.warLayerState,
     );
     const supportEvent = this.warLayerState.supportEvent;
-    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView).map((marker) => {
+    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView, this.battlefieldState).map((marker) => {
       const summary = strategicHud.nodes.find((node) => node.id === marker.id);
       if (!summary) return marker;
       const supportActive = marker.id === "assembly-pad" && supportEvent;
@@ -14247,12 +14252,16 @@ class FreemanCanvasEngine implements GameController {
           }
         : null,
     });
+    this.battlefieldState = syncBattlefieldRuntimeCore(this.battlefieldState, {
+      health: this.core.hp,
+      maxHealth: this.core.maxHp,
+    });
     const strategicHud = createStrategicHud(
       this.battlefieldState,
       this.warLayerState,
     );
     const supportEvent = this.warLayerState.supportEvent;
-    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView).map((marker) => {
+    const commandMap: HudState["commandMap"] = getCommandMapMarkers(simulationView, this.battlefieldState).map((marker) => {
       const summary = strategicHud.nodes.find((node) => node.id === marker.id);
       if (!summary) return marker;
       const supportActive = marker.id === "assembly-pad" && supportEvent;

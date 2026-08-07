@@ -112,6 +112,25 @@ export function getNodeById(state, id) {
   return runtimeNodes(state).find((node) => node?.id === id) ?? null;
 }
 
+export function syncBattlefieldRuntimeCore(state, runtimeCore = {}) {
+  const core = getNodeById(state, "core");
+  if (!core) return state;
+
+  const maxHealth = Math.max(1, finite(runtimeCore.maxHealth, core.maxHealth));
+  const health = clamp(finite(runtimeCore.health, core.health), 0, maxHealth);
+  return {
+    ...state,
+    nodes: runtimeNodes(state).map((node) => node?.id === "core"
+      ? {
+          ...node,
+          health,
+          maxHealth,
+          status: statusForHealth(health, maxHealth),
+        }
+      : node),
+  };
+}
+
 export function getNodeRepairCost(node) {
   return Math.max(0, Math.floor(finite(node?.repairCost, DEFAULT_REPAIR_COST)));
 }

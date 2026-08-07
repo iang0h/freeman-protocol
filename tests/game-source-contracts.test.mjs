@@ -997,7 +997,7 @@ test("both renderer command-map builders preserve one canonical marker per battl
   for (const engine of [webglGame, canvasGame]) {
     assert.match(
       engine,
-      /const strategicHud = createStrategicHud\([\s\S]*?const supportEvent = this\.warLayerState\.supportEvent;[\s\S]*?getCommandMapMarkers\(simulationView\)\.map\([\s\S]*?strategicHud\.nodes\.find\(\(node\) => node\.id === marker\.id\)/,
+      /this\.battlefieldState = syncBattlefieldRuntimeCore\([\s\S]*?health: this\.core\.hp,[\s\S]*?maxHealth: this\.core\.maxHp,[\s\S]*?const strategicHud = createStrategicHud\([\s\S]*?const supportEvent = this\.warLayerState\.supportEvent;[\s\S]*?getCommandMapMarkers\(simulationView, this\.battlefieldState\)\.map\([\s\S]*?strategicHud\.nodes\.find\(\(node\) => node\.id === marker\.id\)/,
     );
     assert.doesNotMatch(engine, /kind: "compute",[\s\S]*?label: summary\.label/);
     assert.doesNotMatch(engine, /id: "support-event"/);

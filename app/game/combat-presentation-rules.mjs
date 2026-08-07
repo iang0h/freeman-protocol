@@ -146,8 +146,22 @@ const markerForEntity = (entity, index, kind, label, priority) =>
     priority,
   });
 
-export function getCommandMapMarkers(snapshot = {}) {
-  const markers = [...COMMAND_MAP_FIXED_MARKERS];
+/**
+ * @param {any} snapshot
+ * @param {{ nodes?: any[] } | null} battlefieldState
+ */
+export function getCommandMapMarkers(snapshot = {}, battlefieldState = null) {
+  const nodes = Array.isArray(battlefieldState?.nodes) ? battlefieldState.nodes : [];
+  const markers = COMMAND_MAP_FIXED_MARKERS.map((marker) => {
+    const node = nodes.find((candidate) => candidate?.id === marker.id);
+    if (!node) return marker;
+    const maxHealth = Math.max(1, Number(node.maxHealth) || 1);
+    const health = Math.min(maxHealth, Math.max(0, Number(node.health) || 0));
+    return Object.freeze({
+      ...marker,
+      status: `${String(node.status ?? "online").toUpperCase()} ${Math.round(health)}/${Math.round(maxHealth)}`,
+    });
+  });
   for (const [index, agent] of (snapshot.agents ?? []).entries()) {
     markers.push(markerForEntity(agent, index, "agent", String(agent.id ?? "AGENT").toUpperCase(), 3));
   }
