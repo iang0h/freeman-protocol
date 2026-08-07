@@ -483,6 +483,7 @@ type HudState = {
     status: string;
     priority: number;
   }>;
+  strategicHud: StrategicHud;
   survivalMs: number;
   sessionIncome: { compute: number; components: number; shards: number };
   lastAutonomyEvent: string;
@@ -687,6 +688,65 @@ type WarLayerState = {
   nextSquadId: number;
   nextSupportId: number;
 };
+
+type StrategicHud = {
+  nodes: Array<{
+    id: string;
+    label: string;
+    status: string;
+    health: number;
+    maxHealth: number;
+  }>;
+  squads: Array<{
+    id: string;
+    role: WarSquad["role"];
+    status: string;
+    remainingMs: number;
+  }>;
+  supportEvent: {
+    id: string;
+    type: string;
+    status: string;
+    remainingMs: number;
+  } | null;
+};
+
+const STRATEGIC_NODE_LABELS: Record<string, string> = {
+  core: "CORE",
+  "command-uplink": "UPLINK",
+  "repair-bay": "REPAIR",
+  "assembly-pad": "ASSEMBLY",
+  "compute-relay": "COMPUTE",
+};
+
+function createStrategicHud(
+  battlefieldState: ReturnType<typeof createBattlefieldState>,
+  warLayerState: WarLayerState,
+): StrategicHud {
+  return {
+    nodes: battlefieldState.nodes.map((node) => ({
+      id: node.id,
+      label: STRATEGIC_NODE_LABELS[node.id] ?? node.id.toUpperCase(),
+      status: node.status,
+      health: Math.round(node.health),
+      maxHealth: Math.round(node.maxHealth),
+    })),
+    squads: warLayerState.squads.map((squad) => ({
+      id: squad.id,
+      role: squad.role,
+      status: squad.status,
+      remainingMs: Math.max(0, Math.round(squad.remainingMs)),
+    })),
+    supportEvent: warLayerState.supportEvent
+      ? {
+          id: warLayerState.supportEvent.id,
+          type: warLayerState.supportEvent.type,
+          status: warLayerState.supportEvent.status,
+          remainingMs: Math.max(0, Math.round(warLayerState.supportEvent.remainingMs)),
+        }
+      : null,
+  };
+}
 
 type DefenseRuntime = {
   group: THREE.Group;
@@ -1098,6 +1158,10 @@ const INITIAL_HUD: HudState = {
   battlegroundId: "clear-grid",
   qualityPreset: "medium",
   commandMap: [],
+  strategicHud: createStrategicHud(
+    createBattlefieldState(),
+    createWarLayerState() as WarLayerState,
+  ),
   survivalMs: 0,
   sessionIncome: { compute: 0, components: 0, shards: 0 },
   lastAutonomyEvent: "NETWORK STANDING BY",
@@ -6480,6 +6544,10 @@ class FreemanEngine {
     if (focusId === "core") return this.core.group.position.clone();
     if (focusId === "repair-bay") return this.repairBay.group.position.clone();
     if (focusId === "support-event") return new THREE.Vector3(3.2, 0, -2.4);
+    const battlefieldNode = this.battlefieldState.nodes.find((node) => node.id === focusId);
+    if (battlefieldNode) return new THREE.Vector3(battlefieldNode.x, 0, battlefieldNode.z);
+    const warSquad = this.warLayerState.squads.find((squad) => squad.id === focusId);
+    if (warSquad) return new THREE.Vector3(warSquad.x, 0, warSquad.z);
     if (focusId === "compute-node") return new THREE.Vector3(3.1, 0, 1.15);
     if (focusId === "assembly-pad") return new THREE.Vector3(3.2, 0, -2.4);
     if (focusId === "north-breach") return new THREE.Vector3(0, 0, -4);
@@ -7854,7 +7922,6 @@ class FreemanEngine {
           x: subAgent.marker.position.x,
           z: subAgent.marker.position.z,
         })),
-        ...(this.warLayerState.squads as WarSquad[]),
       ],
       boss: bossEntity
         ? {
@@ -7868,6 +7935,37 @@ class FreemanEngine {
         : null,
     });
     const commandMap: HudState["commandMap"] = [...getCommandMapMarkers(simulationView)];
+    const strategicHud = createStrategicHud(
+      this.battlefieldState,
+      this.warLayerState,
+    );
+    for (const node of this.battlefieldState.nodes) {
+      if (node.id === "core" || node.id === "repair-bay") continue;
+      const summary = strategicHud.nodes.find((item) => item.id === node.id);
+      if (!summary) continue;
+      commandMap.push({
+        id: summary.id,
+        kind: "compute",
+        label: summary.label,
+        x: node.x,
+        z: node.z,
+        status: `${summary.status.toUpperCase()} ${summary.health}/${summary.maxHealth}`,
+        priority: summary.status === "online" ? 4 : 11,
+      });
+    }
+    for (const squad of this.warLayerState.squads) {
+      const summary = strategicHud.squads.find((item) => item.id === squad.id);
+      if (!summary) continue;
+      commandMap.push({
+        id: summary.id,
+        kind: "sub-agent",
+        label: summary.role.toUpperCase(),
+        x: squad.x,
+        z: squad.z,
+        status: `${summary.status.toUpperCase()} ${Math.ceil(summary.remainingMs / 1_000)}S`,
+        priority: 7,
+      });
+    }
     const supportEvent = this.warLayerState.supportEvent;
     if (supportEvent) {
       commandMap.push({
@@ -7950,6 +8048,7 @@ class FreemanEngine {
       battlegroundId: this.battleground.id,
       qualityPreset: this.qualityPreset,
       commandMap: [...commandMap],
+      strategicHud,
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       recruitmentAdvice,
@@ -11019,6 +11118,10 @@ class FreemanCanvasEngine implements GameController {
     if (focusId === "core") return { x: this.core.x, z: this.core.z };
     if (focusId === "repair-bay") return { x: this.repairBay.x, z: this.repairBay.z };
     if (focusId === "support-event") return { x: 3.2, z: -2.4 };
+    const battlefieldNode = this.battlefieldState.nodes.find((node) => node.id === focusId);
+    if (battlefieldNode) return { x: battlefieldNode.x, z: battlefieldNode.z };
+    const warSquad = this.warLayerState.squads.find((squad) => squad.id === focusId);
+    if (warSquad) return { x: warSquad.x, z: warSquad.z };
     if (focusId === "compute-node") return { x: 3.1, z: 1.15 };
     if (focusId === "assembly-pad") return { x: 3.2, z: -2.4 };
     if (focusId === "north-breach") return { x: 0, z: -4 };
@@ -13804,7 +13907,6 @@ class FreemanCanvasEngine implements GameController {
           x: subAgent.x,
           z: subAgent.z,
         })),
-        ...(this.warLayerState.squads as WarSquad[]),
       ],
       boss: bossEntity
         ? {
@@ -13818,6 +13920,37 @@ class FreemanCanvasEngine implements GameController {
         : null,
     });
     const commandMap: HudState["commandMap"] = [...getCommandMapMarkers(simulationView)];
+    const strategicHud = createStrategicHud(
+      this.battlefieldState,
+      this.warLayerState,
+    );
+    for (const node of this.battlefieldState.nodes) {
+      if (node.id === "core" || node.id === "repair-bay") continue;
+      const summary = strategicHud.nodes.find((item) => item.id === node.id);
+      if (!summary) continue;
+      commandMap.push({
+        id: summary.id,
+        kind: "compute",
+        label: summary.label,
+        x: node.x,
+        z: node.z,
+        status: `${summary.status.toUpperCase()} ${summary.health}/${summary.maxHealth}`,
+        priority: summary.status === "online" ? 4 : 11,
+      });
+    }
+    for (const squad of this.warLayerState.squads) {
+      const summary = strategicHud.squads.find((item) => item.id === squad.id);
+      if (!summary) continue;
+      commandMap.push({
+        id: summary.id,
+        kind: "sub-agent",
+        label: summary.role.toUpperCase(),
+        x: squad.x,
+        z: squad.z,
+        status: `${summary.status.toUpperCase()} ${Math.ceil(summary.remainingMs / 1_000)}S`,
+        priority: 7,
+      });
+    }
     const supportEvent = this.warLayerState.supportEvent;
     if (supportEvent) {
       commandMap.push({
@@ -13900,6 +14033,7 @@ class FreemanCanvasEngine implements GameController {
       battlegroundId: this.battleground.id,
       qualityPreset: this.qualityPreset,
       commandMap: [...commandMap],
+      strategicHud,
       empResistance: getMaxEmpResistancePercent(this.encounterModifiers),
       loot: { ...this.loot },
       recruitmentAdvice,

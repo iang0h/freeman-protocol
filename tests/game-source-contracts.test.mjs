@@ -873,6 +873,27 @@ test("both renderers consume bounded war squads and compact Assembly support", (
   assert.match(game, /"support-event",\n\s+"assembly-pad"/);
 });
 
+test("renderer parity keeps battlefield, engagement, and war HUD state compact and focusable", () => {
+  assert.match(game, /type StrategicHud = \{/);
+  assert.match(game, /nodes: Array<\{[\s\S]*?id: string;[\s\S]*?status: string;[\s\S]*?health: number;[\s\S]*?maxHealth: number;/);
+  assert.match(game, /squads: Array<\{[\s\S]*?id: string;[\s\S]*?role: WarSquad\["role"\];[\s\S]*?status: string;[\s\S]*?remainingMs: number;/);
+  assert.match(game, /supportEvent: \{[\s\S]*?type: string;[\s\S]*?status: string;[\s\S]*?remainingMs: number;[\s\S]*?\} \| null;/);
+  assert.match(game, /function createStrategicHud\(/);
+
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private battlefieldState = createBattlefieldState\(\);/);
+    assert.match(engine, /private engagementState(?:\s*:\s*[^=]+)? = createEngagementState\(1\);/);
+    assert.match(engine, /private warLayerState(?:\s*:\s*[^=]+)? = createWarLayerState\(/);
+    assert.match(engine, /this\.engagementState = tickEngagement\(/);
+    assert.match(engine, /private updateWarLayer\([\s\S]*?tickWarSquads\([\s\S]*?nodes: this\.battlefieldState\.nodes/);
+    assert.match(engine, /private updateWarLayer\([\s\S]*?maybeRequestWarSupport\(\);/);
+    assert.match(engine, /const strategicHud = createStrategicHud\(\s*this\.battlefieldState,\s*this\.warLayerState,\s*\);/);
+    assert.match(engine, /strategicHud,/);
+    assert.match(engine, /this\.battlefieldState\.nodes\.find\(\(node\) => node\.id === focusId\)/);
+    assert.match(engine, /dispose\(\)[\s\S]*?(?:temporarySubAgentPool\.clear|burstEffectPool\.clear)/);
+  }
+});
+
 test("both renderers target, damage, and repair non-Core battlefield nodes", () => {
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /const battlefieldNodeTarget = this\.battlefieldState\.nodes/);
