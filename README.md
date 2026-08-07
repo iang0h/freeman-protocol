@@ -12,6 +12,12 @@
     &nbsp;·&nbsp;
     <a href="https://freeman-protocol.vercel.app/asset-catalog">Browse the asset catalog</a>
   </p>
+
+  <p>
+    <img alt="Playable campaign and Watch Mode" src="https://img.shields.io/badge/Playable-Campaign%20%2B%20Watch%20Mode-f0783c?style=for-the-badge" />
+    <img alt="Touch-ready mobile controls" src="https://img.shields.io/badge/Mobile-Touch%20Ready-1c9ba6?style=for-the-badge" />
+    <img alt="Browser game" src="https://img.shields.io/badge/Browser-Vite%20%2B%20Vinext-5d6bff?style=for-the-badge" />
+  </p>
 </div>
 
 Freeman Protocol is a cinematic browser strategy-action game about turning a handful of resources into a living AI defense network. You fight when you want to, manage the warband when you need to, and can hand the whole operation to your agents in Watch Mode.
@@ -66,10 +72,14 @@ Freeman Protocol is a cinematic browser strategy-action game about turning a han
 ## Trailer
 
 <div align="center">
-  <a href="https://youtu.be/SesS1bd7b4c">
-    <img src="public/video/freeman-protocol-trailer-poster.jpg" alt="Watch the Freeman Protocol cinematic trailer on YouTube" width="85%" />
+  <a href="https://freeman.skillrivals.com/video/freeman-protocol-trailer.mp4">
+    <img src="public/video/freeman-protocol-trailer-poster.jpg" alt="Watch the Freeman Protocol cinematic trailer" width="85%" />
   </a>
-  <p><sub>Click the poster to watch the cinematic trailer on YouTube.</sub></p>
+  <p>
+    <a href="https://freeman.skillrivals.com/video/freeman-protocol-trailer.mp4"><strong>Watch the trailer</strong></a>
+    &nbsp;·&nbsp;
+    <a href="https://youtu.be/SesS1bd7b4c">YouTube</a>
+  </p>
 </div>
 
 ## Current build
