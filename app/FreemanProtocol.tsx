@@ -153,14 +153,27 @@ import { SpatialGrid } from "./game/spatial-grid";
 import {
   BoundedPool,
   LOW_POLY_ROBOT_GEOMETRIES,
+  createBattlefieldNodeMarker,
   createLowPolyWarRobot,
   createLootPickupMesh,
   createTemporarySubAgentMarker,
   disposeObject3D,
+  resetBattlefieldNodeMarker,
   resetLootPickupMesh,
   resetTemporarySubAgentMarker,
   updateTemporarySubAgentHealthCue,
 } from "./game/three-resources";
+import {
+  createBattlefieldState,
+  damageBattlefieldNode,
+  getBattlefieldEffects,
+} from "./game/battlefield-rules.mjs";
+import {
+  createWarLayerState,
+  requestSupportEvent,
+  spawnWarSquad,
+  tickWarSquads,
+} from "./game/war-layer-rules.mjs";
 import { AudioManager, type AudioSettingsSnapshot } from "./game/AudioManager";
 import {
   createWatchState,
@@ -646,6 +659,32 @@ type TemporarySubAgentAction =
 
 type WebglTemporarySubAgent = TemporarySubAgent & {
   marker: THREE.Group;
+};
+
+type WarSquad = {
+  id: string;
+  parentId: string;
+  role: "screen" | "repair" | "raider";
+  x: number;
+  z: number;
+  targetId: string | null;
+  remainingMs: number;
+  health: number;
+  cooldownMs: number;
+  status: string;
+};
+
+type WarLayerState = {
+  globalCap: number;
+  parentCap: number;
+  components: number;
+  squads: WarSquad[];
+  enemies: Array<{ id: string; x: number; z: number; hp: number }>;
+  nodes: Array<{ id: string; hp: number; maxHp?: number }>;
+  supportEvent: { id: string; type: string; remainingMs: number; status: string } | null;
+  supportCooldownMs: number;
+  nextSquadId: number;
+  nextSupportId: number;
 };
 
 type DefenseRuntime = {
@@ -1427,6 +1466,12 @@ class FreemanEngine {
   private subAgentSpawnState: Partial<Record<AgentId, { cooldownLeftMs: number }>> = {};
   private autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
   private temporarySubAgents: WebglTemporarySubAgent[] = [];
+  private battlefieldState = createBattlefieldState();
+  private warLayerState: WarLayerState = createWarLayerState() as WarLayerState;
+  private warSquadSpawnState: Partial<Record<AgentId, { cooldownLeftMs: number }>> = {};
+  private warSquadToastCooldownMs = 0;
+  private readonly battlefieldNodeMarkers = new Map<string, THREE.Group>();
+  private readonly warSquadMarkers = new Map<string, THREE.Group>();
   private readonly defenses: DefenseRuntime[] = [];
   private readonly projectiles: ProjectileRuntime[] = [];
   private readonly effects: EffectRuntime[] = [];
@@ -1440,6 +1485,7 @@ class FreemanEngine {
   private readonly pickups: LootRuntime[] = [];
   private loot: LootCounters = { repairs: 0, components: 0, shards: 0 };
   private readonly aimPoint = new THREE.Vector3(0, 0, -4);
+  private readonly assemblyPadPosition = new THREE.Vector3(3.2, 0, -2.4);
   private readonly aimReticle: THREE.Mesh;
   private readonly aimLine: THREE.Line;
   private readonly lastMove = new THREE.Vector3(0, 0, -1);
@@ -1599,6 +1645,7 @@ class FreemanEngine {
     this.applyBattlegroundTheme();
     this.core = this.buildCore();
     this.repairBay = this.buildRepairBay();
+    this.buildBattlefieldNodeMarkers();
     this.player = this.buildOperator();
     const targetingPresentation = this.buildTargetingPresentation();
     this.aimReticle = targetingPresentation.reticle;
@@ -1739,6 +1786,8 @@ class FreemanEngine {
   private resetMissionState() {
     this.clearDynamic();
     this.loot = { repairs: 0, components: 0, shards: 0 };
+    this.battlefieldState = createBattlefieldState();
+    this.warLayerState = createWarLayerState() as WarLayerState;
     this.clearTutorialMarker();
     this.wave = 1;
     this.battleground = getBattlegroundForWave(this.wave);
@@ -3019,6 +3068,17 @@ class FreemanEngine {
       const label = this.createArenaZoneLabel(zone.label, marker.color);
       label.position.set(marker.x, 0.08, marker.z + marker.radius + 0.22);
       this.scene.add(label);
+    }
+  }
+
+  private buildBattlefieldNodeMarkers() {
+    for (const node of this.battlefieldState.nodes) {
+      if (node.id === "core" || node.id === "repair-bay") continue;
+      const color = node.kind === "assembly" ? 0xffc857 : node.kind === "compute" ? 0x7fd8ff : 0x8fe0c1;
+      const marker = createBattlefieldNodeMarker(color);
+      marker.position.set(node.x, 0.02, node.z);
+      this.scene.add(marker);
+      this.battlefieldNodeMarkers.set(node.id, marker);
     }
   }
 
@@ -5046,6 +5106,177 @@ class FreemanEngine {
     this.emitHud(true);
   }
 
+  private maybeSpawnWarSquad(agent: AgentRuntime, elapsedMs = 0) {
+    const spawnState = tickSubAgentSpawnState(
+      this.warSquadSpawnState[agent.id] ?? createSubAgentSpawnState(),
+      elapsedMs,
+    );
+    this.warSquadSpawnState[agent.id] = spawnState;
+    if (spawnState.cooldownLeftMs > 0) return;
+    const battlefieldEffects = getBattlefieldEffects(this.battlefieldState);
+    if (!battlefieldEffects.assemblyEnabled) return;
+    const repairNeeded = this.battlefieldState.nodes.some(
+      (node) => node.status !== "online",
+    );
+    const role = repairNeeded
+      ? "repair"
+      : this.enemies.length >= 6
+        ? "screen"
+        : battlefieldEffects.computePerSecond > 0 && this.enemies.length > 0
+          ? "raider"
+          : null;
+    if (!role) return;
+    const spawned = spawnWarSquad(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
+      parentId: agent.id,
+      role,
+      x: agent.group.position.x,
+      z: agent.group.position.z,
+    });
+    if (!spawned.accepted || !spawned.squad) return;
+    this.warLayerState = spawned.state as WarLayerState;
+    this.warSquadSpawnState[agent.id] = {
+      cooldownLeftMs: SUB_AGENT_SPAWN_COOLDOWN_MS,
+    };
+    const marker = this.temporarySubAgentPool.acquire(() =>
+      createTemporarySubAgentMarker(agent.color),
+    );
+    resetTemporarySubAgentMarker(marker, agent.color, 1);
+    marker.name = "war-squad-marker";
+    this.scene.add(marker);
+    this.warSquadMarkers.set(spawned.squad.id, marker);
+    this.addRing(agent.group.position, agent.color, 0.1, 1.15, 0.24);
+    if (this.warSquadToastCooldownMs === 0) {
+      this.warSquadToastCooldownMs = SUB_AGENT_SPAWN_COOLDOWN_MS;
+      this.callbacks.onToast({
+        eyebrow: "ASSEMBLY PAD",
+        title: `${role.toUpperCase()} SQUAD DEPLOYED`,
+        detail: "Autonomous squads are capped per leader and across the battlefield.",
+      });
+    }
+  }
+
+  private maybeRequestWarSupport() {
+    const battlefieldEffects = getBattlefieldEffects(this.battlefieldState);
+    if (
+      !battlefieldEffects.assemblyEnabled ||
+      !isWatchMode(this.sessionMode) ||
+      this.watchState.priority === "survive"
+    ) return;
+    const requested = requestSupportEvent(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
+      type: this.watchState.priority === "expand" ? "air-strike" : "convoy",
+      components: this.loot.components,
+    });
+    if (!requested.accepted || !requested.event) return;
+    this.warLayerState = requested.state as WarLayerState;
+    this.loot.components = requested.state.components;
+    if (requested.event.type === "air-strike") {
+      for (const enemy of [...this.enemies]
+        .sort((left, right) =>
+          left.group.position.distanceToSquared(this.assemblyPadPosition) -
+          right.group.position.distanceToSquared(this.assemblyPadPosition),
+        )
+        .slice(0, 3)) {
+        this.damageEnemy(enemy, 12, enemy.group.position, true);
+      }
+      this.callbacks.onToast({
+        eyebrow: "ASSEMBLY PAD",
+        title: "AIR STRIKE INBOUND",
+        detail: "Watch-priority support cleared the closest threat cluster.",
+      });
+    } else {
+      this.repairBay.hp = Math.min(this.repairBay.maxHp, this.repairBay.hp + 12);
+      this.callbacks.onToast({
+        eyebrow: "ASSEMBLY PAD",
+        title: "CONVOY DEPLOYED",
+        detail: "Support cargo restored the repair bay perimeter.",
+      });
+    }
+  }
+
+  private updateWarLayer(delta: number) {
+    this.warSquadToastCooldownMs = Math.max(0, this.warSquadToastCooldownMs - delta * 1_000);
+    const enemies = this.enemies.map((enemy) => ({
+      id: String(enemy.id), x: enemy.group.position.x, z: enemy.group.position.z, hp: enemy.hp,
+    }));
+    this.battlefieldState = {
+      ...this.battlefieldState,
+      nodes: this.battlefieldState.nodes.map((node) => node.id === "repair-bay"
+        ? {
+            ...node,
+            health: this.repairBay.hp,
+            maxHealth: this.repairBay.maxHp,
+            status: this.repairBay.hp <= 0 ? "offline" : this.repairBay.hp < this.repairBay.maxHp ? "damaged" : "online",
+          }
+        : node),
+    };
+    const repairBayWasDamaged = this.repairBay.hp < this.repairBay.maxHp;
+    const previousHp = new Map(enemies.map((enemy) => [enemy.id, enemy.hp]));
+    this.warLayerState = tickWarSquads(
+      this.warLayerState as unknown as ReturnType<typeof createWarLayerState>,
+      {
+        enemies,
+        nodes: this.battlefieldState.nodes.filter((node) => node.id !== "core").map((node) => ({
+          ...node, hp: node.health, maxHp: node.maxHealth, online: node.status === "online",
+        })),
+      },
+      delta * 1_000,
+    ) as WarLayerState;
+    for (const snapshot of this.warLayerState.enemies ?? []) {
+      const previous = previousHp.get(snapshot.id) ?? snapshot.hp;
+      const enemy = this.enemies.find((candidate) => String(candidate.id) === snapshot.id);
+      if (enemy && previous > snapshot.hp) {
+        this.damageEnemy(enemy, previous - snapshot.hp, enemy.group.position);
+      }
+    }
+    const repairedBay = this.warLayerState.nodes?.find((node: { id: string }) => node.id === "repair-bay");
+    if (repairedBay && repairedBay.hp > this.repairBay.hp) {
+      this.repairBay.hp = Math.min(this.repairBay.maxHp, repairedBay.hp);
+      if (repairBayWasDamaged && this.repairBay.hp === this.repairBay.maxHp) {
+        this.callbacks.onToast({
+          eyebrow: "REPAIR BAY",
+          title: "REPAIR BAY: NODE RESTORED",
+          detail: "Repair squads returned the strategic node to service.",
+        });
+      }
+    }
+    const activeIds = new Set(this.warLayerState.squads.map((squad: WarSquad) => squad.id));
+    for (const [id, marker] of this.warSquadMarkers) {
+      if (activeIds.has(id)) continue;
+      this.temporarySubAgentPool.release(
+        marker,
+        (item) => resetTemporarySubAgentMarker(item, 0xffffff),
+        (item) => this.disposeDynamicObject(item),
+      );
+      this.warSquadMarkers.delete(id);
+    }
+    for (const squad of this.warLayerState.squads as WarSquad[]) {
+      const marker = this.warSquadMarkers.get(squad.id);
+      if (!marker) continue;
+      marker.position.set(squad.x, 0.3, squad.z);
+      marker.rotation.y += delta * 2.2;
+      updateTemporarySubAgentHealthCue(marker, squad.health / 30);
+    }
+    for (const node of this.battlefieldState.nodes) {
+      const marker = this.battlefieldNodeMarkers.get(node.id);
+      if (marker) resetBattlefieldNodeMarker(marker, node.kind === "assembly" ? 0xffc857 : 0x7fd8ff, node.status === "online");
+    }
+    this.maybeRequestWarSupport();
+  }
+
+  private clearWarLayer() {
+    for (const marker of this.warSquadMarkers.values()) {
+      this.temporarySubAgentPool.release(
+        marker,
+        (item) => resetTemporarySubAgentMarker(item, 0xffffff),
+        (item) => this.disposeDynamicObject(item),
+      );
+    }
+    this.warSquadMarkers.clear();
+    this.warLayerState = createWarLayerState() as WarLayerState;
+    this.warSquadSpawnState = {};
+    this.warSquadToastCooldownMs = 0;
+  }
+
   private clearTemporarySubAgents() {
     for (const subAgent of this.temporarySubAgents) {
       this.temporarySubAgentPool.release(
@@ -5055,6 +5286,7 @@ class FreemanEngine {
       );
     }
     this.temporarySubAgents = clearSubAgents() as WebglTemporarySubAgent[];
+    this.clearWarLayer();
     this.autonomyState = {};
     this.subAgentSpawnState = {};
   }
@@ -5273,6 +5505,7 @@ class FreemanEngine {
       }
 
       this.maybeSpawnTemporarySubAgent(agent, roleIntent, delta * 1_000);
+      this.maybeSpawnWarSquad(agent, delta * 1_000);
 
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
@@ -5437,6 +5670,7 @@ class FreemanEngine {
       );
     });
     this.updateTemporarySubAgents(delta);
+    this.updateWarLayer(delta);
   }
 
   private updateDefenses(delta: number) {
@@ -6204,6 +6438,7 @@ class FreemanEngine {
     if (focusId === "core") return this.core.group.position.clone();
     if (focusId === "repair-bay") return this.repairBay.group.position.clone();
     if (focusId === "compute-node") return new THREE.Vector3(3.1, 0, 1.15);
+    if (focusId === "assembly-pad") return new THREE.Vector3(3.2, 0, -2.4);
     if (focusId === "north-breach") return new THREE.Vector3(0, 0, -4);
     if (focusId === "south-breach") return new THREE.Vector3(0, 0, 4);
     if (focusId === "boss-portal") return new THREE.Vector3(0, 0, -6.45);
@@ -6415,6 +6650,17 @@ class FreemanEngine {
   }
 
   private damageRepairBay(damage: number) {
+    this.battlefieldState = {
+      ...this.battlefieldState,
+      nodes: this.battlefieldState.nodes.map((node) => node.id === "repair-bay"
+        ? { ...node, health: this.repairBay.hp, maxHealth: this.repairBay.maxHp }
+        : node),
+    };
+    this.battlefieldState = damageBattlefieldNode(
+      this.battlefieldState,
+      "repair-bay",
+      damage,
+    );
     const damaged = applyUnitDamage(this.repairBay, damage);
     this.repairBay.hp = damaged.hp;
     this.addDamageNumber(
@@ -7548,14 +7794,17 @@ class FreemanEngine {
         x: defense.group.position.x,
         z: defense.group.position.z,
       })),
-      subAgents: this.temporarySubAgents.map((subAgent) => ({
-        id: subAgent.id,
-        parentId: subAgent.parentId,
-        role: subAgent.role,
-        remainingMs: subAgent.remainingMs,
-        x: subAgent.marker.position.x,
-        z: subAgent.marker.position.z,
-      })),
+      subAgents: [
+        ...this.temporarySubAgents.map((subAgent) => ({
+          id: subAgent.id,
+          parentId: subAgent.parentId,
+          role: subAgent.role,
+          remainingMs: subAgent.remainingMs,
+          x: subAgent.marker.position.x,
+          z: subAgent.marker.position.z,
+        })),
+        ...(this.warLayerState.squads as WarSquad[]),
+      ],
       boss: bossEntity
         ? {
             id: bossEntity.id,
@@ -7829,6 +8078,10 @@ class FreemanCanvasEngine implements GameController {
   private subAgentSpawnState: Partial<Record<AgentId, { cooldownLeftMs: number }>> = {};
   private autonomousActionClock = AUTONOMOUS_ACTION_INTERVAL_MS;
   private temporarySubAgents: FlatTemporarySubAgent[] = [];
+  private battlefieldState = createBattlefieldState();
+  private warLayerState: WarLayerState = createWarLayerState() as WarLayerState;
+  private warSquadSpawnState: Partial<Record<AgentId, { cooldownLeftMs: number }>> = {};
+  private warSquadToastCooldownMs = 0;
   private readonly defenses: FlatDefense[] = [];
   private readonly projectiles: FlatProjectile[] = [];
   private readonly effects: FlatEffect[] = [];
@@ -8057,6 +8310,8 @@ class FreemanCanvasEngine implements GameController {
     this.clearEffects();
     this.clearLootPickups();
     this.loot = { repairs: 0, components: 0, shards: 0 };
+    this.battlefieldState = createBattlefieldState();
+    this.warLayerState = createWarLayerState() as WarLayerState;
     this.wave = 1;
     this.battleground = getBattlegroundForWave(this.wave);
     this.score = 0;
@@ -9578,8 +9833,135 @@ class FreemanCanvasEngine implements GameController {
     this.emitHud(true);
   }
 
+  private maybeSpawnWarSquad(agent: FlatAgent, elapsedMs = 0) {
+    const spawnState = tickSubAgentSpawnState(
+      this.warSquadSpawnState[agent.id] ?? createSubAgentSpawnState(),
+      elapsedMs,
+    );
+    this.warSquadSpawnState[agent.id] = spawnState;
+    if (spawnState.cooldownLeftMs > 0) return;
+    const battlefieldEffects = getBattlefieldEffects(this.battlefieldState);
+    if (!battlefieldEffects.assemblyEnabled) return;
+    const repairNeeded = this.battlefieldState.nodes.some(
+      (node) => node.status !== "online",
+    );
+    const role = repairNeeded
+      ? "repair"
+      : this.enemies.length >= 6
+        ? "screen"
+        : battlefieldEffects.computePerSecond > 0 && this.enemies.length > 0
+          ? "raider"
+          : null;
+    if (!role) return;
+    const spawned = spawnWarSquad(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
+      parentId: agent.id,
+      role,
+      x: agent.x,
+      z: agent.z,
+    });
+    if (!spawned.accepted || !spawned.squad) return;
+    this.warLayerState = spawned.state as WarLayerState;
+    this.warSquadSpawnState[agent.id] = {
+      cooldownLeftMs: SUB_AGENT_SPAWN_COOLDOWN_MS,
+    };
+    if (this.warSquadToastCooldownMs === 0) {
+      this.warSquadToastCooldownMs = SUB_AGENT_SPAWN_COOLDOWN_MS;
+      this.callbacks.onToast({
+        eyebrow: "ASSEMBLY PAD",
+        title: `${role.toUpperCase()} SQUAD DEPLOYED`,
+        detail: "Autonomous squads are capped per leader and across the battlefield.",
+      });
+    }
+  }
+
+  private maybeRequestWarSupport() {
+    const battlefieldEffects = getBattlefieldEffects(this.battlefieldState);
+    if (
+      !battlefieldEffects.assemblyEnabled ||
+      !isWatchMode(this.sessionMode) ||
+      this.watchState.priority === "survive"
+    ) return;
+    const requested = requestSupportEvent(this.warLayerState as unknown as ReturnType<typeof createWarLayerState>, {
+      type: this.watchState.priority === "expand" ? "air-strike" : "convoy",
+      components: this.loot.components,
+    });
+    if (!requested.accepted || !requested.event) return;
+    this.warLayerState = requested.state as WarLayerState;
+    this.loot.components = requested.state.components;
+    if (requested.event.type === "air-strike") {
+      for (const enemy of [...this.enemies]
+        .sort((left, right) =>
+          Math.hypot(left.x - 3.2, left.z + 2.4) -
+          Math.hypot(right.x - 3.2, right.z + 2.4),
+        )
+        .slice(0, 3)) this.damageEnemy(enemy, 12, true);
+      this.callbacks.onToast({
+        eyebrow: "ASSEMBLY PAD",
+        title: "AIR STRIKE INBOUND",
+        detail: "Watch-priority support cleared the closest threat cluster.",
+      });
+    } else {
+      this.repairBay.hp = Math.min(this.repairBay.maxHp, this.repairBay.hp + 12);
+      this.callbacks.onToast({
+        eyebrow: "ASSEMBLY PAD",
+        title: "CONVOY DEPLOYED",
+        detail: "Support cargo restored the repair bay perimeter.",
+      });
+    }
+  }
+
+  private updateWarLayer(delta: number) {
+    this.warSquadToastCooldownMs = Math.max(0, this.warSquadToastCooldownMs - delta * 1_000);
+    const enemies = this.enemies.map((enemy) => ({
+      id: String(enemy.id), x: enemy.x, z: enemy.z, hp: enemy.hp,
+    }));
+    this.battlefieldState = {
+      ...this.battlefieldState,
+      nodes: this.battlefieldState.nodes.map((node) => node.id === "repair-bay"
+        ? {
+            ...node,
+            health: this.repairBay.hp,
+            maxHealth: this.repairBay.maxHp,
+            status: this.repairBay.hp <= 0 ? "offline" : this.repairBay.hp < this.repairBay.maxHp ? "damaged" : "online",
+          }
+        : node),
+    };
+    const repairBayWasDamaged = this.repairBay.hp < this.repairBay.maxHp;
+    const previousHp = new Map(enemies.map((enemy) => [enemy.id, enemy.hp]));
+    this.warLayerState = tickWarSquads(
+      this.warLayerState as unknown as ReturnType<typeof createWarLayerState>,
+      {
+        enemies,
+        nodes: this.battlefieldState.nodes.filter((node) => node.id !== "core").map((node) => ({
+          ...node, hp: node.health, maxHp: node.maxHealth, online: node.status === "online",
+        })),
+      },
+      delta * 1_000,
+    ) as WarLayerState;
+    for (const snapshot of this.warLayerState.enemies ?? []) {
+      const previous = previousHp.get(snapshot.id) ?? snapshot.hp;
+      const enemy = this.enemies.find((candidate) => String(candidate.id) === snapshot.id);
+      if (enemy && previous > snapshot.hp) this.damageEnemy(enemy, previous - snapshot.hp);
+    }
+    const repairedBay = this.warLayerState.nodes?.find((node: { id: string }) => node.id === "repair-bay");
+    if (repairedBay && repairedBay.hp > this.repairBay.hp) {
+      this.repairBay.hp = Math.min(this.repairBay.maxHp, repairedBay.hp);
+      if (repairBayWasDamaged && this.repairBay.hp === this.repairBay.maxHp) {
+        this.callbacks.onToast({
+          eyebrow: "REPAIR BAY",
+          title: "REPAIR BAY: NODE RESTORED",
+          detail: "Repair squads returned the strategic node to service.",
+        });
+      }
+    }
+    this.maybeRequestWarSupport();
+  }
+
   private clearTemporarySubAgents() {
     this.temporarySubAgents = clearSubAgents() as FlatTemporarySubAgent[];
+    this.warLayerState = createWarLayerState() as WarLayerState;
+    this.warSquadSpawnState = {};
+    this.warSquadToastCooldownMs = 0;
     this.autonomyState = {};
     this.subAgentSpawnState = {};
   }
@@ -9749,6 +10131,7 @@ class FreemanCanvasEngine implements GameController {
         }
       }
       this.maybeSpawnTemporarySubAgent(agent, roleIntent, delta * 1_000);
+      this.maybeSpawnWarSquad(agent, delta * 1_000);
       if (agent.id === "covenant" && agent.supportClock <= 0) {
         const nanites = this.evolutions.covenant === "nanite-repair";
         const aegis = this.evolutions.covenant === "aegis-relay";
@@ -9909,6 +10292,7 @@ class FreemanCanvasEngine implements GameController {
       });
     });
     this.updateTemporarySubAgents(delta);
+    this.updateWarLayer(delta);
   }
 
   private updateDefenses(delta: number) {
@@ -10531,6 +10915,7 @@ class FreemanCanvasEngine implements GameController {
     if (focusId === "core") return { x: this.core.x, z: this.core.z };
     if (focusId === "repair-bay") return { x: this.repairBay.x, z: this.repairBay.z };
     if (focusId === "compute-node") return { x: 3.1, z: 1.15 };
+    if (focusId === "assembly-pad") return { x: 3.2, z: -2.4 };
     if (focusId === "north-breach") return { x: 0, z: -4 };
     if (focusId === "south-breach") return { x: 0, z: 4 };
     if (focusId === "boss-portal") return { x: 0, z: -6.45 };
@@ -11097,6 +11482,17 @@ class FreemanCanvasEngine implements GameController {
   }
 
   private damageRepairBay(damage: number) {
+    this.battlefieldState = {
+      ...this.battlefieldState,
+      nodes: this.battlefieldState.nodes.map((node) => node.id === "repair-bay"
+        ? { ...node, health: this.repairBay.hp, maxHealth: this.repairBay.maxHp }
+        : node),
+    };
+    this.battlefieldState = damageBattlefieldNode(
+      this.battlefieldState,
+      "repair-bay",
+      damage,
+    );
     this.repairBay.hp = applyUnitDamage(this.repairBay, damage).hp;
     this.addBurst(this.repairBay.x, this.repairBay.z, 0xb7422e, 6);
     if (this.repairBay.hp === 0) {
@@ -11775,6 +12171,13 @@ class FreemanCanvasEngine implements GameController {
       depth: this.project(this.repairBay.x, this.repairBay.z).depth,
       draw: () => this.drawRepairBay(),
     });
+    for (const node of this.battlefieldState.nodes) {
+      if (node.id === "core" || node.id === "repair-bay") continue;
+      drawables.push({
+        depth: this.project(node.x, node.z).depth,
+        draw: () => this.drawBattlefieldNode(node),
+      });
+    }
     drawables.push({
       depth: this.project(this.player.x, this.player.z).depth,
       draw: () => this.drawPlayer(),
@@ -11789,6 +12192,12 @@ class FreemanCanvasEngine implements GameController {
       drawables.push({
         depth: this.project(subAgent.x, subAgent.z).depth,
         draw: () => this.drawTemporarySubAgent(subAgent),
+      });
+    }
+    for (const squad of this.warLayerState.squads as WarSquad[]) {
+      drawables.push({
+        depth: this.project(squad.x, squad.z).depth,
+        draw: () => this.drawWarSquad(squad),
       });
     }
     for (const defense of this.defenses) {
@@ -12480,6 +12889,42 @@ class FreemanCanvasEngine implements GameController {
       size * 2.6 * lifetimeRatio,
       3,
     );
+    context.restore();
+  }
+
+  private drawWarSquad(squad: WarSquad) {
+    const color = squad.role === "repair" ? "#72e4c2" : squad.role === "raider" ? "#ff9c63" : "#ffd166";
+    const floor = this.project(squad.x, squad.z, 0);
+    const signal = this.project(squad.x, squad.z, 0.44);
+    const size = floor.scale * 0.18;
+    const context = this.context;
+    context.save();
+    context.strokeStyle = color;
+    context.lineWidth = 1.5;
+    context.beginPath();
+    context.ellipse(floor.x, floor.y, size * 1.45, size * 0.52, 0, 0, Math.PI * 2);
+    context.stroke();
+    context.fillStyle = color;
+    context.shadowColor = color;
+    context.shadowBlur = 12;
+    context.beginPath();
+    context.arc(signal.x, signal.y, size, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
+  private drawBattlefieldNode(node: { x: number; z: number; kind: string; status: string }) {
+    const point = this.project(node.x, node.z, 0.18);
+    const color = node.status === "online"
+      ? node.kind === "assembly" ? "#ffc857" : "#7fd8ff"
+      : "#536067";
+    const context = this.context;
+    context.save();
+    context.fillStyle = color;
+    context.globalAlpha = node.status === "online" ? 0.86 : 0.38;
+    context.beginPath();
+    context.arc(point.x, point.y, point.scale * 0.18, 0, Math.PI * 2);
+    context.fill();
     context.restore();
   }
 
@@ -13237,14 +13682,17 @@ class FreemanCanvasEngine implements GameController {
         x: defense.x,
         z: defense.z,
       })),
-      subAgents: this.temporarySubAgents.map((subAgent) => ({
-        id: subAgent.id,
-        parentId: subAgent.parentId,
-        role: subAgent.role,
-        remainingMs: subAgent.remainingMs,
-        x: subAgent.x,
-        z: subAgent.z,
-      })),
+      subAgents: [
+        ...this.temporarySubAgents.map((subAgent) => ({
+          id: subAgent.id,
+          parentId: subAgent.parentId,
+          role: subAgent.role,
+          remainingMs: subAgent.remainingMs,
+          x: subAgent.x,
+          z: subAgent.z,
+        })),
+        ...(this.warLayerState.squads as WarSquad[]),
+      ],
       boss: bossEntity
         ? {
             id: bossEntity.id,
@@ -13913,6 +14361,7 @@ export default function FreemanProtocol({
   const commandMapFixedIds = new Set([
     "core",
     "repair-bay",
+    "assembly-pad",
     "compute-node",
     "north-breach",
     "south-breach",

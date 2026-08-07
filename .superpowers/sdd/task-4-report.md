@@ -1,55 +1,45 @@
-# Task 4 report: meaningful arena zones
+# Task 4 report — bounded war layer
 
-## Commit
+## Implemented
 
-`bcab10d feat: mark meaningful arena zones`
+- Added `app/game/war-layer-rules.mjs`: pure capped squad spawning, deterministic movement/combat/repair ticks, damage removal, and one-active support events with a six-second cooldown.
+- Added TDD coverage for parent/global caps, combat/movement/expiry, immutable squad damage, and support event cooldown.
+- Integrated squad spawning, ticks, pooled WebGL markers, Canvas drawing, command-map markers, support priority, and concise feedback into both renderers.
+- Added low-poly strategic-node marker creation/reset helpers and Canvas equivalents.
 
-## Delivered
+## Verification commands and output
 
-- Added presentation-only Core, north/south breach, Compute Node, Repair Bay, and Boss Portal floor markers to both WebGL and Canvas renderers. The Core remains strongest; breach lanes use distinct warm/cool tints; the Boss Portal is a restrained dashed edge marker for telegraphs.
-- Added static world labels sourced from `getArenaZone()` metadata.
-- Added `currentZone` to both renderer HUD payloads. It is resolved only during the existing 0.1-second HUD emission cadence, not every render frame, and displayed as a compact HUD label.
-- Updated the final-wave urgent alert to identify the Boss Portal.
-- Added deterministic six-zone system assertions and renderer/source contracts.
-- No simulation, damage, spawn, loot, or routing rules were modified.
+1. `/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test --test-name-pattern='war squad|support' tests/game-systems.test.mjs`
 
-## Test evidence
+   Output:
 
-Red (before production changes):
+   Output: 6 tests passed, 0 failed.
 
-```text
-/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs
-tests 162; pass 161; fail 1
-Failure: both renderers mark the shared arena zones and throttle the live zone HUD
-Missing import contract for getArenaZone.
-```
+2. `/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node node_modules/typescript/bin/tsc --noEmit`
 
-Green (after implementation):
+   Output: exit 0.
 
-```text
-/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs
-tests 162; pass 162; fail 0
-```
+3. `/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test tests/game-systems.test.mjs tests/game-source-contracts.test.mjs`
 
-TypeScript:
+   Output: 212 tests passed, 0 failed.
 
-```text
-/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node node_modules/typescript/bin/tsc --noEmit
-exit 0
-```
+4. `/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test tests/*.test.mjs`
 
-Lint of the changed TypeScript/tests had no errors. ESLint reported one existing configuration warning that `app/globals.css` is ignored because no matching configuration is supplied.
+   Output: 311 tests passed, 0 failed.
 
-Full suite:
+5. `git diff --check`
 
-```text
-/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node --test tests/*.test.mjs
-tests 196; pass 195; fail 1
-```
+   Output: exit 0; no whitespace errors.
 
-The sole failure is the pre-existing `tests/mobile-layout.test.mjs` source contract `keeps the recruitment dock interactive above workshop overlays`. It expects an `agent-dock` class prefix that does not match the unchanged class string in `HEAD`; this task does not alter that area.
+6. `rg -n "war squads honor|war squads move|assembly support|war-layer-rules|maybeSpawnWarSquad|updateWarLayer|REPAIR BAY: NODE RESTORED|AIR STRIKE INBOUND" tests app`
 
-## Concerns / limitations
+   Output: confirmed pure tests plus WebGL and Canvas integration references, support feedback, and both update paths.
 
-- Desktop macro-camera visual inspection could not be performed locally: `scripts/build-verified.sh` requires GNU `timeout`, which is unavailable; direct `vinext build` is blocked by macOS rejecting the installed Rolldown native binding's code signature (`ERR_DLOPEN_FAILED`).
-- The same native binding prevents starting the local renderer for browser inspection. The renderer contract tests and TypeScript check passed, but a visual wave-one check remains for an environment with a valid build runtime.
+7. Static code review
+
+   Output: the review found and this task addressed per-frame deployment/toast flooding with a per-parent bounded cooldown plus a shared toast cooldown, and changed air-strike targeting to a deterministic Assembly-Pad-distance sort. Repair Bay damage now also updates the shared battlefield node state.
+
+## Concerns
+
+- The current gameplay exposes direct hostile damage only for the Core, sentries, Repair Bay, and agents. Assembly Pad and Compute Relay now render from the shared battlefield state and drive war-layer eligibility, but need a future node-targeting combat pass before they can become hostile-damage targets.
+- `tsconfig.tsbuildinfo` was already modified when this task began and is intentionally excluded from this task’s commit.

@@ -114,6 +114,7 @@ export function classifyCombatFeedback(event = {}) {
 const COMMAND_MAP_FIXED_MARKERS = Object.freeze([
   Object.freeze({ id: "core", kind: "core", label: "CORE", x: 0, z: 0, status: "protected", priority: 4 }),
   Object.freeze({ id: "repair-bay", kind: "repair", label: "REPAIR", x: -3.1, z: 1.15, status: "available", priority: 3 }),
+  Object.freeze({ id: "assembly-pad", kind: "assembly", label: "ASSEMBLY", x: 3.2, z: -2.4, status: "online", priority: 3 }),
   Object.freeze({ id: "compute-node", kind: "compute", label: "COMPUTE", x: 3.1, z: 1.15, status: "available", priority: 2 }),
   Object.freeze({ id: "north-breach", kind: "breach", label: "NORTH BREACH", x: 0, z: -4, status: "active", priority: 2 }),
   Object.freeze({ id: "south-breach", kind: "breach", label: "SOUTH BREACH", x: 0, z: 4, status: "active", priority: 2 }),

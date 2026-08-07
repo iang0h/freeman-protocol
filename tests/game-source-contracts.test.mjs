@@ -850,6 +850,26 @@ test("both engines consume shared temporary role actions and health cues", () =>
   assert.match(webglGame, /this\.temporarySubAgentPool\.clear/);
 });
 
+test("both renderers consume bounded war squads and compact Assembly support", () => {
+  assert.match(game, /from "\.\/game\/war-layer-rules\.mjs"/);
+  assert.match(game, /from "\.\/game\/battlefield-rules\.mjs"/);
+  assert.match(threeResources, /createBattlefieldNodeMarker/);
+  assert.match(threeResources, /resetBattlefieldNodeMarker/);
+  for (const engine of [webglGame, canvasGame]) {
+    assert.match(engine, /private battlefieldState = createBattlefieldState\(\);/);
+    assert.match(engine, /private warLayerState(?:\s*:\s*[^=]+)? = createWarLayerState\(/);
+    assert.match(engine, /private maybeSpawnWarSquad\(/);
+    assert.match(engine, /spawnWarSquad\(/);
+    assert.match(engine, /private updateWarLayer\([\s\S]*?tickWarSquads\(/);
+    assert.match(engine, /requestSupportEvent\(/);
+    assert.match(engine, /AIR STRIKE INBOUND/);
+  }
+  assert.match(webglGame, /warSquadMarkers/);
+  assert.match(canvasGame, /private drawWarSquad/);
+  assert.match(canvasGame, /private drawBattlefieldNode/);
+  assert.match(game, /"assembly-pad"/);
+});
+
 test("Canvas fallback owns the same repair-bay, retreat, and hostile-target contracts as WebGL", () => {
   for (const engine of [webglGame, canvasGame]) {
     assert.match(engine, /repairBay/);

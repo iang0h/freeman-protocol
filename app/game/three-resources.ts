@@ -377,6 +377,41 @@ export function resetTemporarySubAgentMarker(
   marker.removeFromParent();
 }
 
+export function createBattlefieldNodeMarker(color: number) {
+  const marker = new THREE.Group();
+  marker.name = "battlefield-node-marker";
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.34, 0.44, 0.1, 6),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.48 }),
+  );
+  base.name = "battlefield-node-base";
+  base.position.y = 0.05;
+  const signal = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.2, 0),
+    new THREE.MeshBasicMaterial({ color }),
+  );
+  signal.name = "battlefield-node-signal";
+  signal.position.y = 0.34;
+  marker.add(base, signal);
+  resetBattlefieldNodeMarker(marker, color, true);
+  return marker;
+}
+
+export function resetBattlefieldNodeMarker(
+  marker: THREE.Group,
+  color: number,
+  online = true,
+) {
+  const base = marker.getObjectByName("battlefield-node-base") as THREE.Mesh;
+  const signal = marker.getObjectByName("battlefield-node-signal") as THREE.Mesh;
+  (base.material as THREE.MeshBasicMaterial).color.setHex(color);
+  (base.material as THREE.MeshBasicMaterial).opacity = online ? 0.48 : 0.16;
+  (signal.material as THREE.MeshBasicMaterial).color.setHex(online ? color : 0x4a555b);
+  signal.visible = online;
+  marker.rotation.set(0, 0, 0);
+  marker.scale.setScalar(1);
+}
+
 export function createLootPickupMesh(type: string) {
   const group = new THREE.Group();
   group.name = "loot-pickup";

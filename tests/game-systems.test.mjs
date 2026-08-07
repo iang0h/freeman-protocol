@@ -188,6 +188,101 @@ import {
   getNodeRepairCost,
   repairBattlefieldNode,
 } from "../app/game/battlefield-rules.mjs";
+import {
+  WAR_LAYER_GLOBAL_CAP,
+  createWarLayerState,
+  damageWarSquad,
+  requestSupportEvent,
+  spawnWarSquad,
+  tickWarSquads,
+} from "../app/game/war-layer-rules.mjs";
+
+test("war squads honor parent and global caps", () => {
+  let state = createWarLayerState({ globalCap: 4 });
+  for (let index = 0; index < 4; index += 1) {
+    const result = spawnWarSquad(state, {
+      parentId: "agent-1",
+      role: "screen",
+      x: 0,
+      z: 0,
+    });
+    state = result.state;
+  }
+  assert.equal(
+    spawnWarSquad(state, {
+      parentId: "agent-1",
+      role: "screen",
+      x: 0,
+      z: 0,
+    }).reason,
+    "parent-cap",
+  );
+
+  const otherParent = spawnWarSquad(state, {
+    parentId: "agent-2",
+    role: "raider",
+    x: 0,
+    z: 0,
+  });
+  assert.equal(otherParent.accepted, false);
+  assert.equal(otherParent.reason, "global-cap");
+  assert.equal(WAR_LAYER_GLOBAL_CAP, 24);
+});
+
+test("war squads move toward threats, deal damage, and expire", () => {
+  let state = spawnWarSquad(createWarLayerState(), {
+    parentId: "agent-1",
+    role: "screen",
+    x: 0,
+    z: 0,
+  }).state;
+  state = tickWarSquads(
+    state,
+    { enemies: [{ id: "e1", x: 1, z: 0, hp: 20 }] },
+    1_500,
+  );
+  assert.ok(state.enemies?.[0]?.hp < 20 || state.squads[0].x !== 0);
+  state = tickWarSquads(state, { enemies: [] }, 20_000);
+  assert.equal(state.squads.length, 0);
+});
+
+test("war squad damage is immutable and removes destroyed squads", () => {
+  const spawned = spawnWarSquad(createWarLayerState(), {
+    parentId: "agent-1",
+    role: "repair",
+    x: 2,
+    z: -1,
+  });
+  const damaged = damageWarSquad(spawned.state, spawned.squad.id, 100);
+  assert.equal(damaged.squads.length, 0);
+  assert.equal(spawned.state.squads.length, 1);
+});
+
+test("assembly support has one active event and a cooldown", () => {
+  const first = requestSupportEvent(createWarLayerState(), {
+    type: "convoy",
+    components: 2,
+  });
+  assert.equal(first.accepted, true);
+  const second = requestSupportEvent(first.state, {
+    type: "air-strike",
+    components: 2,
+  });
+  assert.equal(second.accepted, false);
+  assert.equal(second.reason, "active-event");
+  assert.equal(first.state.components, 0);
+  const expired = tickWarSquads(first.state, {}, 4_000);
+  assert.equal(expired.supportEvent, null);
+  assert.equal(
+    requestSupportEvent(expired, { type: "air-strike", components: 2 }).reason,
+    "cooldown",
+  );
+  const ready = tickWarSquads(expired, {}, 2_000);
+  assert.equal(
+    requestSupportEvent(ready, { type: "air-strike", components: 2 }).accepted,
+    true,
+  );
+});
 
 test("enemy route bias retains inward progress and fades near arrival", () => {
   const far = resolveEnemyAdvance(
